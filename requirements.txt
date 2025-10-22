@@ -1,0 +1,6 @@
+torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
+torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+numpy
+safetensors
+packaging
