@@ -1,6 +1,8 @@
+# python==3.11.14
 torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
-numpy
-safetensors
-packaging
+numpy==2.3.3
+safetensors==0.6.2
+packaging==25.0
+transformers==4.57.1
