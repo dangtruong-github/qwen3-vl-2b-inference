@@ -332,3 +332,63 @@ void free_model_weights(QwenWeight* weights) {
     // Set the struct memory to zero to prevent accidental double-free attempts
     memset(weights, 0, sizeof(QwenWeight)); 
 }
+
+void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
+    memset(state, 0, sizeof(QwenRunState));
+    state->config = config;
+    state->seq_len = config->max_position_embeddings;
+
+    int H = config->hidden_size;
+    int I = config->intermediate_size;
+    int V = config->vocab_size;
+    int VH = config->vision_hidden_size;
+    int VP = config->vision_patch_size;
+    int n_patches = (config->vision_hidden_size > 0)
+        ? (256)  // Typically 16x16 patches
+        : 0;
+
+    long sz_hidden = (long)state->seq_len * H * sizeof(float);
+    long sz_inter = (long)state->seq_len * I * sizeof(float);
+
+    state->hidden_states = (float*)malloc(sz_hidden);
+    state->attn_output   = (float*)malloc(sz_hidden);
+    state->mlp_intermediate = (float*)malloc(sz_inter);
+    state->logits        = (float*)malloc(V * sizeof(float));
+    state->norm_buffer   = (float*)malloc(H * sizeof(float));
+    state->residual_buffer = (float*)malloc(H * sizeof(float));
+
+    CHECK_ALLOC(state->hidden_states, sz_hidden);
+    CHECK_ALLOC(state->attn_output, sz_hidden);
+    CHECK_ALLOC(state->mlp_intermediate, sz_inter);
+    CHECK_ALLOC(state->logits, V * sizeof(float));
+
+    if (config->vision_hidden_size > 0) {
+        long sz_patch = n_patches * 3 * VP * VP * sizeof(float);
+        long sz_embed = (n_patches + 1) * VH * sizeof(float);
+        state->image_patches = (float*)malloc(sz_patch);
+        state->vision_embed  = (float*)malloc(sz_embed);
+        state->vision_hidden = (float*)malloc(sz_embed);
+        state->vision_norm   = (float*)malloc(VH * sizeof(float));
+
+        CHECK_ALLOC(state->image_patches, sz_patch);
+        CHECK_ALLOC(state->vision_embed, sz_embed);
+        CHECK_ALLOC(state->vision_hidden, sz_embed);
+        CHECK_ALLOC(state->vision_norm, VH * sizeof(float));
+    }
+}
+
+void free_model_run_state(QwenRunState* state) {
+    free(state->hidden_states);
+    free(state->attn_output);
+    free(state->mlp_intermediate);
+    free(state->logits);
+    free(state->norm_buffer);
+    free(state->residual_buffer);
+
+    free(state->image_patches);
+    free(state->vision_embed);
+    free(state->vision_hidden);
+    free(state->vision_norm);
+
+    memset(state, 0, sizeof(QwenRunState));
+}

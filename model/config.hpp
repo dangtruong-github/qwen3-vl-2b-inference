@@ -96,5 +96,29 @@ typedef struct {
 } QwenWeight;
 
 typedef struct {
-    int b;
+    // ---- General ----
+    const QwenConfig* config;   // Pointer to config for shape references
+    int seq_len;                // Current token sequence length
+    int img_height, img_width;  // For patch extraction
+
+    // ---- Language Buffers ----
+    float* hidden_states;       // [seq_len, hidden_size]
+    float* attn_output;         // [seq_len, hidden_size]
+    float* mlp_intermediate;    // [seq_len, intermediate_size]
+    float* logits;              // [vocab_size]
+
+    // ---- Attention cache (for autoregressive decoding) ----
+    float* key_cache;           // [num_hidden_layers, num_key_value_heads, max_position_embeddings, head_dim]
+    float* value_cache;         // same shape
+
+    // ---- Vision Buffers ----
+    float* image_patches;       // [n_patches, patch_dim]
+    float* vision_embed;        // [n_patches + 1, vision_hidden_size]
+    bool vision_embed_true;
+    float* vision_hidden;       // [n_patches + 1, vision_hidden_size]
+    float* vision_norm;         // [vision_hidden_size]
+
+    // ---- Temporary Buffers ----
+    float* norm_buffer;         // [hidden_size]
+    float* residual_buffer;     // [hidden_size]
 } QwenRunState;
