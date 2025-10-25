@@ -70,7 +70,10 @@ def main():
         input_token_ids = inputs["input_ids"][0].tolist()
 
         with torch.no_grad():
-            generated = model.generate(**inputs, max_new_tokens=1024)
+            generated = model.generate(
+                **inputs, max_new_tokens=1024,
+                do_sample=False, num_beams=1
+            )
 
         output_token_ids = generated[0].tolist()
         decoded_text = processor.batch_decode(generated, skip_special_tokens=True)[0]
