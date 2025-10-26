@@ -3,10 +3,8 @@
 #include <math.h>
 #include <float.h>
 
-#include "model/include/load_model.hpp"
-#include "model/include/forward.hpp"
-#include "model/config.hpp"
-#include "tokenizer/include/utils.hpp"
+#include "model/module.hpp"
+#include "tokenizer/module.hpp"
 
 // ------------------------------------------------------------
 // Main entry
