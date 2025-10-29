@@ -102,6 +102,7 @@ __marimo__/
 
 # 1️⃣ Ignore everything by default
 *
+!Makefile.sample
 
 # 2️⃣ Re-include directories so we can traverse them
 !*/

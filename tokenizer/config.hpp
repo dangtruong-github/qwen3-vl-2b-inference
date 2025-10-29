@@ -22,6 +22,7 @@ typedef struct {
     TokenIndex* sorted_vocab;
     int vocab_size;
     char **merges;
+    TokenIndex* sorted_merge;
     int merges_size;
     unsigned int max_token_length;
     unsigned char byte_pieces[512];

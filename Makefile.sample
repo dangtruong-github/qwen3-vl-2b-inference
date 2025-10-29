@@ -1,0 +1,60 @@
+# === Compiler setup ===
+NVCC := nvcc
+GPP  := g++
+CXXFLAGS := -std=c++17 -O2 -fopenmp
+NVCCFLAGS := -std=c++17 -O2 -Xcompiler -fopenmp
+
+# === Manually list top-level modules ===
+MODULES := tokenizer model
+
+# === Automatically derived directories ===
+SRC_DIRS := $(foreach m,$(MODULES),$(m)/src)
+INCLUDE_DIRS := $(foreach m,$(MODULES),$(m)/include)
+CONFIG_DIRS := $(foreach m,$(MODULES),$(m))
+MODULE_HEADERS := $(foreach m,$(MODULES),$(m)/module.hpp)
+
+# === Build directories ===
+BUILD_DIR := build
+OBJ_DIR := $(BUILD_DIR)/obj
+
+# === Sources & Objects ===
+SRC_FILES := run.cpp $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
+OBJ_FILES := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
+
+# === Include flags ===
+INCLUDE_FLAGS := $(foreach dir,$(INCLUDE_DIRS),-I$(dir)) $(foreach dir,$(CONFIG_DIRS),-I$(dir))
+
+# === Output binary ===
+TARGET := run
+
+# === Default target ===
+all: cpu
+
+# === CPU build ===
+cpu: CXX := $(GPP)
+cpu: FLAGS := $(CXXFLAGS)
+cpu: MODE := CPU
+cpu: $(TARGET)
+
+# === GPU build ===
+gpu: CXX := $(NVCC)
+gpu: FLAGS := $(NVCCFLAGS)
+gpu: MODE := GPU
+gpu: $(TARGET)
+
+# === Build rule ===
+$(TARGET): $(OBJ_FILES)
+	@echo "⚙️  Linking for $(MODE) mode..."
+	$(CXX) $(FLAGS) $(OBJ_FILES) -o $@
+	@echo "✅  Build complete ($(MODE) mode): ./$(TARGET)"
+
+# === Object build rule ===
+$(OBJ_DIR)/%.o: %.cpp $(MODULE_HEADERS)
+	@mkdir -p $(dir $@)
+	@echo "⚙️  Compiling $< ($(MODE) mode)..."
+	$(CXX) $(FLAGS) $(INCLUDE_FLAGS) -c $< -o $@
+
+# === Clean ===
+clean:
+	rm -rf $(BUILD_DIR) $(TARGET)
+	@echo "🧹 Cleaned build files."

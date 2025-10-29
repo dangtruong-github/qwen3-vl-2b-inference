@@ -81,6 +81,7 @@ def main():
         results.append({
             "image": os.path.basename(image_path) if image_path else None,
             "input_text": text,
+            "prompt_text": prompt_text,
             "input_token_ids": input_token_ids,
             "output_token_ids": output_token_ids,
             "output_text": decoded_text
@@ -90,7 +91,6 @@ def main():
         json.dump(results, f, ensure_ascii=False, indent=2)
 
     print(f"✅ Saved input/output token IDs and decoded text to {args.output}")
-
 
 if __name__ == "__main__":
     main()
