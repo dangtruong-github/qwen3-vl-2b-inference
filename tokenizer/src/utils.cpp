@@ -5,16 +5,26 @@ int compare_tokens(const void *a, const void *b) {
 }
 
 void concat_merge(const char *a, const char *b, char **c) {
-    // Calculate total length: a + space + b + null terminator
-    size_t len = strlen(a) + 1 + strlen(b) + 1;
-    *c = (char *)malloc(len);
-
-    if (*c == NULL) {
-        printf("Memory allocation failed\n");
+    if (a == NULL || b == NULL || c == NULL) {
+        fprintf(stderr, "Invalid NULL argument to concat_merge\n");
         exit(EXIT_FAILURE);
     }
 
-    snprintf(*c, len, "%s %s", a, b);
+    // Calculate total length: a + space + b + null terminator
+    size_t len_a = strlen(a);
+    size_t len_b = strlen(b);
+    size_t total_len = len_a + 1 + len_b + 1;
+
+    *c = (char *)malloc(total_len);
+    if (*c == NULL) {
+        fprintf(stderr, "Memory allocation failed in concat_merge\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Perform concatenation manually
+    strcpy(*c, a);
+    strcat(*c, " ");
+    strcat(*c, b);
 }
 
 int greedy_decode(float* logits, int vocab_size) {
@@ -80,167 +90,195 @@ void tokenizer_example(TokenizerStruct *tokenizer) {
     printf("--------------------\n");
 }
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-// Assuming TokenizerStruct and lookup functions are defined elsewhere.
-// For the purpose of this solution, we define a common PAD token ID.
-#define PAD_TOKEN_ID 0
-
-void encode(TokenizerStruct *t, char *text, int *tokens, int max_len, int *n_tokens) {
-    if (!text) {
+void encode(TokenizerStruct *t, char *text, int *tokens, int *n_tokens, char *img_path) {
+    if (text == NULL) {
         fprintf(stderr, "cannot encode NULL text\n");
         exit(EXIT_FAILURE);
     }
 
-    // --- Allocate str_buffer immediately for safe cleanup ---
     char *str_buffer = (char*)malloc((t->max_token_length * 2 + 4) * sizeof(char));
     if (!str_buffer) {
-        perror("malloc failed for str_buffer");
+        fprintf(stderr, "Error: failed to allocate str_buffer\n");
         exit(EXIT_FAILURE);
     }
+
     *n_tokens = 0;
 
-    // The wrapper requires 8 tokens. If max_len is too small, return 0 tokens.
-    if (max_len < 3 + 5) {
-        *n_tokens = 0;
-        free(str_buffer);
-        return; 
-    }
-    
     // ------------------------------------------------------------
-    // 1. Append 'Ċ' (as in original code)
+    // 1. Append "Ċ" if missing
     // ------------------------------------------------------------
     size_t text_len = strlen(text);
-    char *text_with_nl = (char*)malloc(text_len + 2);
+    char *text_with_nl = (char*)malloc(text_len + 4);
     if (!text_with_nl) {
-        perror("malloc failed for text_with_nl");
-        free(str_buffer);
+        fprintf(stderr, "Error: failed to allocate text_with_nl\n");
         exit(EXIT_FAILURE);
     }
     strcpy(text_with_nl, text);
     strcat(text_with_nl, "Ċ");
-    
+
+    printf("Finish step 1\n");
+    fflush(stdout);
+
     // ------------------------------------------------------------
-    // 2. UTF-8 aware byte tokenization (as in original code)
+    // 2. UTF-8 aware byte tokenization
     // ------------------------------------------------------------
     size_t str_len = 0;
-    for (char *c = text_with_nl; *c != '\0'; c++) {
-        // NOTE: The original loop did not check against max_len here,
-        // relying on BPE to reduce token count later. We keep that behavior.
-        if ((*c & 0xC0) != 0x80) str_len = 0;
+    char *c = text_with_nl;
+
+    while (*c != '\0') {
+        if (((unsigned char)(*c) & 0xC0) != 0x80)
+            str_len = 0;
 
         str_buffer[str_len++] = *c;
         str_buffer[str_len] = '\0';
 
-        if ((*(c + 1) & 0xC0) == 0x80 && str_len < 4) continue;
+        if (((unsigned char)*(c + 1) & 0xC0) == 0x80 && str_len < 4) {
+            c++;
+            continue;
+        }
 
         int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
         if (id != -1) {
-            tokens[(*n_tokens)++] = id;
+            tokens[*n_tokens] = id;
+            (*n_tokens)++;
         } else {
             int space_id = str_lookup("Ġ", t->sorted_vocab, t->vocab_size);
-            tokens[(*n_tokens)++] = space_id;
+            tokens[*n_tokens] = space_id;
+            (*n_tokens)++;
         }
 
         str_len = 0;
+        c++;
     }
+
     free(text_with_nl);
 
+    printf("Finish step 2\n");
+    fflush(stdout);
+
     // ------------------------------------------------------------
-    // 3. BPE merges (lowest-rank first) (as in original code)
+    // 3. BPE merges (lowest-rank first)
     // ------------------------------------------------------------
-    // ... BPE merge loop as in original code ...
     while (1) {
         int best_rank = t->merges_size + 1;
         int best_idx = -1;
         int best_id = -1;
-        // ... (The rest of the BPE logic) ...
-        for (int i = 0; i < (*n_tokens - 1); i++) {
-            int id1 = tokens[i], id2 = tokens[i + 1];
-            if (id1 < 0 || id2 < 0) continue;
+
+        if (*n_tokens < 2)
+            break;
+
+        for (int i = 0; i < *n_tokens - 1; i++) {
+            int id1 = tokens[i];
+            int id2 = tokens[i + 1];
+            if (id1 < 0 || id2 < 0)
+                continue;
 
             int rank = merge_lookup(t->vocab[id1], t->vocab[id2],
-                                     t->sorted_merge, t->merges_size);
+                                    t->sorted_merge, t->merges_size);
             if (rank >= 0 && rank < best_rank) {
                 best_rank = rank;
                 best_idx = i;
-                snprintf(str_buffer, t->max_token_length * 2 + 4,
-                          "%s%s", t->vocab[id1], t->vocab[id2]);
-                best_id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
+
+                // safe string concatenation
+                int len1 = (int)strlen(t->vocab[id1]);
+                int len2 = (int)strlen(t->vocab[id2]);
+                if (len1 + len2 + 1 < (int)(t->max_token_length * 2 + 4)) {
+                    strcpy(str_buffer, t->vocab[id1]);
+                    strcat(str_buffer, t->vocab[id2]);
+                    best_id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
+                } else {
+                    fprintf(stderr, "Merged token too long, skipping.\n");
+                    best_id = -1;
+                }
             }
         }
 
-        if (best_idx == -1 || best_id == -1) break;
+        if (best_idx == -1 || best_id == -1)
+            break;
 
         tokens[best_idx] = best_id;
-        for (int j = best_idx + 1; j < (*n_tokens - 1); j++)
+        for (int j = best_idx + 1; j < *n_tokens - 1; j++) {
             tokens[j] = tokens[j + 1];
+        }
         (*n_tokens)--;
     }
 
+    printf("Finish step 3\n");
+    fflush(stdout);
 
     // ------------------------------------------------------------
-    // 4. Remove placeholders (-1) if any remain (as in original code)
+    // 4. Remove placeholders (-1)
     // ------------------------------------------------------------
-    int valid_n = 0;
-    for (int i = 0; i < *n_tokens; i++) {
-        if (tokens[i] != -1)
-            tokens[valid_n++] = tokens[i];
+    {
+        int valid_n = 0;
+        for (int i = 0; i < *n_tokens; i++) {
+            if (tokens[i] != -1)
+                tokens[valid_n++] = tokens[i];
+        }
+        *n_tokens = valid_n;
     }
-    *n_tokens = valid_n;
+
+    printf("Finish step 4\n");
+    fflush(stdout);
 
     // ------------------------------------------------------------
-    // 5. Wrap chat-style prompt and Truncate if needed
+    // 5. Wrap chat-style prompt
     // ------------------------------------------------------------
     const int im_start = 151644;
     const int im_end = 151645;
     const int user_tok = 872;
     const int assistant_tok = 77091;
     const int newline_tok = 198;
+    const int vision_start = 151652;
+    const int image_pad = 151655;
+    const int vision_end = 151653;
 
-    int prefix[] = {im_start, user_tok, newline_tok};
-    int suffix[] = {im_end, newline_tok, im_start, assistant_tok, newline_tok};
-    const int prefix_len = 3;
-    const int suffix_len = 5;
+    int num_img_pad = 0;  // dynamically computed later if needed
+    int prefix_len = (num_img_pad > 0) ? (4 + num_img_pad + 2) : 3;
+
+    int *prefix = (int*)malloc(prefix_len * sizeof(int));
+    if (!prefix) {
+        fprintf(stderr, "Error: failed to allocate prefix\n");
+        exit(EXIT_FAILURE);
+    }
+
+    int idx = 0;
+    prefix[idx++] = im_start;
+    prefix[idx++] = user_tok;
+    prefix[idx++] = newline_tok;
+
+    if (num_img_pad > 0) {
+        prefix[idx++] = vision_start;
+        for (int i = 0; i < num_img_pad; i++)
+            prefix[idx++] = image_pad;
+        prefix[idx++] = vision_end;
+        prefix[idx++] = newline_tok;
+    }
+
+    printf("Finish prepping prefix\n");
+    fflush(stdout);
+
+    int suffix[5];
+    suffix[0] = im_end;
+    suffix[1] = newline_tok;
+    suffix[2] = im_start;
+    suffix[3] = assistant_tok;
+    suffix[4] = newline_tok;
 
     int orig_n = *n_tokens;
-    int min_total_n = prefix_len + suffix_len; // 8 tokens for wrapper
-    
-    // Calculate the number of tokens available for the original content
-    int content_max_len = max_len - min_total_n;
-    
-    // Truncate the original content if it's too long
-    if (orig_n > content_max_len) {
-        // If the original content is too long, truncate it.
-        orig_n = content_max_len > 0 ? content_max_len : 0;
-    }
-    
-    // The final total number of tokens (after truncation and wrapping)
-    int wrapped_n = prefix_len + orig_n + suffix_len;
-    
-    // --- Perform the wrapper insertion/truncation ---
+    int total_n = prefix_len + orig_n + 5;
 
-    // 1. Make space for the prefix and content (or truncate the content)
-    // We only move up to orig_n elements (the potentially truncated content).
+    // Shift tokens to make room for prefix
     memmove(tokens + prefix_len, tokens, orig_n * sizeof(int));
-    
-    // 2. Insert the prefix
     memcpy(tokens, prefix, prefix_len * sizeof(int));
-    
-    // 3. Insert the suffix right after the content
-    memcpy(tokens + prefix_len + orig_n, suffix, suffix_len * sizeof(int));
-    
-    // ------------------------------------------------------------
-    // 6. Set final token count (NO PADDING)
-    // ------------------------------------------------------------
+    memcpy(tokens + prefix_len + orig_n, suffix, 5 * sizeof(int));
 
-    // If wrapped_n > max_len, this is only possible if content_max_len was negative
-    // (i.e., max_len was < 8), but we handled that with an early return.
-    // If we reached here, the final length is guaranteed to be <= max_len.
-    *n_tokens = wrapped_n;
-    
+    *n_tokens = total_n;
+
+    free(prefix);
     free(str_buffer);
+
+    printf("Finish step 5\n");
+    fflush(stdout);
 }
 

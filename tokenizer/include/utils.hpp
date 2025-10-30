@@ -7,4 +7,4 @@
 int compare_tokens(const void *a, const void *b);
 int greedy_decode(float* logits, int vocab_size);
 void tokenizer_example(TokenizerStruct *tokenizer);
-void encode(TokenizerStruct *t, char *text, int *tokens, int max_len, int *n_tokens);
+void encode(TokenizerStruct *t, char *text, int *tokens, int *n_tokens, char *img_path);
