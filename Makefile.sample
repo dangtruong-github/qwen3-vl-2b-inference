@@ -4,6 +4,9 @@ GPP  := g++
 CXXFLAGS := -std=c++17 -O2 -fopenmp
 NVCCFLAGS := -std=c++17 -O2 -Xcompiler -fopenmp
 
+# === Path to your conda environment ===
+CONDA_PATH := /your/conda/path
+
 # === Manually list top-level modules ===
 MODULES := tokenizer model
 
@@ -18,14 +21,20 @@ BUILD_DIR := build
 OBJ_DIR := $(BUILD_DIR)/obj
 
 # === Sources & Objects ===
-SRC_FILES := run.cpp $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
+SRC_FILES := main.cpp $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
 OBJ_FILES := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 
 # === Include flags ===
-INCLUDE_FLAGS := $(foreach dir,$(INCLUDE_DIRS),-I$(dir)) $(foreach dir,$(CONFIG_DIRS),-I$(dir))
+INCLUDE_FLAGS := $(foreach dir,$(INCLUDE_DIRS),-I$(dir)) \
+                 $(foreach dir,$(CONFIG_DIRS),-I$(dir)) \
+                 -I$(CONDA_PATH)/include/opencv4
+
+# === OpenCV linking flags ===
+OPENCV_LIBS := -L$(CONDA_PATH)/lib \
+               -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_imgcodecs
 
 # === Output binary ===
-TARGET := run
+TARGET := main
 
 # === Default target ===
 all: cpu
@@ -45,7 +54,7 @@ gpu: $(TARGET)
 # === Build rule ===
 $(TARGET): $(OBJ_FILES)
 	@echo "⚙️  Linking for $(MODE) mode..."
-	$(CXX) $(FLAGS) $(OBJ_FILES) -o $@
+	$(CXX) $(FLAGS) $(OBJ_FILES) $(OPENCV_LIBS) -o $@
 	@echo "✅  Build complete ($(MODE) mode): ./$(TARGET)"
 
 # === Object build rule ===

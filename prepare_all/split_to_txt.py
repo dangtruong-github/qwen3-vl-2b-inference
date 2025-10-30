@@ -2,7 +2,7 @@ import json
 import argparse
 import os
 
-def split_json_to_files(json_filepath, input_text_file, input_tokens_file, output_text_file, output_tokens_file, image_path_file):
+def split_json_to_files(args):
     """
     Reads a JSON file and splits data into four user-specified text files. 
     Internal newlines ('\n') in text fields are explicitly escaped to '\\n'.
@@ -10,11 +10,11 @@ def split_json_to_files(json_filepath, input_text_file, input_tokens_file, outpu
     
     # Fixed mapping from the JSON field key to the specific output file path variable
     FIELD_FILE_MAP = {
-        'input_text': input_text_file,
-        'input_token_ids': input_tokens_file,
-        'output_text': output_text_file,
-        'output_token_ids': output_tokens_file,
-        'image': image_path_file
+        'input_text': args.input_text_file,
+        'input_token_ids': args.input_tokens_file,
+        'output_text': args.output_text_file,
+        'output_token_ids': args.output_tokens_file,
+        'image': args.image_path_file
     }
     
     # Initialize dictionaries to hold the collected data
@@ -22,24 +22,28 @@ def split_json_to_files(json_filepath, input_text_file, input_tokens_file, outpu
 
     # --- 1. Read the JSON data ---
     try:
-        with open(json_filepath, 'r', encoding='utf-8') as f:
+        with open(args.input_json, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
         if not isinstance(data, list):
-            print(f"Error: JSON file '{json_filepath}' does not contain a list of objects (a list of records).")
+            print(f"Error: JSON file '{args.input_json}' does not contain a list of objects (a list of records).")
             return
 
     except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
-        print(f"Error reading/parsing '{json_filepath}': {e}")
+        print(f"Error reading/parsing '{args.input_json}': {e}")
         return
     
-    print(f"Successfully loaded {len(data)} records from '{json_filepath}'.")
+    print(f"Successfully loaded {len(data)} records from '{args.input_json}'.")
     print("Internal newlines (\\n) in text fields will be converted to the literal string '\\\\n'.")
 
     # --- 2. Iterate and Collect Data ---
     missing_fields_warning = set()
 
     for record in data:
+        if args.get_null:
+            if record["image"]:
+                continue
+
         for field_key, file_path in FIELD_FILE_MAP.items():
             if field_key in record:
                 value = record[field_key]
@@ -54,6 +58,11 @@ def split_json_to_files(json_filepath, input_text_file, input_tokens_file, outpu
                     # Token ID lists: convert list of numbers to a space-separated string
                     line = ' '.join(map(str, value))
                 
+                elif field_key == "image":
+                    if value is None:
+                        line = "None"
+                    else:
+                        line = os.path.join(args.image_path_prefix, str(value))
                 else:
                     # Fallback
                     line = str(value)
@@ -108,16 +117,15 @@ def main():
     # 5. Output File for "output_token_ids"
     parser.add_argument('--image_path_file', type=str, help='Output path for "image".')
     
+    # 6. Prefix for image path
+    parser.add_argument('--image_path_prefix', type=str, help='Prefix for image path".')
+    
+    # 7. Null get
+    parser.add_argument('--get_null', action='store_true', help='Enable prefix for image path')
+    
     args = parser.parse_args()
     
-    split_json_to_files(
-        args.input_json,
-        args.input_text_file,
-        args.input_tokens_file,
-        args.output_text_file,
-        args.output_tokens_file,
-        args.image_path_file
-    )
+    split_json_to_files(args)
 
 if __name__ == '__main__':
     main()

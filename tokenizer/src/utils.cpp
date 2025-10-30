@@ -1,4 +1,58 @@
+#include <opencv2/opencv.hpp>
+
 #include "../include/utils.hpp"
+
+void read_img_size(const char *img_path, int *height, int *width) {
+    if (img_path == nullptr) {
+        std::cerr << "Error: image file not found: " << std::endl;
+        *height = 0;
+        *width = 0;
+        return;
+    }
+
+    // Read the image using OpenCV
+    cv::Mat img = cv::imread(img_path);
+
+    if (img.empty()) {
+        std::cerr << "Error: Could not read the image file: " << img_path << std::endl;
+        *height = 0;
+        *width = 0;
+        return;
+    }
+
+    // Assign height and width
+    *height = img.rows;
+    *width = img.cols;
+}
+
+int get_num_img_pad(const char *img_path, int patch_size) {
+    int height, width;
+    read_img_size(img_path, &height, &width);
+
+    if (height <= 0 || width <= 0) {
+        fprintf(stderr, "Invalid image dimensions.\n");
+        return 0;
+    }
+
+    // Compute number of patch rows/cols (ceil division)
+    int Hp = (height + patch_size - 1) / patch_size;
+    int Wp = (width  + patch_size - 1) / patch_size;
+
+    // Actual patch tokens
+    int actual_patches = Hp * Wp;
+
+    // Pad to square grid (Qwen-like behavior)
+    int S = (Hp > Wp) ? Hp : Wp;
+    int expected_patches = S * S;
+
+    // Expected padding tokens
+    int exp_img_pad = (expected_patches - actual_patches) * 3 / 4;
+
+    printf("Height=%d, Width=%d, Hp=%d, Wp=%d, Actual=%d, Expected=%d, Padding=%d\n",
+           height, width, Hp, Wp, actual_patches, expected_patches, exp_img_pad);
+
+    return exp_img_pad;
+}
 
 int compare_tokens(const void *a, const void *b) {
     return strcmp(((TokenIndex*)a)->str, ((TokenIndex*)b)->str);
@@ -90,7 +144,10 @@ void tokenizer_example(TokenizerStruct *tokenizer) {
     printf("--------------------\n");
 }
 
-void encode(TokenizerStruct *t, char *text, int *tokens, int *n_tokens, char *img_path) {
+void encode(
+    TokenizerStruct *t, char *text, int *tokens, int *n_tokens,
+    char *img_path, int patch_size
+) {
     if (text == NULL) {
         fprintf(stderr, "cannot encode NULL text\n");
         exit(EXIT_FAILURE);
@@ -115,9 +172,6 @@ void encode(TokenizerStruct *t, char *text, int *tokens, int *n_tokens, char *im
     }
     strcpy(text_with_nl, text);
     strcat(text_with_nl, "Ċ");
-
-    printf("Finish step 1\n");
-    fflush(stdout);
 
     // ------------------------------------------------------------
     // 2. UTF-8 aware byte tokenization
@@ -152,9 +206,6 @@ void encode(TokenizerStruct *t, char *text, int *tokens, int *n_tokens, char *im
     }
 
     free(text_with_nl);
-
-    printf("Finish step 2\n");
-    fflush(stdout);
 
     // ------------------------------------------------------------
     // 3. BPE merges (lowest-rank first)
@@ -203,9 +254,6 @@ void encode(TokenizerStruct *t, char *text, int *tokens, int *n_tokens, char *im
         (*n_tokens)--;
     }
 
-    printf("Finish step 3\n");
-    fflush(stdout);
-
     // ------------------------------------------------------------
     // 4. Remove placeholders (-1)
     // ------------------------------------------------------------
@@ -217,9 +265,6 @@ void encode(TokenizerStruct *t, char *text, int *tokens, int *n_tokens, char *im
         }
         *n_tokens = valid_n;
     }
-
-    printf("Finish step 4\n");
-    fflush(stdout);
 
     // ------------------------------------------------------------
     // 5. Wrap chat-style prompt
@@ -233,7 +278,7 @@ void encode(TokenizerStruct *t, char *text, int *tokens, int *n_tokens, char *im
     const int image_pad = 151655;
     const int vision_end = 151653;
 
-    int num_img_pad = 0;  // dynamically computed later if needed
+    int num_img_pad = get_num_img_pad(img_path, patch_size);  // dynamically computed later if needed
     int prefix_len = (num_img_pad > 0) ? (4 + num_img_pad + 2) : 3;
 
     int *prefix = (int*)malloc(prefix_len * sizeof(int));
@@ -255,9 +300,6 @@ void encode(TokenizerStruct *t, char *text, int *tokens, int *n_tokens, char *im
         prefix[idx++] = newline_tok;
     }
 
-    printf("Finish prepping prefix\n");
-    fflush(stdout);
-
     int suffix[5];
     suffix[0] = im_end;
     suffix[1] = newline_tok;
@@ -277,8 +319,5 @@ void encode(TokenizerStruct *t, char *text, int *tokens, int *n_tokens, char *im
 
     free(prefix);
     free(str_buffer);
-
-    printf("Finish step 5\n");
-    fflush(stdout);
 }
 

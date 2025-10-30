@@ -3,39 +3,58 @@
 #include <string.h> // For strcmp, strtok
 #include <math.h>
 #include <float.h>
+#include <stdint.h>
 
-// Note: Assuming these headers contain the necessary struct definitions and function prototypes
-// for QwenConfig, QwenWeight, QwenRunState, TokenizerStruct,
-// init_tokenizer, init_model_weights, init_model_run_state,
-// free_model_run_state, free_model_weights, free_tokenizer,
-// and the crucial: encode(tokenizer, prompt, prompt_tokens, num_prompt_tokens_ptr)
 #include "model/module.hpp"
 #include "tokenizer/module.hpp"
 
-// Define a maximum buffer size for reading lines from files
-#define MAX_LINE_LENGTH 4096
+char* read_full_line(FILE* f) {
+    if (!f) return NULL;
 
-/**
- * @brief Validates the tokenizer by comparing the output of the encode function
- * with expected token IDs from two files: prompt.txt and token_ids.txt.
- *
- * @param tokenizer A pointer to the initialized TokenizerStruct.
- * @param prompt_file_path Path to the file containing text prompts (one per line).
- * @param tokens_file_path Path to the file containing expected token IDs (space-separated integers, one line per prompt).
- * @return int 0 on successful validation of all samples, 1 if any sample fails validation or a file error occurs.
- */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
+    size_t bufsize = 8192;
+    size_t len = 0;
+    char* buffer = (char*)malloc(bufsize);
+    if (!buffer) {
+        fprintf(stderr, "Memory allocation failed for line buffer\n");
+        exit(EXIT_FAILURE);
+    }
 
-int tokenizer_validate(TokenizerStruct* tokenizer,
-                       const char* prompt_file_path,
-                       const char* tokens_file_path) {
+    int c;
+    while ((c = fgetc(f)) != EOF) {
+        if (len + 1 >= bufsize) {
+            bufsize *= 2;
+            char* new_buffer = (char*)realloc(buffer, bufsize);
+            if (!new_buffer) {
+                fprintf(stderr, "Memory reallocation failed for line buffer\n");
+                free(buffer);
+                exit(EXIT_FAILURE);
+            }
+            buffer = new_buffer;
+        }
+
+        buffer[len++] = (char)c;
+        if (c == '\n') break;
+    }
+
+    if (len == 0 && c == EOF) {
+        free(buffer);
+        return NULL;
+    }
+
+    buffer[len] = '\0';
+    return buffer;
+}
+
+int tokenizer_validate(
+    TokenizerStruct* tokenizer,
+    const char* prompt_file_path,
+    const char* tokens_file_path,
+    const char* img_file_path,
+    int patch_size
+) {
     FILE* prompt_file = fopen(prompt_file_path, "r");
     FILE* tokens_file = fopen(tokens_file_path, "r");
-    int validation_failures = 0;
-    int sample_count = 0;
+    FILE* img_file = fopen(img_file_path, "r");
 
     if (!prompt_file) {
         fprintf(stderr, "Error: Could not open prompt file: %s\n", prompt_file_path);
@@ -46,18 +65,33 @@ int tokenizer_validate(TokenizerStruct* tokenizer,
         fclose(prompt_file);
         return 1;
     }
+    if (!img_file) {
+        fprintf(stderr, "Error: Could not open image path file: %s\n", img_file_path);
+        fclose(prompt_file);
+        fclose(tokens_file);
+        return 1;
+    }
 
     printf("\nStarting Tokenizer Validation...\n");
     setbuf(stdout, NULL);
 
-    char prompt_line[8192];
-    char tokens_line[8192];
+    int validation_failures = 0;
+    int sample_count = 0;
 
-    while (fgets(prompt_line, sizeof(prompt_line), prompt_file) &&
-           fgets(tokens_line, sizeof(tokens_line), tokens_file)) {
-        printf("Starting new cycle...\n");
+    while (1) {
+        char* prompt_line = read_full_line(prompt_file);
+        char* tokens_line = read_full_line(tokens_file);
+        char* img_line = read_full_line(img_file);
+
+        if (!prompt_line || !tokens_line || !img_line) {
+            free(prompt_line);
+            free(tokens_line);
+            free(img_line);
+            break;
+        }
 
         sample_count++;
+        printf("Starting new cycle %d...\n", sample_count);
         int is_valid = 1;
 
         // ------------------------------------------------------------
@@ -72,38 +106,33 @@ int tokenizer_validate(TokenizerStruct* tokenizer,
             token_ptr = strtok(NULL, " \t\r\n");
         }
 
-        printf("Finish step 1 out\n");
+        // ------------------------------------------------------------
+        // 2. Clean up input strings
+        // ------------------------------------------------------------
+        size_t len_prompt = strlen(prompt_line);
+        if (len_prompt > 0 && (prompt_line[len_prompt - 1] == '\n' || prompt_line[len_prompt - 1] == '\r'))
+            prompt_line[len_prompt - 1] = '\0';
+
+        size_t len_img = strlen(img_line);
+        if (len_img > 0 && (img_line[len_img - 1] == '\n' || img_line[len_img - 1] == '\r'))
+            img_line[len_img - 1] = '\0';
 
         // ------------------------------------------------------------
-        // 2. Encode the prompt
+        // 3. Encode
         // ------------------------------------------------------------
-        int max_tokens = (int)strlen(prompt_line) + 8;
+        int max_tokens = (int)strlen(prompt_line) + 100000;
         int* actual_tokens = (int*)malloc(max_tokens * sizeof(int));
         int num_actual_tokens = 0;
 
         if (!actual_tokens) {
             fprintf(stderr, "Error: Memory allocation failed for actual_tokens.\n");
-            abort();
+            exit(EXIT_FAILURE);
         }
 
-        // remove trailing newline
-        size_t len = strlen(prompt_line);
-        if (len > 0 && (prompt_line[len - 1] == '\n' || prompt_line[len - 1] == '\r'))
-            prompt_line[len - 1] = '\0';
-
-        char* prompt_cstr = (char*)malloc(strlen(prompt_line) + 2);
-        if (!prompt_cstr) {
-            fprintf(stderr, "Error: Memory allocation failed for prompt_cstr.\n");
-            abort();
-        }
-        strcpy(prompt_cstr, prompt_line);
-
-        encode(tokenizer, prompt_cstr, actual_tokens, &num_actual_tokens, NULL);
-
-        printf("Finish step 2 out\n");
+        encode(tokenizer, prompt_line, actual_tokens, &num_actual_tokens, img_line, patch_size);
 
         // ------------------------------------------------------------
-        // 3. Compare Results
+        // 4. Compare Results
         // ------------------------------------------------------------
         if (num_actual_tokens != expected_count) {
             printf("\n❌ Sample %d FAILED: Token count mismatch.\n", sample_count);
@@ -121,19 +150,15 @@ int tokenizer_validate(TokenizerStruct* tokenizer,
             }
         }
 
-        printf("Finish step 3 out\n");
-
         // ------------------------------------------------------------
-        // 4. Print detailed mismatch if failed
+        // 5. Print detailed mismatch if failed
         // ------------------------------------------------------------
         if (!is_valid) {
             validation_failures++;
-
             printf("  Expected Tokens (%d): ", expected_count);
             for (int i = 0; i < expected_count; ++i)
                 printf("%d ", expected_tokens[i]);
             printf("\n");
-
             printf("  Actual Tokens (%d):   ", num_actual_tokens);
             for (int i = 0; i < num_actual_tokens; ++i)
                 printf("%d ", actual_tokens[i]);
@@ -142,41 +167,18 @@ int tokenizer_validate(TokenizerStruct* tokenizer,
             printf("✅ Sample %d validated successfully.\n", sample_count);
         }
 
-        printf("Finish step 4 out\n");
-
-        // ------------------------------------------------------------
-        // Clean up with pointer sanity checks
-        // ------------------------------------------------------------
-        if (prompt_cstr) {
-            uintptr_t addr = (uintptr_t)prompt_cstr;
-            if (addr % alignof(char) != 0) {
-                fprintf(stderr, "\nInvalid pointer alignment detected for prompt_cstr at sample %d\n", sample_count);
-                abort();
-            }
-            free(prompt_cstr);
-        }
-
-        if (actual_tokens) {
-            uintptr_t addr = (uintptr_t)actual_tokens;
-            if (addr % alignof(int) != 0) {
-                fprintf(stderr, "\nInvalid pointer alignment detected for actual_tokens at sample %d\n", sample_count);
-                abort();
-            }
-            free(actual_tokens);
-        }
+        // Cleanup
+        free(prompt_line);
+        free(tokens_line);
+        free(img_line);
+        free(actual_tokens);
 
         printf("End of cycle %d\n", sample_count);
     }
 
-    // Check if files ended simultaneously
-    int prompt_eof = feof(prompt_file);
-    int tokens_eof = feof(tokens_file);
-    if (prompt_eof != tokens_eof) {
-        fprintf(stderr, "\nWarning: prompt.txt and token_ids.txt do not have the same number of lines. Validation may be incomplete.\n");
-    }
-
     fclose(prompt_file);
     fclose(tokens_file);
+    fclose(img_file);
 
     printf("\n--- Validation Summary ---\n");
     printf("Total Samples Processed: %d\n", sample_count);
@@ -184,6 +186,7 @@ int tokenizer_validate(TokenizerStruct* tokenizer,
 
     return (validation_failures > 0) ? 1 : 0;
 }
+
 
 
 // -----------------------------------------------------------
@@ -253,7 +256,9 @@ int main(int argc, char** argv) {
     // ----------------------------------------------------
     // CALL THE VALIDATION FUNCTION HERE
     // ----------------------------------------------------
-    int validation_result = tokenizer_validate(tokenizer, "data/input_text_null.txt", "data/input_tokens_null.txt");
+    int validation_result = tokenizer_validate(
+        tokenizer, "data/input_text.txt", "data/input_tokens.txt",
+        "data/image_path.txt", config->vision_patch_size);
     
     if (validation_result == 0) {
         printf("\n✅ ALL TOKENIZER VALIDATION SAMPLES PASSED!\n");
