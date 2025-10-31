@@ -21,6 +21,8 @@ typedef struct {
     int vision_hidden_size;
     int vision_depth;
     int vision_patch_size;
+    int vision_spatial_merge_size;
+    int vision_temporal_patch_size;
     int vision_num_heads;
     int vision_intermediate_size;
     int out_hidden_size;

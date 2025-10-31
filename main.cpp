@@ -45,12 +45,58 @@ char* read_full_line(FILE* f) {
     return buffer;
 }
 
+void get_expected_tokens(const char *tokens_line, int **out_tokens, int *out_count) {
+    if (!tokens_line || !out_tokens || !out_count) {
+        fprintf(stderr, "get_expected_tokens: invalid arguments\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Duplicate the input string since strtok modifies it
+    char *line_copy = strdup(tokens_line);
+    if (!line_copy) {
+        fprintf(stderr, "Memory allocation failed in get_expected_tokens\n");
+        exit(EXIT_FAILURE);
+    }
+
+    int capacity = 8192;
+    int *tokens = (int *)malloc(capacity * sizeof(int));
+    if (!tokens) {
+        fprintf(stderr, "Memory allocation failed for tokens\n");
+        free(line_copy);
+        exit(EXIT_FAILURE);
+    }
+
+    int count = 0;
+    char *token_ptr = strtok(line_copy, " \t\r\n");
+
+    while (token_ptr) {
+        if (count >= capacity) {
+            capacity *= 2;
+            int *tmp = (int *)realloc(tokens, capacity * sizeof(int));
+            if (!tmp) {
+                fprintf(stderr, "Memory reallocation failed\n");
+                free(tokens);
+                free(line_copy);
+                exit(EXIT_FAILURE);
+            }
+            tokens = tmp;
+        }
+
+        tokens[count++] = atoi(token_ptr);
+        token_ptr = strtok(NULL, " \t\r\n");
+    }
+
+    *out_tokens = tokens;
+    *out_count = count;
+    free(line_copy);
+}
+
 int tokenizer_validate(
     TokenizerStruct* tokenizer,
     const char* prompt_file_path,
     const char* tokens_file_path,
     const char* img_file_path,
-    int patch_size
+    int patch_size, int merge_size
 ) {
     FILE* prompt_file = fopen(prompt_file_path, "r");
     FILE* tokens_file = fopen(tokens_file_path, "r");
@@ -97,14 +143,13 @@ int tokenizer_validate(
         // ------------------------------------------------------------
         // 1. Parse expected tokens
         // ------------------------------------------------------------
-        int expected_tokens[8192];
+        int *expected_tokens = NULL;
         int expected_count = 0;
 
-        char* token_ptr = strtok(tokens_line, " \t\r\n");
-        while (token_ptr && expected_count < 8192) {
-            expected_tokens[expected_count++] = atoi(token_ptr);
-            token_ptr = strtok(NULL, " \t\r\n");
-        }
+        get_expected_tokens(tokens_line, &expected_tokens, &expected_count);
+
+        // Use expected_tokens[0..expected_count-1]
+        // ...
 
         // ------------------------------------------------------------
         // 2. Clean up input strings
@@ -129,14 +174,14 @@ int tokenizer_validate(
             exit(EXIT_FAILURE);
         }
 
-        encode(tokenizer, prompt_line, actual_tokens, &num_actual_tokens, img_line, patch_size);
+        encode(tokenizer, prompt_line, actual_tokens, &num_actual_tokens, img_line, patch_size, merge_size);
 
         // ------------------------------------------------------------
         // 4. Compare Results
         // ------------------------------------------------------------
         if (num_actual_tokens != expected_count) {
             printf("\n❌ Sample %d FAILED: Token count mismatch.\n", sample_count);
-            printf("  Prompt: %s\n", prompt_line);
+            // printf("  Prompt: %s\n", prompt_line);
             printf("  Expected Count: %d, Actual Count: %d\n", expected_count, num_actual_tokens);
             is_valid = 0;
         } else {
@@ -164,6 +209,10 @@ int tokenizer_validate(
                 printf("%d ", actual_tokens[i]);
             printf("\n");
         } else {
+            printf("  Expected Tokens (%d): ", expected_count);
+            printf("\n");
+            printf("  Actual Tokens (%d):   ", num_actual_tokens);
+            printf("\n");
             printf("✅ Sample %d validated successfully.\n", sample_count);
         }
 
@@ -172,6 +221,7 @@ int tokenizer_validate(
         free(tokens_line);
         free(img_line);
         free(actual_tokens);
+        free(expected_tokens);  // don't forget to free after use
 
         printf("End of cycle %d\n", sample_count);
     }
@@ -249,6 +299,7 @@ int main(int argc, char** argv) {
     init_model_run_state(state, config);
 
     // tokenizer_example(tokenizer);
+    print_config(config);
 
     printf("Model and Tokenizer initialized successfully.\n");
     fflush(stdout);
@@ -258,7 +309,7 @@ int main(int argc, char** argv) {
     // ----------------------------------------------------
     int validation_result = tokenizer_validate(
         tokenizer, "data/input_text.txt", "data/input_tokens.txt",
-        "data/image_path.txt", config->vision_patch_size);
+        "data/image_path.txt", config->vision_patch_size, config->vision_spatial_merge_size);
     
     if (validation_result == 0) {
         printf("\n✅ ALL TOKENIZER VALIDATION SAMPLES PASSED!\n");

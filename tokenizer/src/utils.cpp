@@ -25,33 +25,65 @@ void read_img_size(const char *img_path, int *height, int *width) {
     *width = img.cols;
 }
 
-int get_num_img_pad(const char *img_path, int patch_size) {
-    int height, width;
+void smart_resize_qwen3(
+    int height, int width,
+    int *h_bar, int *w_bar,
+    int factor, long long min_pixels, long long max_pixels
+) {
+    // 1. Check aspect ratio
+    double aspect_ratio = (height > width) ? (double)height / width : (double)width / height;
+    if (aspect_ratio > 200.0) {
+        fprintf(stderr, "Error: aspect ratio %.2f exceeds 200.0\n", aspect_ratio);
+        exit(EXIT_FAILURE);
+    }
+
+    // 2. Round to nearest multiple of factor
+    *h_bar = (int)round((double)height / factor) * factor;
+    *w_bar = (int)round((double)width / factor) * factor;
+
+    long long pixels = (long long)(*h_bar) * (*w_bar);
+
+    // 3. Adjust for too large or too small total area
+    if (pixels > max_pixels) {
+        double beta = sqrt((double)(height * width) / max_pixels);
+        *h_bar = (int)fmax(factor, floor((height / beta) / factor) * factor);
+        *w_bar = (int)fmax(factor, floor((width / beta) / factor) * factor);
+    } else if (pixels < min_pixels) {
+        double beta = sqrt((double)min_pixels / (height * width));
+        *h_bar = (int)ceil((height * beta) / factor) * factor;
+        *w_bar = (int)ceil((width * beta) / factor) * factor;
+    }
+}
+
+int get_num_img_pad(const char *img_path, int patch_size, int merge_size) {
+    int height, width, h_bar, w_bar;
+
+    // TODO: Implement your OpenCV read_img_size(img_path, &height, &width)
     read_img_size(img_path, &height, &width);
 
     if (height <= 0 || width <= 0) {
-        fprintf(stderr, "Invalid image dimensions.\n");
+        fprintf(stderr, "Invalid image dimensions for %s\n", img_path);
         return 0;
     }
 
-    // Compute number of patch rows/cols (ceil division)
-    int Hp = (height + patch_size - 1) / patch_size;
-    int Wp = (width  + patch_size - 1) / patch_size;
+    const int factor = patch_size * merge_size;  // 32
+    const long long min_pixels = 56ll * 56ll;               // 3136
+    const long long max_pixels = 14ll * 14ll * 4ll * 16384ll; // 12845056
 
-    // Actual patch tokens
-    int actual_patches = Hp * Wp;
+    smart_resize_qwen3(height, width, &h_bar, &w_bar, factor, min_pixels, max_pixels);
 
-    // Pad to square grid (Qwen-like behavior)
-    int S = (Hp > Wp) ? Hp : Wp;
-    int expected_patches = S * S;
+    int grid_h = h_bar / patch_size;
+    int grid_w = w_bar / patch_size;
 
-    // Expected padding tokens
-    int exp_img_pad = (expected_patches - actual_patches) * 3 / 4;
+    int num_patches = grid_h * grid_w;
+    int num_image_tokens = num_patches / (merge_size * merge_size);
 
-    printf("Height=%d, Width=%d, Hp=%d, Wp=%d, Actual=%d, Expected=%d, Padding=%d\n",
-           height, width, Hp, Wp, actual_patches, expected_patches, exp_img_pad);
+    printf("Image: %s\n", img_path);
+    printf("Orig HxW = %dx%d → Resized = %dx%d\n", height, width, h_bar, w_bar);
+    printf("Grid = %dx%d → Num patches = %d → Num image tokens = %d\n",
+           grid_h, grid_w, num_patches, num_image_tokens);
 
-    return exp_img_pad;
+    return num_image_tokens;
 }
 
 int compare_tokens(const void *a, const void *b) {
@@ -146,7 +178,7 @@ void tokenizer_example(TokenizerStruct *tokenizer) {
 
 void encode(
     TokenizerStruct *t, char *text, int *tokens, int *n_tokens,
-    char *img_path, int patch_size
+    char *img_path, int patch_size, int merge_size
 ) {
     if (text == NULL) {
         fprintf(stderr, "cannot encode NULL text\n");
@@ -278,7 +310,7 @@ void encode(
     const int image_pad = 151655;
     const int vision_end = 151653;
 
-    int num_img_pad = get_num_img_pad(img_path, patch_size);  // dynamically computed later if needed
+    int num_img_pad = get_num_img_pad(img_path, patch_size, merge_size);  // dynamically computed later if needed
     int prefix_len = (num_img_pad > 0) ? (4 + num_img_pad + 2) : 3;
 
     int *prefix = (int*)malloc(prefix_len * sizeof(int));

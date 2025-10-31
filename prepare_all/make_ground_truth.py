@@ -45,7 +45,7 @@ def main():
     print(f"Loading model from {args.model_dir} ...")
     model = AutoModelForImageTextToText.from_pretrained(
         args.model_dir,
-        dtype=torch.float32,  # use float16 if GPU supports it
+        dtype=torch.float32,
         low_cpu_mem_usage=True
     ).to(device)
     processor = AutoProcessor.from_pretrained(args.model_dir)
@@ -57,7 +57,7 @@ def main():
     for i, (image_path, text) in enumerate(samples, start=1):
         print(f"[{i}/{len(samples)}] Processing {'(text-only)' if image_path is None else os.path.basename(image_path or '')}")
 
-        # Construct prompt and inputs properly
+        # Construct prompt and inputs
         if image_path and os.path.exists(image_path):
             image = Image.open(image_path).convert("RGB")
             prompt_text = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{text}\n<|im_end|>\n<|im_start|>assistant\n"
@@ -66,31 +66,37 @@ def main():
             prompt_text = f"<|im_start|>user\n{text}\n<|im_end|>\n<|im_start|>assistant\n"
             inputs = processor(text=prompt_text, return_tensors="pt").to(device)
 
-        # Extract input token IDs before generation
         input_token_ids = inputs["input_ids"][0].tolist()
+        num_img_pad_input = input_token_ids.count(151655)
 
         with torch.no_grad():
             generated = model.generate(
-                **inputs, max_new_tokens=1024,
-                do_sample=False, num_beams=1
+                **inputs,
+                max_new_tokens=1024,
+                do_sample=False,
+                num_beams=1
             )
 
+        # Separate input and output tokens
         output_token_ids = generated[0].tolist()
-        decoded_text = processor.batch_decode(generated, skip_special_tokens=True)[0]
+        generated_only = generated[0][inputs["input_ids"].shape[-1]:]
+        decoded_text = processor.batch_decode(generated_only.unsqueeze(0), skip_special_tokens=True)[0]
 
         results.append({
             "image": os.path.basename(image_path) if image_path else None,
             "input_text": text,
             "prompt_text": prompt_text,
+            "num_img_pad_input": num_img_pad_input,
             "input_token_ids": input_token_ids,
             "output_token_ids": output_token_ids,
-            "output_text": decoded_text
+            "output_text": decoded_text,
         })
 
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 
-    print(f"✅ Saved input/output token IDs and decoded text to {args.output}")
+    print(f"✅ Saved input/output token IDs and decoded text (without prompt) to {args.output}")
+
 
 if __name__ == "__main__":
     main()

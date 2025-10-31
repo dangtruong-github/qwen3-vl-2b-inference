@@ -9,5 +9,5 @@ int greedy_decode(float* logits, int vocab_size);
 void tokenizer_example(TokenizerStruct *tokenizer);
 void encode(
     TokenizerStruct *t, char *text, int *tokens, int *n_tokens,
-    char *img_path, int patch_size
+    char *img_path, int patch_size, int merge_size
 );

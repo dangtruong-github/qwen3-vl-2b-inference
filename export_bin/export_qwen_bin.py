@@ -48,6 +48,8 @@ KEYS = [
     "vision_hidden_size",      # Mapped from vision_config.hidden_size
     "vision_depth",            # Mapped from vision_config.depth
     "vision_patch_size",       # Mapped from vision_config.patch_size
+    "vision_spatial_merge_size", # Mapped from vision_config.spatial_merge_size
+    "vision_temporal_patch_size", # Mapped from vision_config.temporal_patch_size
     "vision_num_heads",        # Mapped from vision_config.num_heads
     "vision_intermediate_size",# Mapped from vision_config.intermediate_size
     "out_hidden_size",         # Mapped from vision_config.out_hidden_size
@@ -170,6 +172,8 @@ def write_config_header(config: dict, fout) -> None:
     cfg_map["vision_hidden_size"] = vision_cfg.get("hidden_size")
     cfg_map["vision_depth"] = vision_cfg.get("depth")
     cfg_map["vision_patch_size"] = vision_cfg.get("patch_size")
+    cfg_map["vision_spatial_merge_size"] = vision_cfg.get("spatial_merge_size")
+    cfg_map["vision_temporal_patch_size"] = vision_cfg.get("temporal_patch_size")
     cfg_map["vision_num_heads"] = vision_cfg.get("num_heads")
     cfg_map["vision_intermediate_size"] = vision_cfg.get("intermediate_size")
     cfg_map["out_hidden_size"] = vision_cfg.get("out_hidden_size") # <-- Crucial line

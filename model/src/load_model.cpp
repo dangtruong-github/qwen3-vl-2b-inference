@@ -26,6 +26,8 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
         (fread(&(config->vision_hidden_size), sizeof(int), 1, file) != 1) ||
         (fread(&(config->vision_depth), sizeof(int), 1, file) != 1) ||
         (fread(&(config->vision_patch_size), sizeof(int), 1, file) != 1) ||
+        (fread(&(config->vision_spatial_merge_size), sizeof(int), 1, file) != 1) ||
+        (fread(&(config->vision_temporal_patch_size), sizeof(int), 1, file) != 1) ||
         (fread(&(config->vision_num_heads), sizeof(int), 1, file) != 1) ||
         (fread(&(config->vision_intermediate_size), sizeof(int), 1, file) != 1) ||
         (fread(&(config->out_hidden_size), sizeof(int), 1, file) != 1) ||
