@@ -202,9 +202,6 @@ void tokenizer_example(TokenizerStruct *tokenizer) {
     printf("--------------------\n");
 }
 
-// Replace your existing encode(...) with this version.
-// NOTE: requires standard headers already included: <stdio.h>, <stdlib.h>, <string.h>, <stdint.h>, <stdbool.h>
-
 static bool byte_to_unicode_initialized = false;
 static char *byte_to_unicode[256];
 
@@ -516,4 +513,51 @@ void encode(
 
     free(prefix);
     free(str_buffer);
+}
+
+static inline int starts_with_utf8(const char *s, const char *utf8_char) {
+    return (strncmp(s, utf8_char, strlen(utf8_char)) == 0);
+}
+
+void decode(
+    TokenizerStruct *t, char *text, size_t text_size, int *tokens, int n_tokens
+) {
+    if (!t || !text || !tokens || text_size == 0) return;
+
+    char *out = text;
+    size_t remaining = text_size - 1; // leave space for null terminator
+
+    const char *utf8_space = "Ġ";
+    const char *utf8_newline = "Ċ";
+    size_t len_space = strlen(utf8_space);
+    size_t len_newline = strlen(utf8_newline);
+
+    for (int i = 0; i < n_tokens; i++) {
+        const char *cur_word = t->vocab[tokens[i]];
+        if (!cur_word) continue;
+
+        int start = 0;
+        while (starts_with_utf8(cur_word + start, utf8_space))
+            start += len_space;
+
+        // --- one leading space if Ġ found ---
+        if (start > 0 && remaining > 0) {
+            *out++ = ' ';
+            remaining--;
+        }
+
+        // --- copy with Ċ → '\n' replacement ---
+        for (int j = start; cur_word[j] != '\0' && remaining > 0; ) {
+            if (starts_with_utf8(cur_word + j, utf8_newline)) {
+                *out++ = '\n';
+                remaining--;
+                j += len_newline;
+            } else {
+                *out++ = cur_word[j++];
+                remaining--;
+            }
+        }
+    }
+
+    *out = '\0';
 }

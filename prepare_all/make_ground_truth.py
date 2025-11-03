@@ -77,10 +77,18 @@ def main():
                 num_beams=1
             )
 
-        # Separate input and output tokens
-        output_token_ids = generated[0].tolist()
+        # ---- Clean output tokens (remove special tokens) ----
+        output_token_ids_full = generated[0].tolist()
         generated_only = generated[0][inputs["input_ids"].shape[-1]:]
-        decoded_text = processor.batch_decode(generated_only.unsqueeze(0), skip_special_tokens=True)[0]
+
+        # remove special tokens from generated-only part
+        special_tokens = set(processor.tokenizer.all_special_ids)
+        output_token_ids_clean = [tid for tid in generated_only.tolist() if tid not in special_tokens]
+
+        decoded_text = processor.batch_decode(
+            torch.tensor(output_token_ids_clean).unsqueeze(0),
+            skip_special_tokens=True
+        )[0]
 
         results.append({
             "image": os.path.basename(image_path) if image_path else None,
@@ -88,7 +96,7 @@ def main():
             "prompt_text": prompt_text,
             "num_img_pad_input": num_img_pad_input,
             "input_token_ids": input_token_ids,
-            "output_token_ids": output_token_ids,
+            "output_token_ids": output_token_ids_clean,  # cleaned version
             "output_text": decoded_text,
         })
 

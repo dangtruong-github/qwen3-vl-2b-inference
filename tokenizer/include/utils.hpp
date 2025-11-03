@@ -11,3 +11,6 @@ void encode(
     TokenizerStruct *t, char *text, int *tokens, int *n_tokens,
     char *img_path, int patch_size, int merge_size
 );
+void decode(
+    TokenizerStruct *t, char *text, size_t text_size, int *tokens, int n_tokens
+);

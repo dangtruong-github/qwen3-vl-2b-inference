@@ -274,6 +274,120 @@ int tokenizer_validate(
     return (validation_failures > 0) ? 1 : 0;
 }
 
+int decode_validate(
+    TokenizerStruct* tokenizer,
+    const char* prompt_file_path,
+    const char* tokens_file_path
+) {
+    FILE* prompt_file = fopen(prompt_file_path, "r");
+    FILE* tokens_file = fopen(tokens_file_path, "r");
+
+    if (!prompt_file) {
+        fprintf(stderr, "Error: Could not open prompt file: %s\n", prompt_file_path);
+        return 1;
+    }
+    if (!tokens_file) {
+        fprintf(stderr, "Error: Could not open token IDs file: %s\n", tokens_file_path);
+        fclose(prompt_file);
+        return 1;
+    }
+
+    printf("\nStarting Decode Validation...\n");
+    setbuf(stdout, NULL);
+
+    int validation_failures = 0;
+    int sample_count = 0;
+
+    while (1) {
+        char* prompt_line = read_full_line(prompt_file);
+        char* tokens_line = read_full_line(tokens_file);
+
+        if (!prompt_line || !tokens_line) {
+            free(prompt_line);
+            free(tokens_line);
+            break;
+        }
+
+        convert_endl(&prompt_line);
+        sample_count++;
+        printf("Starting new cycle %d...\n", sample_count);
+
+        // ------------------------------------------------------------
+        // 1. Parse token IDs
+        // ------------------------------------------------------------
+        int *tokens = NULL;
+        int n_tokens = 0;
+        get_expected_tokens(tokens_line, &tokens, &n_tokens);
+
+        // ------------------------------------------------------------
+        // 2. Clean expected prompt text
+        // ------------------------------------------------------------
+        size_t len_prompt = strlen(prompt_line);
+        if (len_prompt > 0 && (prompt_line[len_prompt - 1] == '\n' || prompt_line[len_prompt - 1] == '\r'))
+            prompt_line[len_prompt - 1] = '\0';
+
+        // ------------------------------------------------------------
+        // 3. Allocate decode buffer safely
+        // ------------------------------------------------------------
+        size_t buf_size = len_prompt * 6 + 8192;
+        char *decoded_text = (char*)calloc(1, buf_size);
+        if (!decoded_text) {
+            fprintf(stderr, "Error: Memory allocation failed for decoded_text.\n");
+            exit(EXIT_FAILURE);
+        }
+
+        // ------------------------------------------------------------
+        // 4. Decode
+        // ------------------------------------------------------------
+        decode(tokenizer, decoded_text, buf_size, tokens, n_tokens);
+
+        // ------------------------------------------------------------
+        // 5. Compare decoded text with expected
+        // ------------------------------------------------------------
+        int is_valid = 1;
+        if (strcmp(prompt_line, decoded_text) != 0) {
+            is_valid = 0;
+            validation_failures++;
+
+            printf("\n❌ Sample %d FAILED: Decoded text mismatch.\n", sample_count);
+            printf("  Expected: \"%s\"\n", prompt_line);
+            printf("  Decoded:  \"%s\"\n", decoded_text);
+
+            // Optional: show first differing character
+            size_t mismatch_idx = 0;
+            while (prompt_line[mismatch_idx] &&
+                   decoded_text[mismatch_idx] &&
+                   prompt_line[mismatch_idx] == decoded_text[mismatch_idx])
+                mismatch_idx++;
+
+            printf("  Diff starts at index %zu:\n", mismatch_idx);
+            printf("    expected: '%c' (0x%02X)\n", prompt_line[mismatch_idx], (unsigned char)prompt_line[mismatch_idx]);
+            printf("    decoded:  '%c' (0x%02X)\n", decoded_text[mismatch_idx], (unsigned char)decoded_text[mismatch_idx]);
+        } else {
+            printf("✅ Sample %d validated successfully.\n", sample_count);
+        }
+
+        // ------------------------------------------------------------
+        // 6. Cleanup
+        // ------------------------------------------------------------
+        free(prompt_line);
+        free(tokens_line);
+        free(tokens);
+        free(decoded_text);
+
+        printf("End of cycle %d\n", sample_count);
+    }
+
+    fclose(prompt_file);
+    fclose(tokens_file);
+
+    printf("\n--- Decode Validation Summary ---\n");
+    printf("Total Samples Processed: %d\n", sample_count);
+    printf("Total Failures: %d\n", validation_failures);
+    
+    return (validation_failures > 0) ? 1 : 0;
+}
+
 // -----------------------------------------------------------
 // Existing main function updated to call the validation function
 // -----------------------------------------------------------
@@ -342,9 +456,9 @@ int main(int argc, char** argv) {
     // ----------------------------------------------------
     // CALL THE VALIDATION FUNCTION HERE
     // ----------------------------------------------------
-    int validation_result = tokenizer_validate(
-        tokenizer, "data/input_text.txt", "data/input_tokens.txt",
-        "data/image_path.txt", config->vision_patch_size, config->vision_spatial_merge_size);
+    int validation_result = decode_validate(
+        tokenizer, "data/output_text.txt", "data/output_tokens.txt"
+    );
     
     if (validation_result == 0) {
         printf("\n✅ ALL TOKENIZER VALIDATION SAMPLES PASSED!\n");
