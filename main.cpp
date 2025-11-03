@@ -91,6 +91,35 @@ void get_expected_tokens(const char *tokens_line, int **out_tokens, int *out_cou
     free(line_copy);
 }
 
+void convert_endl(char **prompt_line) {
+    if (prompt_line == NULL || *prompt_line == NULL)
+        return;
+
+    char *src = *prompt_line;
+    size_t len = strlen(src);
+
+    // Allocate new buffer (same size is enough since result is shorter)
+    char *dst = (char *)malloc((len + 1) * sizeof(char));
+    if (!dst) {
+        fprintf(stderr, "Memory allocation failed in convert_endl\n");
+        exit(EXIT_FAILURE);
+    }
+
+    char *out = dst;
+    while (*src) {
+        if (src[0] == '\\' && src[1] == 'n') {
+            *out++ = '\n';
+            src += 2; // skip both '\' and 'n'
+        } else {
+            *out++ = *src++;
+        }
+    }
+    *out = '\0';
+
+    free(*prompt_line);
+    *prompt_line = dst;
+}
+
 int tokenizer_validate(
     TokenizerStruct* tokenizer,
     const char* prompt_file_path,
@@ -135,6 +164,8 @@ int tokenizer_validate(
             free(img_line);
             break;
         }
+
+        convert_endl(&prompt_line);
 
         sample_count++;
         printf("Starting new cycle %d...\n", sample_count);
@@ -201,12 +232,18 @@ int tokenizer_validate(
         if (!is_valid) {
             validation_failures++;
             printf("  Expected Tokens (%d): ", expected_count);
-            for (int i = 0; i < expected_count; ++i)
-                printf("%d ", expected_tokens[i]);
+            for (int i = 0; i < expected_count; ++i) {
+                if (expected_tokens[i] != 151655) {   
+                    printf("%s ", tokenizer->vocab[expected_tokens[i]]);
+                }
+            }
             printf("\n");
             printf("  Actual Tokens (%d):   ", num_actual_tokens);
-            for (int i = 0; i < num_actual_tokens; ++i)
-                printf("%d ", actual_tokens[i]);
+            for (int i = 0; i < num_actual_tokens; ++i) {
+                if (actual_tokens[i] != 151655) {   
+                    printf("%s ", tokenizer->vocab[actual_tokens[i]]);
+                }
+            }
             printf("\n");
         } else {
             printf("  Expected Tokens (%d): ", expected_count);
@@ -236,8 +273,6 @@ int tokenizer_validate(
 
     return (validation_failures > 0) ? 1 : 0;
 }
-
-
 
 // -----------------------------------------------------------
 // Existing main function updated to call the validation function
