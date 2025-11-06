@@ -14,6 +14,7 @@ def split_json_to_files(args):
         'input_token_ids': args.input_tokens_file,
         'output_text': args.output_text_file,
         'output_token_ids': args.output_tokens_file,
+        'output_token_ids_full': args.output_tokens_full_file,
         'image': args.image_path_file
     }
     
@@ -54,7 +55,7 @@ def split_json_to_files(args):
                     # and the actual character.
                     line = str(value).replace('\n', '\\n')
                 
-                elif field_key in ['input_token_ids', 'output_token_ids'] and isinstance(value, list):
+                elif field_key in ['input_token_ids', 'output_token_ids', 'output_token_ids_full'] and isinstance(value, list):
                     # Token ID lists: convert list of numbers to a space-separated string
                     line = ' '.join(map(str, value))
                 
@@ -113,6 +114,9 @@ def main():
     
     # 5. Output File for "output_token_ids"
     parser.add_argument('--output_tokens_file', type=str, help='Output path for "output_token_ids".')
+
+    # 5. Output File for "output_token_ids_full"
+    parser.add_argument('--output_tokens_full_file', type=str, help='Output path for "output_token_ids".')
     
     # 5. Output File for "output_token_ids"
     parser.add_argument('--image_path_file', type=str, help='Output path for "image".')

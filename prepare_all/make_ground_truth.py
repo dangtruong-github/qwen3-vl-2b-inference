@@ -97,6 +97,7 @@ def main():
             "num_img_pad_input": num_img_pad_input,
             "input_token_ids": input_token_ids,
             "output_token_ids": output_token_ids_clean,  # cleaned version
+            "output_token_ids_full": output_token_ids_full,
             "output_text": decoded_text,
         })
 
