@@ -13,4 +13,17 @@ int argmax(const float* array, int size);
 
 
 // ------------------------ Helper functions ------------------------
-
+void embedding_lookup(
+    const float *embedding /*[vocab, hidden]*/,
+    int token_id, float *out /*[hidden]*/,
+    size_t vocab_size, size_t hidden
+);
+void rms_norm(
+    const float *x /*[hidden]*/, const float *scale /*[hidden]*/,
+    float *out /*[hidden]*/, float eps, size_t hidden_size
+);
+void classifier_gemm(
+    const float *embedding /*[vocab, hidden]*/,
+    const float *hid_states /*[hidden]*/, float *logits /*[vocab]*/,
+    size_t vocab_size, size_t hidden_size
+);

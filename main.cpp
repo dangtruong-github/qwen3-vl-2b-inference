@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
     // ----------------------------------------------------
     // CALL THE VALIDATION FUNCTION HERE
     // ----------------------------------------------------
-    int validation_result = forward_validate("data/input_tokens_null.txt", "data/output_tokens_full_null.txt", config, weights, state);
+    int validation_result = forward_validate("data/input_1.txt", "data/output_1.txt", config, weights, state);
     
     if (validation_result == 0) {
         printf("\n✅ ALL FORWARD VALIDATION SAMPLES PASSED!\n");

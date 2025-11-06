@@ -8,11 +8,10 @@ void forward_example(QwenConfig *config, QwenWeight *weights, QwenRunState* stat
 
     // Forward pass
     forward_image_encoder(state, weights, image);
-    forward_language(state, weights, input_tokens, n_tokens);
-    forward_transformer(state, weights);
+    
 
     // Get final logits
-    float* logits = state->logits; // [vocab_size]
+    float* logits = forward_llm(config, state, weights, input_tokens[0]); // [vocab_size]
 
     printf("Logits: ");
     for (int i = 0; i < 5; i++) {
@@ -85,16 +84,10 @@ int forward_validate(const char *in_token_file, const char *out_token_file, Qwen
         sample_count++;
         printf("Starting new forward cycle %d...\n", sample_count);
 
-        // ------------------------------------------------------------
-        // 1. Parse input tokens (initial prompt)
-        // ------------------------------------------------------------
         int *input_tokens = NULL;
         int input_count = 0;
-        get_expected_tokens(in_line, &input_tokens, &input_count);
+        get_expected_tokens(in_line, &input_tokens, &input_count);\
 
-        // ------------------------------------------------------------
-        // 2. Parse expected output tokens (full generated sequence)
-        // ------------------------------------------------------------
         int *expected_tokens = NULL;
         int expected_count = 0;
         get_expected_tokens(out_line, &expected_tokens, &expected_count);
@@ -102,10 +95,6 @@ int forward_validate(const char *in_token_file, const char *out_token_file, Qwen
         // ------------------------------------------------------------
         // 3. Reset state and run initial forward pass
         // ------------------------------------------------------------
-        // Reset the run state for clean inference
-        // reset_run_state(state);
-        
-        // Run forward pass without image (nullptr)
         forward_image_encoder(state, weight, nullptr);  // No image
         
         // ------------------------------------------------------------
@@ -128,10 +117,7 @@ int forward_validate(const char *in_token_file, const char *out_token_file, Qwen
         while (pos < 1024) { // max steps
             // Forward the transformer to get logits for the next token
             // Using your existing forward functions
-            forward_language(state, weight, &token, 1);
-            forward_transformer(state, weight);
-            
-            float* logits = state->logits;
+            float *logits = forward_llm(config, state, weight, token);
 
             // Advance the state machine - similar to run.cpp
             if (pos < input_count - 1) {
