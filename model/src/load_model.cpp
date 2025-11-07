@@ -402,6 +402,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
 
     state->value_cache = (float*)malloc(cache_size);
     CHECK_ALLOC(state->value_cache, cache_size);
+
+    qwen_rope_precompute(state->cos_tensor, state->sin_tensor, config);
 }
 
 void free_model_run_state(QwenRunState* state) {
@@ -426,4 +428,52 @@ void free_model_run_state(QwenRunState* state) {
     if (state->value_cache) free(state->value_cache);
 
     memset(state, 0, sizeof(QwenRunState));
+}
+
+void qwen_rope_precompute(
+    float *cos_all_out,  // (seq_len * head_dim/2)
+    float *sin_all_out,  // (seq_len * head_dim/2)
+    const QwenConfig *config
+) {
+    int seq_len = 1024;
+    int head_dim = 128;
+    float rope_theta = 5000000.0f;
+    const int mrope_section[] = {24, 20, 20};
+    int num_sections = 3;
+    bool mrope_interleaved = true;
+
+    int d_half = head_dim / 2;
+
+    // --- Step 1: compute inv_freq (standard RoPE)
+    float *inv_freq = (float *)malloc(d_half * sizeof(float));
+    for (int i = 0; i < d_half; i++) {
+        inv_freq[i] = 1.0f / powf(rope_theta, (2.0f * i) / (float)head_dim);
+    }
+
+    // --- Step 2: optionally handle mRoPE interleaving ---
+    // For Qwen with "rope_type": "default", rope_theta is same across sections,
+    // so we just leave inv_freq as-is.
+    // If you wanted to enforce section-based remapping, here’s where you’d do it.
+
+    // Example of section-wise adjustment (not needed for "default")
+    // int offset = 0;
+    // for (int s = 0; s < num_sections; ++s) {
+    //     int section_len = mrope_section[s];
+    //     for (int i = 0; i < section_len && (offset + i) < d_half; ++i) {
+    //         inv_freq[offset + i] = 1.0f / powf(rope_theta, (2.0f * (offset + i)) / head_dim);
+    //     }
+    //     offset += section_len;
+    // }
+
+    // --- Step 3: precompute sin/cos for all positions ---
+    for (int pos = 0; pos < seq_len; pos++) {
+        for (int j = 0; j < d_half; j++) {
+            float angle = (float)pos * inv_freq[j];
+            int index = pos * d_half + j;
+            cos_all_out[index] = cosf(angle);
+            sin_all_out[index] = sinf(angle);
+        }
+    }
+
+    free(inv_freq);
 }

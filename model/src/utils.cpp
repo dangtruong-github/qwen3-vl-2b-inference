@@ -135,6 +135,11 @@ int forward_validate(const char *in_token_file, const char *out_token_file, Qwen
             }
 
             printf("%d ", generated_tokens[pos]);
+            printf("\nLogits: ");
+            for (int i = 0; i < 5; i++) {
+                printf("%.6f ", logits[i]);
+            }
+            printf("\n");
 
             // Data-dependent terminating condition - match your EOS tokens
             // Using the same condition as original forward_validate

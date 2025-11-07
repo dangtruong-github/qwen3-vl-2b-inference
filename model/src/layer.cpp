@@ -169,7 +169,7 @@ void softmax(float *x, size_t size) {
     }
 }
 
-// Attention scores for 1 head: att[0..pos] = q·k_t / sqrt(hd) (+ mask)
+// Fix attn_scores_all_heads function:
 void attn_scores_all_heads(
     const float *key_cache, const float *q, float *att, size_t loff_one,
     size_t layer_offset, size_t attn_heads, int kv_mul, int head_dim,
@@ -178,61 +178,82 @@ void attn_scores_all_heads(
     long long loff = 1ll * layer_offset * loff_one;
 
     for (int h = 0; h < attn_heads; h++) {
-        // get the query vector for this head
         const float *q_head = q + h * head_dim;
-
-        // attention scores for this head
         float *att_head = att + h * seq_len;
-
-        // Get the key cache for this head group (GQA)
         int kv_head_idx = h / kv_mul;
 
         // Compute attention scores
         for (int t = 0; t <= pos; t++) {
-            // Calculate the correct key position
+            // FIX: Correct key cache indexing - each position has kv_dim elements
             const float *k = key_cache + loff + t * kv_dim + kv_head_idx * head_dim;
             double score = 0.0;
             for (int i = 0; i < head_dim; i++) {
-                score += q_head[i] * k[i];
+                score += (double)q_head[i] * (double)k[i];
             }
-            score /= sqrtf(head_dim);
-            att_head[t] = score;
+            score /= sqrtf((float)head_dim);
+            att_head[t] = (float)score;
         }
 
-        // softmax the scores to get attention weights
         softmax(att_head, (size_t)pos + 1);
     }
 }
 
+// Fix attn_weighted_sum_all_heads function:
 void attn_weighted_sum_all_heads(
     const float *value_cache, const float *q, const float *att, float *tb,
     size_t loff, int attn_heads, int kv_mul, int head_dim, int kv_dim,
     int seq_len, int pos
 ) {
-    // For each head, compute attention scores and weighted sum
+    // Initialize output to zero
+    memset(tb, 0, attn_heads * head_dim * sizeof(float));
+
     for (int h = 0; h < attn_heads; h++) {
-        // get the query vector for this head
-        const float *q_head = q + h * head_dim;
-
-        // attention scores for this head
         const float *att_head = att + h * seq_len;
-
-        // Get the key cache for this head group (GQA)
         int kv_head_idx = h / kv_mul;
-
-        // Create mask if needed
-        // Get the value cache for this head group (GQA)
-
-        // weighted sum of the values
         float *tb_head = tb + h * head_dim;
 
-        memset(tb_head, 0, head_dim * sizeof(float));
         for (int t = 0; t <= pos; t++) {
-            const float *v = (value_cache + loff) + t * kv_dim + kv_head_idx * head_dim;
+            // FIX: Correct value cache indexing
+            const float *v = value_cache + loff + t * kv_dim + kv_head_idx * head_dim;
             float a = att_head[t];
             for (int i = 0; i < head_dim; i++) {
                 tb_head[i] += a * v[i];
             }
+        }
+    }
+}
+
+void apply_rotary(
+    float *x /*[n_heads*hd]*/, const float *cos_table /*[seq_len*hd/2]*/,
+    const float *sin_table /*[seq_len*hd/2]*/, int n_heads, int head_dim,
+    int pos
+) {
+    int half = head_dim / 2;
+
+    for (int h = 0; h < n_heads; h++) {
+        for (int i = 0; i < half; i++) {
+            // --- THIS IS THE KEY CHANGE ---
+            // Calculate the index to look up the cos/sin values for the given position.
+            // The tables are logically 2D [pos, i], so the 1D index is pos * (width) + i.
+            int rope_idx = pos * half + i;
+            float c = cos_table[rope_idx];
+            float s = sin_table[rope_idx];
+
+            // --- The rotation logic remains the same ---
+            // Indexing for the input tensor: head h, dim i
+            int x_idx1 = h * head_dim + i;         // first half
+            int x_idx2 = h * head_dim + half + i;  // second half
+
+            float x1 = x[x_idx1];
+            float x2 = x[x_idx2];
+
+            // Apply the 2D rotation
+            float o1 = x1 * c - x2 * s;
+            float o2 = x2 * c + x1 * s;
+
+            // Write the results back
+            x[x_idx1] = o1;
+            x[x_idx2] = o2;
         }
     }
 }

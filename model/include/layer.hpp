@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstring>
 
+// #define DEBUG
+
 // Forward declarations for helper functions
 void layer_norm(float* buffer, const float* input, const float* weight, const float* bias,
                 int hidden_size, float eps);
@@ -52,4 +54,9 @@ void attn_weighted_sum_all_heads(
     const float *value_cache, const float *q, const float *att, float *tb,
     size_t loff, int attn_heads, int kv_mul, int head_dim, int kv_dim,
     int seq_len, int pos
+);
+void apply_rotary(
+    float *x /*[n_heads*hd]*/, const float *cos_table /*[seq_len*hd/2]*/,
+    const float *sin_table /*[seq_len*hd/2]*/, int n_heads, int head_dim,
+    int pos
 );
