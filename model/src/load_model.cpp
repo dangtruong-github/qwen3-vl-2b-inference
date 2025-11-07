@@ -337,60 +337,93 @@ void free_model_weights(QwenWeight* weights) {
 
 void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     memset(state, 0, sizeof(QwenRunState));
-    state->config = config;
-    state->seq_len = config->max_position_embeddings;
+    state->vision_embed_true = false;
 
-    int H = config->hidden_size;
-    int I = config->intermediate_size;
-    int V = config->vocab_size;
-    int VH = config->vision_hidden_size;
-    int VP = config->vision_patch_size;
-    int n_patches = (config->vision_hidden_size > 0)
-        ? (256)  // Typically 16x16 patches
-        : 0;
+    int H   = config->hidden_size;
+    int I   = config->intermediate_size;
+    int V   = config->vocab_size;
+    int L   = config->num_hidden_layers;
+    int NH  = config->num_attention_heads;
+    int NKV = config->num_key_value_heads;
+    int D   = 128;
+    int S   = 1024;
 
-    long sz_hidden = (long)state->seq_len * H * sizeof(float);
-    long sz_inter = (long)state->seq_len * I * sizeof(float);
+    size_t cache_size = (size_t)L * NKV * S * D * sizeof(float);
 
-    state->hidden_states = (float*)malloc(sz_hidden);
-    state->attn_output   = (float*)malloc(sz_hidden);
-    state->mlp_intermediate = (float*)malloc(sz_inter);
-    state->logits        = (float*)malloc(V * sizeof(float));
-    state->norm_buffer   = (float*)malloc(H * sizeof(float));
-    state->residual_buffer = (float*)malloc(H * sizeof(float));
+    // ---- Hidden / intermediate ----
+    state->x = (float*)malloc(H * sizeof(float));
+    CHECK_ALLOC(state->x, H * sizeof(float));
 
-    CHECK_ALLOC(state->hidden_states, sz_hidden);
-    CHECK_ALLOC(state->attn_output, sz_hidden);
-    CHECK_ALLOC(state->mlp_intermediate, sz_inter);
+    state->t = (float*)malloc(H * sizeof(float));
+    CHECK_ALLOC(state->t, H * sizeof(float));
+
+    state->q = (float*)malloc(NH * D * sizeof(float));
+    CHECK_ALLOC(state->q, NH * D * sizeof(float));
+
+    state->k = (float*)malloc(NKV * D * sizeof(float));
+    CHECK_ALLOC(state->k, NKV * D * sizeof(float));
+
+    state->v = (float*)malloc(NKV * D * sizeof(float));
+    CHECK_ALLOC(state->v, NKV * D * sizeof(float));
+
+    state->att = (float*)malloc(NH * S * sizeof(float));
+    CHECK_ALLOC(state->att, NH * S * sizeof(float));
+
+    state->qkv_out = (float*)malloc(H * sizeof(float));
+    CHECK_ALLOC(state->qkv_out, H * sizeof(float));
+
+    state->attn_out = (float*)malloc(H * sizeof(float));
+    CHECK_ALLOC(state->attn_out, H * sizeof(float));
+
+    state->gate = (float*)malloc(I * sizeof(float));
+    CHECK_ALLOC(state->gate, I * sizeof(float));
+
+    state->up = (float*)malloc(I * sizeof(float));
+    CHECK_ALLOC(state->up, I * sizeof(float));
+
+    state->gate_up = (float*)malloc(I * sizeof(float));
+    CHECK_ALLOC(state->gate_up, I * sizeof(float));
+
+    state->down = (float*)malloc(H * sizeof(float));
+    CHECK_ALLOC(state->down, H * sizeof(float));
+
+    state->cos_tensor = (float*)malloc(S * (D / 2) * sizeof(float));
+    CHECK_ALLOC(state->cos_tensor, S * (D / 2) * sizeof(float));
+
+    state->sin_tensor = (float*)malloc(S * (D / 2) * sizeof(float));
+    CHECK_ALLOC(state->sin_tensor, S * (D / 2) * sizeof(float));
+
+    state->logits = (float*)malloc(V * sizeof(float));
     CHECK_ALLOC(state->logits, V * sizeof(float));
 
-    if (config->vision_hidden_size > 0) {
-        long sz_patch = n_patches * 3 * VP * VP * sizeof(float);
-        long sz_embed = (n_patches + 1) * VH * sizeof(float);
-        state->image_patches = (float*)malloc(sz_patch);
-        state->vision_embed  = (float*)malloc(sz_embed);
-        state->vision_hidden = (float*)malloc(sz_embed);
-        state->vision_norm   = (float*)malloc(VH * sizeof(float));
+    // ---- KV cache ----
+    state->key_cache = (float*)malloc(cache_size);
+    CHECK_ALLOC(state->key_cache, cache_size);
 
-        CHECK_ALLOC(state->image_patches, sz_patch);
-        CHECK_ALLOC(state->vision_embed, sz_embed);
-        CHECK_ALLOC(state->vision_hidden, sz_embed);
-        CHECK_ALLOC(state->vision_norm, VH * sizeof(float));
-    }
+    state->value_cache = (float*)malloc(cache_size);
+    CHECK_ALLOC(state->value_cache, cache_size);
 }
 
 void free_model_run_state(QwenRunState* state) {
-    free(state->hidden_states);
-    free(state->attn_output);
-    free(state->mlp_intermediate);
-    free(state->logits);
-    free(state->norm_buffer);
-    free(state->residual_buffer);
+    if (!state) return;
 
-    free(state->image_patches);
-    free(state->vision_embed);
-    free(state->vision_hidden);
-    free(state->vision_norm);
+    if (state->x) free(state->x);
+    if (state->t) free(state->t);
+    if (state->q) free(state->q);
+    if (state->k) free(state->k);
+    if (state->v) free(state->v);
+    if (state->att) free(state->att);
+    if (state->qkv_out) free(state->qkv_out);
+    if (state->attn_out) free(state->attn_out);
+    if (state->gate) free(state->gate);
+    if (state->up) free(state->up);
+    if (state->gate_up) free(state->gate_up);
+    if (state->down) free(state->down);
+    if (state->cos_tensor) free(state->cos_tensor);
+    if (state->sin_tensor) free(state->sin_tensor);
+    if (state->logits) free(state->logits);
+    if (state->key_cache) free(state->key_cache);
+    if (state->value_cache) free(state->value_cache);
 
     memset(state, 0, sizeof(QwenRunState));
 }

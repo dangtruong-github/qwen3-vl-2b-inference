@@ -11,7 +11,7 @@ void forward_example(QwenConfig *config, QwenWeight *weights, QwenRunState* stat
     
 
     // Get final logits
-    float* logits = forward_llm(config, state, weights, input_tokens[0]); // [vocab_size]
+    float* logits = forward_llm(config, state, weights, input_tokens[0], 0); // [vocab_size]
 
     printf("Logits: ");
     for (int i = 0; i < 5; i++) {
@@ -117,7 +117,7 @@ int forward_validate(const char *in_token_file, const char *out_token_file, Qwen
         while (pos < 1024) { // max steps
             // Forward the transformer to get logits for the next token
             // Using your existing forward functions
-            float *logits = forward_llm(config, state, weight, token);
+            float *logits = forward_llm(config, state, weight, token, pos);
 
             // Advance the state machine - similar to run.cpp
             if (pos < input_count - 1) {

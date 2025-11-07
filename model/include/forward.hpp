@@ -22,4 +22,4 @@ void extract_image_patches(const float* img, float* patches, const QwenConfig* c
 void matrix_multiply_add(float* output, const float* input, const float* weight,
                         const float* bias, int rows, int cols, int inner_dim);
 void softmax(float* output, const float* input, int size);
-float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token);
+float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token, int pos);

@@ -98,29 +98,35 @@ typedef struct {
 } QwenWeight;
 
 typedef struct {
-    // ---- General ----
-    const QwenConfig* config;   // Pointer to config for shape references
-    int seq_len;                // Current token sequence length
-    int img_height, img_width;  // For patch extraction
+    // ---- Hidden / intermediate buffers ----
+    float* x;            // current hidden state [hidden_size]
+    float* t;            // normalized hidden before attention [hidden_size]
 
-    // ---- Language Buffers ----
-    float* hidden_states;       // [seq_len, hidden_size]
-    float* attn_output;         // [seq_len, hidden_size]
-    float* mlp_intermediate;    // [seq_len, intermediate_size]
-    float* logits;              // [vocab_size]
+    // ---- Attention projections ----
+    float* q;            // query [num_attention_heads * head_dim]
+    float* k;            // key   [num_key_value_heads * head_dim]
+    float* v;            // value [num_key_value_heads * head_dim]
 
-    // ---- Attention cache (for autoregressive decoding) ----
-    float* key_cache;           // [num_hidden_layers, num_key_value_heads, max_position_embeddings, head_dim]
-    float* value_cache;         // same shape
+    float* att;          // attention scores (temporary buffer) [num_attention_heads * max_position_embeddings]
+    float* qkv_out;      // attention output before projection [hidden_size]
+    float* attn_out;     // after output projection [hidden_size]
 
-    // ---- Vision Buffers ----
-    float* image_patches;       // [n_patches, patch_dim]
-    float* vision_embed;        // [n_patches + 1, vision_hidden_size]
+    // ---- MLP intermediate ----
+    float* gate;         // gate projection [intermediate_size]
+    float* up;           // up projection [intermediate_size]
+    float* gate_up;      // after SwiGLU [intermediate_size]
+    float* down;         // down projection [hidden_size]
+
+    // ---- Rotary embeddings ----
+    float* cos_tensor;   // cached cosines for rotary embedding [max_position_embeddings * head_dim/2]
+    float* sin_tensor;   // cached sines for rotary embedding [max_position_embeddings * head_dim/2]
+
+    // ---- Output ----
+    float* logits;       // final logits [vocab_size]
+
+    // ---- KV cache (for autoregressive decoding) ----
+    float* key_cache;    // [num_hidden_layers, num_key_value_heads, max_position_embeddings, head_dim]
+    float* value_cache;  // same shape
+    
     bool vision_embed_true;
-    float* vision_hidden;       // [n_patches + 1, vision_hidden_size]
-    float* vision_norm;         // [vision_hidden_size]
-
-    // ---- Temporary Buffers ----
-    float* norm_buffer;         // [hidden_size]
-    float* residual_buffer;     // [hidden_size]
 } QwenRunState;
