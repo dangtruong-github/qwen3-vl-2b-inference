@@ -8,6 +8,22 @@
 #include "model/module.hpp"
 #include "tokenizer/module.hpp"
 
+// **FIX:** Added debug validation function
+void validate_dimensions(const QwenConfig* config) {
+    printf("=== Dimension Validation ===\n");
+    printf("hidden_size: %d\n", config->hidden_size);
+    printf("num_attention_heads: %d\n", config->num_attention_heads);
+    printf("num_key_value_heads: %d\n", config->num_key_value_heads);
+    // Note: head_dim is hardcoded to 128 in init_model_run_state
+    int head_dim_calc = config->hidden_size / config->num_attention_heads;
+    printf("head_dim (calculated): %d\n", head_dim_calc);
+    printf("q_dim (calc): %d\n", config->num_attention_heads * head_dim_calc);
+    printf("k_dim (calc): %d\n", config->num_key_value_heads * head_dim_calc);
+    printf("v_dim (calc): %d\n", config->num_key_value_heads * head_dim_calc);
+    printf("============================\n");
+    fflush(stdout);
+}
+
 // -----------------------------------------------------------
 // Existing main function updated to call the validation function
 // -----------------------------------------------------------
@@ -69,6 +85,7 @@ int main(int argc, char** argv) {
 
     // tokenizer_example(tokenizer);
     print_config(config);
+    validate_dimensions(config); // **FIX:** Added call to validation function
 
     printf("Model and Tokenizer initialized successfully.\n");
     fflush(stdout);
@@ -76,7 +93,7 @@ int main(int argc, char** argv) {
     // ----------------------------------------------------
     // CALL THE VALIDATION FUNCTION HERE
     // ----------------------------------------------------
-    int validation_result = forward_validate("data/input_1.txt", "data/output_1.txt", config, weights, state);
+    int validation_result = forward_validate("data/input_1.txt", "data/output_1.txt", tokenizer, config, weights, state);
     
     if (validation_result == 0) {
         printf("\n✅ ALL FORWARD VALIDATION SAMPLES PASSED!\n");

@@ -65,7 +65,6 @@ KEYS = [
 CATEGORIES = [
     # Global/Vision
     "transformer.wte.weight", # Token embeddings
-    "lm_head.weight",         # Unembedding / final linear layer
     "transformer.ln_f.weight", # Final layer norm
     # Attention
     "attn.c_attn.weight",   # QKV projection (linear)
@@ -124,34 +123,109 @@ def collect_effective_keys(f) -> Dict[str, TensorProvider]:
 # Ordering & Writing
 # ----------------------------------------------------------------------
 
+def reorder_keys_for_write(all_keys: List[str], num_layers: int = 28) -> List[str]:
+    """
+    Return keys ordered according to the Qwen-like hierarchical structure:
+    1. embed_tokens
+    2. per-layer stack (0..num_layers-1) in fixed subkey order
+    3. all remaining keys alphabetically
+    """
+    ordered = []
 
-def reorder_keys_for_write(all_keys: List[str]) -> List[str]:
-    """Return keys ordered by CATEGORIES suffix + block index, then the rest sorted."""
-    buckets = {cat: [] for cat in CATEGORIES}
-    others: List[str] = []
+    # 1️⃣ Embedding
+    if "model.language_model.embed_tokens.weight" in all_keys:
+        ordered.append("model.language_model.embed_tokens.weight")
 
-    for key in all_keys:
-        matched = False
-        # Find the category based on the suffix
-        for cat in CATEGORIES:
-            if key.endswith(cat):
-                # Check for block index using the Qwen-specific regex
-                m = _BLOCK_RE.search(key)
-                block_idx = int(m.group(1)) if m else -1
-                buckets[cat].append((block_idx, key))
-                matched = True
-                break
-        if not matched:
-            others.append(key)
+    # 2️⃣ Per-layer ordering pattern
+    lm_subkeys = [
+        "input_layernorm.weight",
+        "mlp.down_proj.weight",
+        "mlp.gate_proj.weight",
+        "mlp.up_proj.weight",
+        "post_attention_layernorm.weight",
+        "self_attn.k_norm.weight",
+        "self_attn.k_proj.weight",
+        "self_attn.o_proj.weight",
+        "self_attn.q_norm.weight",
+        "self_attn.q_proj.weight",
+        "self_attn.v_proj.weight",
+    ]
 
-    ordered: List[str] = []
-    # Write by category, sorted by block index (e.g., ln_1.weight block 0, block 1, ...)
-    for cat in CATEGORIES:
-        for _, k in sorted(buckets[cat], key=lambda x: x[0]):
-            ordered.append(k)
+    for sub in lm_subkeys:
+        for i in range(num_layers):
+            prefix = f"model.language_model.layers.{i}."
+            name = prefix + sub
+            if name in all_keys:
+                ordered.append(name)
 
-    # Add global/non-block keys (sorted)
-    ordered.extend(sorted(others))
+    next_lm_vision_keys = [
+        "model.language_model.norm.weight",
+        "model.visual.patch_embed.proj.bias",
+        "model.visual.patch_embed.proj.weight",
+        "model.visual.pos_embed.weight"
+    ]
+
+    for each_key in next_lm_vision_keys:
+        if each_key in all_keys:
+            ordered.append(each_key)
+
+    vision_block_subkeys = [
+        "attn.proj.bias",
+        "attn.proj.weight",
+        "attn.qkv.bias",
+        "attn.qkv.weight",
+        "mlp.linear_fc1.bias",
+        "mlp.linear_fc1.weight",
+        "mlp.linear_fc2.bias",
+        "mlp.linear_fc2.weight",
+        "norm1.bias",
+        "norm1.weight",
+        "norm2.bias",
+        "norm2.weight"
+    ]
+
+    for sub in vision_block_subkeys:
+        for i in range(24):
+            prefix = f"model.visual.blocks.{i}."
+            name = prefix + sub
+            if name in all_keys:
+                ordered.append(name)
+
+    deep_stack_merger_subkeys = [
+        "linear_fc1.bias",
+        "linear_fc1.weight",
+        "linear_fc2.bias",
+        "linear_fc2.weight",
+        "norm.bias",
+        "norm.weight"
+    ]
+
+    for sub in deep_stack_merger_subkeys:
+        for i in range(3):
+            prefix = f"model.visual.deepstack_merger_list.{i}."
+            name = prefix + sub
+            if name in all_keys:
+                ordered.append(name)
+
+    merger_subkeys = [
+        "linear_fc1.bias",
+        "linear_fc1.weight",
+        "linear_fc2.bias",
+        "linear_fc2.weight",
+        "norm.bias",
+        "norm.weight"
+    ]
+
+    prefix = "model.visual.merger."
+    for sub in merger_subkeys:
+        name = prefix + sub
+        if name in all_keys:
+            ordered.append(name)
+    
+    # 3️⃣ Remaining keys (e.g., vision or lm_head)
+    remaining = [k for k in all_keys if k not in ordered]
+    ordered.extend(sorted(remaining))
+
     return ordered
 
 
@@ -205,6 +279,7 @@ def write_config_header(config: dict, fout) -> None:
         elif isinstance(val, float):
             fout.write(struct.pack("<f", val))
             print(f"Wrote config key {key}={val} (<f)")
+
 
 def write_weights_streaming(
     providers: Dict[str, TensorProvider],
@@ -268,6 +343,15 @@ def main():
         providers = collect_effective_keys(f)
         all_keys = list(providers.keys())
         ordered = reorder_keys_for_write(all_keys)
+
+        """
+        for item in ordered:
+            print(item)
+
+        import sys
+        sys.stdout.flush()
+        assert 0 == 1
+        """
 
         # Write binary in one pass
         with open(args.output, "wb") as fout:

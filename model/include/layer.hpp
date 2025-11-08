@@ -46,7 +46,7 @@ void swiglu(
 );
 void add_vector(float *add_to, const float *add_from, size_t size_vec);
 void attn_scores_all_heads(
-    const float *key_cache, const float *q, float *att, size_t loff_one,
+    const float *key_cache, const float *q, float *att,
     size_t layer_offset, size_t attn_heads, int kv_mul, int head_dim,
     int kv_dim, int seq_len, int pos
 );

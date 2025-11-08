@@ -123,25 +123,16 @@ void add_vector(float *add_to, const float *add_from, size_t size_vec) {
     }
 }
 
-// Corrected SwiGLU implementation
 void swiglu(
-    const float *gate /*[d]*/, const float *up /*[d]*/,
-    float *out /*[d]*/, size_t size_vec
+    const float *gate,  // [d]
+    const float *up,    // [d]
+    float *out,         // [d]
+    size_t size_vec
 ) {
-    // This constant is used in the sigmoid calculation
-    const float alpha = 1.702f;
-
     for (size_t i = 0; i < size_vec; i++) {
-        float gate_val = gate[i];
-        float up_val = up[i];
-
-        // --- FIX 2: Corrected SiLU Calculation ---
-        // silu(x) = x * σ(αx), where σ(x) is the logistic sigmoid.
-        // The 'alpha' constant was missing in your original code.
-        gate_val *= (1.0f / (1.0f + expf(-alpha * gate_val)));
-
-        // Element-wise multiply with the modified 'up' tensor
-        out[i] = gate_val * (up_val + 1.0f);
+        float x = gate[i];
+        float silu = x / (1.0f + expf(-x));  // SiLU(x) = x * sigmoid(x)
+        out[i] = silu * up[i];               // SwiGLU = SiLU(gate) * up
     }
 }
 
@@ -169,13 +160,15 @@ void softmax(float *x, size_t size) {
     }
 }
 
-// Fix attn_scores_all_heads function:
+// **FIXED** attn_scores_all_heads function:
+// Changed signature to remove loff_one and calculate offset internally.
 void attn_scores_all_heads(
-    const float *key_cache, const float *q, float *att, size_t loff_one,
+    const float *key_cache, const float *q, float *att,
     size_t layer_offset, size_t attn_heads, int kv_mul, int head_dim,
     int kv_dim, int seq_len, int pos
 ) {
-    long long loff = 1ll * layer_offset * loff_one;
+    // Calculate the start of the current layer in the cache
+    long long layer_cache_start = 1ll * layer_offset * seq_len * kv_dim;
 
     for (int h = 0; h < attn_heads; h++) {
         const float *q_head = q + h * head_dim;
@@ -184,21 +177,27 @@ void attn_scores_all_heads(
 
         // Compute attention scores
         for (int t = 0; t <= pos; t++) {
-            // FIX: Correct key cache indexing - each position has kv_dim elements
-            const float *k = key_cache + loff + t * kv_dim + kv_head_idx * head_dim;
+            // Get the key for this timestep
+            const float *k_head = key_cache + layer_cache_start + 
+                                t * kv_dim + kv_head_idx * head_dim;
+            
             double score = 0.0;
             for (int i = 0; i < head_dim; i++) {
-                score += (double)q_head[i] * (double)k[i];
+                score += (double)q_head[i] * (double)k_head[i];
             }
             score /= sqrtf((float)head_dim);
             att_head[t] = (float)score;
         }
 
+        // Softmax over the valid scores (0 to pos)
+        // This implicitly handles the causal mask.
         softmax(att_head, (size_t)pos + 1);
     }
 }
 
 // Fix attn_weighted_sum_all_heads function:
+// This function was already correct. 'loff' passed from forward_llm
+// corresponds to the layer_cache_start.
 void attn_weighted_sum_all_heads(
     const float *value_cache, const float *q, const float *att, float *tb,
     size_t loff, int attn_heads, int kv_mul, int head_dim, int kv_dim,

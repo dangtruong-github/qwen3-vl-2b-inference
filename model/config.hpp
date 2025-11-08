@@ -34,22 +34,21 @@ typedef struct {
 
 typedef struct {
     // Language Model Weights
-    float* embed_tokens_weight; // [vocab_size, hidden_size]
-    float* norm_weight;         // [hidden_size]
-    float* lm_head_weight;      // [vocab_size, hidden_size]
+    float* token_embedding_table; // [vocab_size, hidden_size]
+    float* rms_out_w;         // [hidden_size]
 
     // Language Model Layer Weights (continuous blocks: [num_hidden_layers, ...])
-    float* input_layernorm_weight;          // [L, H]
-    float* mlp_down_proj_weight;            // [L, H, I]
-    float* mlp_gate_proj_weight;            // [L, I, H]
-    float* mlp_up_proj_weight;              // [L, I, H]
-    float* post_attention_layernorm_weight; // [L, H]
-    float* self_attn_k_norm_weight;         // [L, KVA_Dim]
-    float* self_attn_k_proj_weight;         // [L, KVA_Dim, H]
-    float* self_attn_o_proj_weight;         // [L, H, H]
-    float* self_attn_q_norm_weight;         // [L, Q_Dim]
-    float* self_attn_q_proj_weight;         // [L, Q_Dim, H]
-    float* self_attn_v_proj_weight;         // [L, KVA_Dim, H]
+    float* rms_ffn_w;          // [L, H]
+    float* w_mlp_down;            // [L, H, I]
+    float* w_mlp_gate;            // [L, I, H]
+    float* w_mlp_up;              // [L, I, H]
+    float* rms_attn_w; // [L, H]
+    float* w_attn_k_norm;         // [L, KVA_Dim]
+    float* w_attn_k;         // [L, KVA_Dim, H]
+    float* w_attn_o;         // [L, H, H]
+    float* w_attn_q_norm;         // [L, Q_Dim]
+    float* w_attn_q;         // [L, Q_Dim, H]
+    float* w_attn_v;         // [L, KVA_Dim, H]
 
     // Vision Model Weights (General)
     float* visual_attn_qkv_bias;        // [QKV_Dim]
@@ -86,7 +85,7 @@ typedef struct {
     float* visual_deepstack_merger_list_linear_fc2_bias;  // [3, OH]
     float* visual_deepstack_merger_list_linear_fc2_weight; // [3, OH, VI]
     float* visual_deepstack_merger_list_norm_bias;        // [3, VI]
-    float* visual_deepstack_merger_list_norm_weight;      // [3, VI]
+    float* visual_deepstack_merger_list_rms_out_w;      // [3, VI]
 
     // Final Merger Weights
     float* visual_merger_linear_fc1_bias;  // [VI]
@@ -94,7 +93,7 @@ typedef struct {
     float* visual_merger_linear_fc2_bias;  // [OH]
     float* visual_merger_linear_fc2_weight; // [OH, VI]
     float* visual_merger_norm_bias;        // [VI]
-    float* visual_merger_norm_weight;      // [VI]
+    float* visual_merger_rms_out_w;      // [VI]
 } QwenWeight;
 
 typedef struct {

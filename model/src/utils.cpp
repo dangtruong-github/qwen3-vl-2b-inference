@@ -51,7 +51,7 @@ void print_config(QwenConfig *config) {
     printf("video_token_id: %d\n", config->video_token_id);
 }
 
-int forward_validate(const char *in_token_file, const char *out_token_file, QwenConfig *config, QwenWeight *weight, QwenRunState *state) {
+int forward_validate(const char *in_token_file, const char *out_token_file, TokenizerStruct *tokenizer, QwenConfig *config, QwenWeight *weight, QwenRunState *state) {
     FILE* in_file = fopen(in_token_file, "r");
     FILE* out_file = fopen(out_token_file, "r");
 
@@ -134,7 +134,7 @@ int forward_validate(const char *in_token_file, const char *out_token_file, Qwen
                 generated_tokens[total_generated_count++] = next;
             }
 
-            printf("%d ", generated_tokens[pos]);
+            printf("%d %s", generated_tokens[pos], tokenizer->vocab[generated_tokens[pos]]);
             printf("\nLogits: ");
             for (int i = 0; i < 5; i++) {
                 printf("%.6f ", logits[i]);

@@ -56,12 +56,21 @@ void merge_vision_text(QwenRunState* state) {
 float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token_id, int pos) {
     // Embed layer
     embedding_lookup(
-        weight->embed_tokens_weight, token_id, state->x,
+        weight->token_embedding_table, token_id, state->x,
         config->vocab_size, config->hidden_size
     );
 
-    long long loff_pos = 1ll * config->num_key_value_heads * 128;
-    long long loff_one = 1ll * 1024 * loff_pos;
+    // **FIX:** Define dimensions clearly
+    // These values are derived from init_model_run_state and qwen_rope_precompute
+    int head_dim = 128;
+    int seq_len = 1024;
+    int kv_dim = config->num_key_value_heads * head_dim; // This is what loff_pos represents
+    long long cache_layer_size = 1ll * seq_len * kv_dim; // This is what loff_one represents
+
+    // Original loff_pos and loff_one for reference (they are correct)
+    long long loff_pos = 1ll * kv_dim;
+    long long loff_one = 1ll * cache_layer_size;
+
 
     #ifdef DEBUG
         printf("finish embedding_lookup\n");
@@ -75,7 +84,7 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
 
     for (int l = 0; l < config->num_hidden_layers; l++) {
         rms_norm(
-            state->x, weight->input_layernorm_weight, state->t, config->rms_norm_eps, config->hidden_size, 1ll * l
+            state->x, weight->rms_ffn_w, state->t, config->rms_norm_eps, config->hidden_size, 1ll * l
         );
 
         #ifdef DEBUG
@@ -89,11 +98,11 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
         #endif
 
         // key and value point to the kv cache
-        long long loff = 1ll * l * loff_one;  // kv cache layer offset
+        long long loff = 1ll * l * loff_one;  // kv cache layer offset (layer_cache_start)
 
-        const float *w_q = weight->self_attn_q_proj_weight + 1ll * l * config->hidden_size * 2048ll;
-        const float *w_k = weight->self_attn_k_proj_weight + 1ll * l * config->hidden_size * 1024ll;
-        const float *w_v = weight->self_attn_v_proj_weight + 1ll * l * config->hidden_size * 1024ll;
+        const float *w_q = weight->w_attn_q + 1ll * l * config->hidden_size * 2048ll;
+        const float *w_k = weight->w_attn_k + 1ll * l * config->hidden_size * 1024ll;
+        const float *w_v = weight->w_attn_v + 1ll * l * config->hidden_size * 1024ll;
         linear(
             state->t, w_q, nullptr, state->q, 1, 2048, config->hidden_size, true
         );
@@ -125,11 +134,11 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
         #endif
 
         rms_norm(
-            state->q, weight->self_attn_q_norm_weight, state->q,
+            state->q, weight->w_attn_q_norm, state->q,
             config->rms_norm_eps, 2048, 1ll * l
         );
         rms_norm(
-            state->k, weight->self_attn_k_norm_weight, state->k,
+            state->k, weight->w_attn_k_norm, state->k,
             config->rms_norm_eps, 1024, 1ll * l
         );
 
@@ -184,9 +193,12 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
         // multihead attention
         int kv_mul = config->num_attention_heads / config->num_key_value_heads;  // integer multiplier for GQA
 
+        // **FIX:** Updated call to match new signature in layer.cpp
         attn_scores_all_heads(
-            state->key_cache, state->q, state->att, loff_one, 1ll * l,
-            config->num_attention_heads, kv_mul, 128, loff_pos, 1024, pos
+            state->key_cache, state->q, state->att,
+            1ll * l, // layer_offset
+            config->num_attention_heads, kv_mul, head_dim,
+            kv_dim, seq_len, pos
         );
 
         #ifdef DEBUG
@@ -199,8 +211,12 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
             printf("\n");
         #endif
 
+        // **FIX:** Updated call parameters for clarity (function was already correct)
         attn_weighted_sum_all_heads(
-            state->value_cache, state->q, state->att, state->qkv_out, loff, config->num_attention_heads, kv_mul, 128, loff_pos, 1024, pos
+            state->value_cache, state->q, state->att, state->qkv_out, 
+            loff, // layer_cache_start
+            config->num_attention_heads, kv_mul, head_dim, 
+            kv_dim, seq_len, pos
         );
 
         #ifdef DEBUG
@@ -214,7 +230,7 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
         #endif
 
         // output projection
-        const float *w_out_proj = weight->self_attn_o_proj_weight + 1ll * l * config->hidden_size * config->hidden_size;
+        const float *w_out_proj = weight->w_attn_o + 1ll * l * config->hidden_size * config->hidden_size;
         linear(
             state->qkv_out, w_out_proj, nullptr, state->attn_out, 1,
             config->hidden_size, config->hidden_size, true
@@ -247,7 +263,7 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
 
         // attn_norm
         rms_norm(
-            state->x, weight->post_attention_layernorm_weight, state->x,
+            state->x, weight->rms_attn_w, state->x,
             config->rms_norm_eps, config->hidden_size, 1ll * l
         );
 
@@ -262,8 +278,8 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
         #endif
 
         // gate up
-        const float *w_gate = weight->mlp_gate_proj_weight + 1ll * l * config->intermediate_size * config->hidden_size;
-        const float *w_up = weight->mlp_up_proj_weight + 1ll * l * config->intermediate_size * config->hidden_size;
+        const float *w_gate = weight->w_mlp_gate + 1ll * l * config->intermediate_size * config->hidden_size;
+        const float *w_up = weight->w_mlp_up + 1ll * l * config->intermediate_size * config->hidden_size;
         linear(
             state->x, w_gate, nullptr, state->gate, 1,
             config->intermediate_size, config->hidden_size, true
@@ -304,7 +320,7 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
         #endif
 
         // down
-        const float *w_down = weight->mlp_down_proj_weight + 1ll * l * config->intermediate_size * config->hidden_size;
+        const float *w_down = weight->w_mlp_down + 1ll * l * config->intermediate_size * config->hidden_size;
         linear(
             state->gate_up, w_down, nullptr, state->down, 1,
             config->hidden_size, config->intermediate_size, true
@@ -337,7 +353,7 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
     }
 
     rms_norm(
-        state->x, weight->norm_weight, state->x, config->rms_norm_eps,
+        state->x, weight->rms_out_w, state->x, config->rms_norm_eps,
         config->hidden_size, 0ll
     );
 
@@ -352,7 +368,7 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
     #endif
 
     classifier_gemm(
-        weight->embed_tokens_weight, state->x, state->logits,
+        weight->token_embedding_table, state->x, state->logits,
         config->vocab_size, config->hidden_size
     );
 
