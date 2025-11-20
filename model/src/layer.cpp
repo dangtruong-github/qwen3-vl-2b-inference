@@ -169,6 +169,7 @@ void attn_scores_all_heads(
 ) {
     // Calculate the start of the current layer in the cache
     long long layer_cache_start = 1ll * layer_offset * seq_len * kv_dim;
+    const float *key_cache_layer = key_cache + 1ll * layer_cache_start;
 
     for (int h = 0; h < attn_heads; h++) {
         const float *q_head = q + h * head_dim;
@@ -178,8 +179,16 @@ void attn_scores_all_heads(
         // Compute attention scores
         for (int t = 0; t <= pos; t++) {
             // Get the key for this timestep
-            const float *k_head = key_cache + layer_cache_start + 
-                                t * kv_dim + kv_head_idx * head_dim;
+            const float *k_head = key_cache_layer + 1ll * t * kv_dim + 1ll * kv_head_idx * head_dim;
+
+            #ifdef DEBUG
+                printf("Inside Layer %zu, Head %d, Time %d\n", layer_offset, h, t);
+                printf("k_head: ");
+                for (int i = 0; i < 5; i++) {
+                    printf("%.6f ", k_head[i]);
+                }
+                printf("\n");
+            #endif
             
             double score = 0.0;
             for (int i = 0; i < head_dim; i++) {
@@ -188,6 +197,14 @@ void attn_scores_all_heads(
             score /= sqrtf((float)head_dim);
             att_head[t] = (float)score;
         }
+
+        #ifdef DEBUG
+            printf("Attention scores for Layer %zu, Head %d up to pos %d:\n", layer_offset, h, pos);
+            for (int t = 0; t <= pos; t++) {
+                printf("%.6f ", att_head[t]);
+            }
+            printf("\n");
+        #endif
 
         // Softmax over the valid scores (0 to pos)
         // This implicitly handles the causal mask.
@@ -214,11 +231,29 @@ void attn_weighted_sum_all_heads(
         for (int t = 0; t <= pos; t++) {
             // FIX: Correct value cache indexing
             const float *v = value_cache + loff + t * kv_dim + kv_head_idx * head_dim;
+
+            #ifdef DEBUG
+                printf("V cache Inside Layer %zu, Head %d, Time %d\n", loff, h, t);
+                printf("v_head: ");
+                for (int i = 0; i < 5; i++) {
+                    printf("%.6f ", v[i]);
+                }
+                printf("\n");
+            #endif
+
             float a = att_head[t];
             for (int i = 0; i < head_dim; i++) {
                 tb_head[i] += a * v[i];
             }
         }
+
+        #ifdef DEBUG
+            printf("Weighted sum output for Layer offset %zu, Head %d up to pos %d:\n", loff, h, pos);
+            for (int i = 0; i < 5; i++) {
+                printf("%.6f ", tb_head[i]);
+            }
+            printf("\n");
+        #endif
     }
 }
 

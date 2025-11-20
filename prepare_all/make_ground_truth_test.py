@@ -33,7 +33,7 @@ def load_human_conversations(data_dir, num_samples):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Inspect Qwen3-VL-2B-Instruct image preprocessing")
+    parser = argparse.ArgumentParser(description="Generate token IDs from Qwen3-VL-2B-Instruct (human-only inference)")
     parser.add_argument("--model_dir", type=str, required=True, help="Path to Qwen3-VL-2B-Instruct folder")
     parser.add_argument("--data_dir", type=str, required=True, help="Path to MMIE dataset folder")
     parser.add_argument("--num_samples", type=int, default=5, help="Number of conversations to process")
@@ -42,78 +42,100 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    print(f"Loading model from {args.model_dir} ...")
+    print(f"Loading model from {args.model_dir} ...", flush=True)
+    model = AutoModelForImageTextToText.from_pretrained(
+        args.model_dir,
+        dtype=torch.float32,
+        low_cpu_mem_usage=True
+    ).to(device)
     processor = AutoProcessor.from_pretrained(args.model_dir)
-
-    # ---- Parse image preprocessing config ----
-    image_processor = processor.image_processor
-    patch_size = getattr(image_processor, "patch_size", 14)
-    merge_size = getattr(image_processor, "merge_size", 1)
-
-    # Directly parse min/max pixel scaling constraints
-    min_pixels = image_processor.size.get("min_pixels", image_processor.size.get("shortest_edge", None))
-    max_pixels = image_processor.size.get("max_pixels", image_processor.size.get("longest_edge", None))
-
-    print(f"Image patch size: {patch_size}, merge size: {merge_size}")
-    print(f"min_pixels = {min_pixels}, max_pixels = {max_pixels}")
 
     samples = load_human_conversations(args.data_dir, args.num_samples)
     print(f"Loaded {len(samples)} human messages from {args.num_samples} conversations")
 
-    images_kwargs = {
-        "patch_size": getattr(image_processor, "patch_size", 16),
-        "merge_size": getattr(image_processor, "merge_size", 1),
-        "min_pixels": getattr(image_processor.size, "get", lambda x, d=None: None)("min_pixels", None)
-                    or image_processor.size.get("shortest_edge", 448),
-        "max_pixels": getattr(image_processor.size, "get", lambda x, d=None: None)("max_pixels", None)
-                    or image_processor.size.get("longest_edge", 1344),
-    }
-
-    print(images_kwargs)
-
     results = []
     for i, (image_path, text) in enumerate(samples, start=1):
+        print(f"[{i}/{len(samples)}] Processing {'(text-only)' if image_path is None else os.path.basename(image_path or '')}")
 
+        # Construct prompt and inputs
         if image_path and os.path.exists(image_path):
-            print(f"\n[{i}/{len(samples)}] Processing image: {os.path.basename(image_path)}")
             image = Image.open(image_path).convert("RGB")
             prompt_text = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{text}\n<|im_end|>\n<|im_start|>assistant\n"
-
-            # Feed image + text through processor
             inputs = processor(images=image, text=prompt_text, return_tensors="pt").to(device)
-
-            # --- Display image dimensions ---
-            print(f"Original image size (WxH): {image.size}")
-            pixel_values = inputs['pixel_values']
-            print(f"Processed image tensor shape: {pixel_values.shape}")  # [1, 3, H, W]
-
-            # --- Compute exact number of image pad tokens ---
-            num_patches_orig = image_processor.get_number_of_image_patches(*image.size, images_kwargs)
-            print(f"Number of image pad tokens (original): {num_patches_orig}")
-
-            input_token_ids = inputs["input_ids"][0].tolist()
-
-            count_151655 = input_token_ids.count(151655)
-            print(f"Number of 151655 tokens: {count_151655}")
-
-            results.append({
-                "image": os.path.basename(image_path),
-                "text": text,
-                "original_size": list(image.size),
-                "processed_shape": list(pixel_values.shape),
-                "num_patches_orig": num_patches_orig,
-                "count_pad": count_151655
-            })
-
         else:
-            print(f"[{i}/{len(samples)}] Text-only message")
-            results.append({"image": None, "text": text})
+            prompt_text = f"<|im_start|>user\n{text}\n<|im_end|>\n<|im_start|>assistant\n"
+            inputs = processor(text=prompt_text, return_tensors="pt").to(device)
 
-    # ---- Save results ----
+        input_token_ids = inputs["input_ids"][0].tolist()
+        num_img_pad_input = input_token_ids.count(151655)
+
+        past_key_values = None
+        prompt_logits = []
+
+        for t in range(len(input_token_ids)):
+            cur_token = input_token_ids[t]   # [1, 1]
+
+            outputs = model(
+                input_ids = torch.tensor([[cur_token]], dtype=torch.long, device=device, requires_grad=False),
+                past_key_values=past_key_values,
+                use_cache=True,
+                return_dict=True
+            )
+
+            # logits for this token
+            prompt_logits.append(outputs.logits[:, -1, :].detach().cpu())
+
+            # update KV cache
+            past_key_values = outputs.past_key_values
+
+            print(prompt_logits[-1][0, :5], flush=True)
+
+
+        # Stack prompt logits
+        prompt_logits = torch.stack(prompt_logits, dim=1)    # [1, seq_len, vocab]
+
+        assert 0 == 1
+
+        # GENERATION PASS
+        with torch.no_grad():
+            generated = model.generate(
+                **inputs,
+                max_new_tokens=1024,
+                do_sample=False,
+                num_beams=1,
+                use_cache=True
+            )
+
+        print(generated)
+
+        # ---- Clean output tokens (remove special tokens) ----
+        output_token_ids_full = generated[0].tolist()
+        generated_only = generated[0][inputs["input_ids"].shape[-1]:]
+
+        # remove special tokens from generated-only part
+        special_tokens = set(processor.tokenizer.all_special_ids)
+        output_token_ids_clean = [tid for tid in generated_only.tolist() if tid not in special_tokens]
+
+        decoded_text = processor.batch_decode(
+            torch.tensor(output_token_ids_clean).unsqueeze(0),
+            skip_special_tokens=True
+        )[0]
+
+        results.append({
+            "image": os.path.basename(image_path) if image_path else None,
+            "input_text": text,
+            "prompt_text": prompt_text,
+            "num_img_pad_input": num_img_pad_input,
+            "input_token_ids": input_token_ids,
+            "output_token_ids": output_token_ids_clean,  # cleaned version
+            "output_token_ids_full": output_token_ids_full,
+            "output_text": decoded_text,
+        })
+
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 
-    print(f"\n✅ Saved token and resize information to {args.output}")
+    print(f"✅ Saved input/output token IDs and decoded text (without prompt) to {args.output}")
 
 
 if __name__ == "__main__":

@@ -63,104 +63,149 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     // ==================================================================================
     // 3. Allocate + Read + Print (Preserve fread order)
     // ==================================================================================
+    float *tmp_ptr = nullptr;
+
+    // EDIT THE CODE FROM THIS TO THE END OF THE FUNCTION
 
     // --- embed_tokens.weight
-    weights->token_embedding_table = (float*)malloc((long)config->vocab_size * H * sizeof(float));
-    fread(weights->token_embedding_table, sizeof(float), (long)config->vocab_size * H, file);
+    tmp_ptr = (float*)malloc((long)config->vocab_size * H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), (long)config->vocab_size * H, file);
     printf("Shape of token_embedding_table (embed_tokens.weight): (%d, %ld)\n", config->vocab_size, H);
+    weights->token_embedding_table = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- input_layernorm.weight
-    weights->rms_ffn_w = (float*)malloc(L * H * sizeof(float));
-    fread(weights->rms_ffn_w, sizeof(float), L * H, file);
+    tmp_ptr = (float*)malloc(L * H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * H, file);
     printf("Shape of rms_ffn_w (input_layernorm.weight): (%ld, %ld)\n", L, H);
+    weights->rms_ffn_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- mlp.down_proj.weight
-    weights->w_mlp_down = (float*)malloc(L * H * I * sizeof(float));
-    fread(weights->w_mlp_down, sizeof(float), L * H * I, file);
+    tmp_ptr = (float*)malloc(L * H * I * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * H * I, file);
     printf("Shape of w_mlp_down (mlp.down_proj.weight): (%ld, %ld, %ld)\n", L, H, I);
+    weights->w_mlp_down = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- mlp.gate_proj.weight
-    weights->w_mlp_gate = (float*)malloc(L * I * H * sizeof(float));
-    fread(weights->w_mlp_gate, sizeof(float), L * I * H, file);
+    tmp_ptr = (float*)malloc(L * I * H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * I * H, file);
     printf("Shape of w_mlp_gate (mlp.gate_proj.weight): (%ld, %ld, %ld)\n", L, I, H);
+    weights->w_mlp_gate = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- mlp.up_proj.weight
-    weights->w_mlp_up = (float*)malloc(L * I * H * sizeof(float));
-    fread(weights->w_mlp_up, sizeof(float), L * I * H, file);
+    tmp_ptr = (float*)malloc(L * I * H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * I * H, file);
     printf("Shape of w_mlp_up (mlp.up_proj.weight): (%ld, %ld, %ld)\n", L, I, H);
+    weights->w_mlp_up = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- post_attention_layernorm.weight
-    weights->rms_attn_w = (float*)malloc(L * H * sizeof(float));
-    fread(weights->rms_attn_w, sizeof(float), L * H, file);
+    tmp_ptr = (float*)malloc(L * H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * H, file);
     printf("Shape of rms_attn_w (post_attention_layernorm.weight): (%ld, %ld)\n", L, H);
+    weights->rms_attn_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- self_attn.k_norm.weight
-    weights->w_attn_k_norm = (float*)malloc(L * 1ll * head_dim * sizeof(float));
-    fread(weights->w_attn_k_norm, sizeof(float), L * 1ll * head_dim, file);
+    tmp_ptr = (float*)malloc(L * 1ll * head_dim * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * 1ll * head_dim, file);
     printf("Shape of w_attn_k_norm (self_attn.k_norm.weight): (%ld, %d)\n", L, head_dim);
+    weights->w_attn_k_norm = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- self_attn.k_proj.weight
-    weights->w_attn_k = (float*)malloc(L * KVAD * H * sizeof(float));
-    fread(weights->w_attn_k, sizeof(float), L * KVAD * H, file);
+    tmp_ptr = (float*)malloc(L * KVAD * H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * KVAD * H, file);
     printf("Shape of w_attn_k (self_attn.k_proj.weight): (%ld, %ld, %ld)\n", L, KVAD, H);
+    weights->w_attn_k = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- self_attn.o_proj.weight
-    weights->w_attn_o = (float*)malloc(L * H * H * sizeof(float));
-    fread(weights->w_attn_o, sizeof(float), L * H * H, file);
+    tmp_ptr = (float*)malloc(L * H * H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * H * H, file);
     printf("Shape of w_attn_o (self_attn.o_proj.weight): (%ld, %ld, %ld)\n", L, H, H);
+    weights->w_attn_o = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- self_attn.q_norm.weight
-    weights->w_attn_q_norm = (float*)malloc(L * head_dim * sizeof(float));
-    fread(weights->w_attn_q_norm, sizeof(float), L * head_dim, file);
+    tmp_ptr = (float*)malloc(L * head_dim * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * head_dim, file);
     printf("Shape of w_attn_q_norm (self_attn.q_norm.weight): (%ld, %ld)\n", L, head_dim);
+    weights->w_attn_q_norm = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- self_attn.q_proj.weight
-    weights->w_attn_q = (float*)malloc(L * QD * H * sizeof(float));
-    fread(weights->w_attn_q, sizeof(float), L * QD * H, file);
+    tmp_ptr = (float*)malloc(L * QD * H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * QD * H, file);
     printf("Shape of w_attn_q (self_attn.q_proj.weight): (%ld, %ld, %ld)\n", L, QD, H);
+    weights->w_attn_q = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- self_attn.v_proj.weight
-    weights->w_attn_v = (float*)malloc(L * KVAD * H * sizeof(float));
-    fread(weights->w_attn_v, sizeof(float), L * KVAD * H, file);
+    tmp_ptr = (float*)malloc(L * KVAD * H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), L * KVAD * H, file);
     printf("Shape of w_attn_v (self_attn.v_proj.weight): (%ld, %ld, %ld)\n", L, KVAD, H);
+    weights->w_attn_v = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- final layernorm.weight
-    weights->rms_out_w = (float*)malloc(H * sizeof(float));
-    fread(weights->rms_out_w, sizeof(float), H, file);
+    tmp_ptr = (float*)malloc(H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), H, file);
     printf("Shape of rms_out_w (final_layernorm.weight): (%ld)\n", H);
+    weights->rms_out_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // --- Vision model general
-    weights->visual_attn_qkv_bias = (float*)malloc(QKVD * sizeof(float));
-    fread(weights->visual_attn_qkv_bias, sizeof(float), QKVD, file);
+    tmp_ptr = (float*)malloc(QKVD * sizeof(float));
+    fread(tmp_ptr, sizeof(float), QKVD, file);
     printf("Shape of visual_attn_qkv_bias: (%ld)\n", QKVD);
+    weights->visual_attn_qkv_bias = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
-    weights->visual_attn_qkv_weight = (float*)malloc(QKVD * VH * sizeof(float));
-    fread(weights->visual_attn_qkv_weight, sizeof(float), QKVD * VH, file);
+    tmp_ptr = (float*)malloc(QKVD * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), QKVD * VH, file);
     printf("Shape of visual_attn_qkv_weight: (%ld, %ld)\n", QKVD, VH);
+    weights->visual_attn_qkv_weight = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
-    weights->visual_attn_proj_bias = (float*)malloc(VH * sizeof(float));
-    fread(weights->visual_attn_proj_bias, sizeof(float), VH, file);
+    tmp_ptr = (float*)malloc(VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), VH, file);
     printf("Shape of visual_attn_proj_bias: (%ld)\n", VH);
+    weights->visual_attn_proj_bias = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
-    weights->visual_attn_proj_weight = (float*)malloc(VH * VH * sizeof(float));
-    fread(weights->visual_attn_proj_weight, sizeof(float), VH * VH, file);
+    tmp_ptr = (float*)malloc(VH * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), VH * VH, file);
     printf("Shape of visual_attn_proj_weight: (%ld, %ld)\n", VH, VH);
+    weights->visual_attn_proj_weight = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
-    weights->visual_class_embedding = (float*)malloc(VH * sizeof(float));
-    fread(weights->visual_class_embedding, sizeof(float), VH, file);
+    tmp_ptr = (float*)malloc(VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), VH, file);
     printf("Shape of visual_class_embedding: (%ld)\n", VH);
+    weights->visual_class_embedding = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
-    weights->visual_conv1_weight = (float*)malloc(VH * 3 * VP * VP * sizeof(float));
-    fread(weights->visual_conv1_weight, sizeof(float), VH * 3 * VP * VP, file);
+    tmp_ptr = (float*)malloc(VH * 3 * VP * VP * sizeof(float));
+    fread(tmp_ptr, sizeof(float), VH * 3 * VP * VP, file);
     printf("Shape of visual_conv1_weight: (%ld, 3, %ld, %ld)\n", VH, VP, VP);
+    weights->visual_conv1_weight = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
-    weights->visual_ln_post_bias = (float*)malloc(VH * sizeof(float));
-    fread(weights->visual_ln_post_bias, sizeof(float), VH, file);
+    tmp_ptr = (float*)malloc(VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), VH, file);
     printf("Shape of visual_ln_post_bias: (%ld)\n", VH);
+    weights->visual_ln_post_bias = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
-    weights->visual_ln_post_weight = (float*)malloc(VH * sizeof(float));
-    fread(weights->visual_ln_post_weight, sizeof(float), VH, file);
+    tmp_ptr = (float*)malloc(VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), VH, file);
     printf("Shape of visual_ln_post_weight: (%ld)\n", VH);
+    weights->visual_ln_post_weight = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
 
     // (continues with the same allocate + fread + printf pattern)
     // for all remaining vision weights, resblocks, merger_list, and final merger
@@ -170,75 +215,70 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     printf("Successfully loaded model from %s\n", path);
 }
 
-
-void init_model_run_state(QwenRunState *run_state) {
-    printf("Init model run state...\n");
-}
-
 void free_model_weights(QwenWeight* weights) {
     if (!weights) return;
 
     // Language Model Standalone Weights
-    free(weights->token_embedding_table);
-    free(weights->rms_out_w);
+    free(const_cast<float *>(weights->token_embedding_table));
+    free(const_cast<float *>(weights->rms_out_w));
 
     // Language Model Layer Weights (Continuous Blocks)
-    free(weights->rms_ffn_w);
-    free(weights->w_mlp_down);
-    free(weights->w_mlp_gate);
-    free(weights->w_mlp_up);
-    free(weights->rms_attn_w);
-    free(weights->w_attn_k_norm);
-    free(weights->w_attn_k);
-    free(weights->w_attn_o);
-    free(weights->w_attn_q_norm);
-    free(weights->w_attn_q);
-    free(weights->w_attn_v);
+    free(const_cast<float *>(weights->rms_ffn_w));
+    free(const_cast<float *>(weights->w_mlp_down));
+    free(const_cast<float *>(weights->w_mlp_gate));
+    free(const_cast<float *>(weights->w_mlp_up));
+    free(const_cast<float *>(weights->rms_attn_w));
+    free(const_cast<float *>(weights->w_attn_k_norm));
+    free(const_cast<float *>(weights->w_attn_k));
+    free(const_cast<float *>(weights->w_attn_o));
+    free(const_cast<float *>(weights->w_attn_q_norm));
+    free(const_cast<float *>(weights->w_attn_q));
+    free(const_cast<float *>(weights->w_attn_v));
 
     // Vision Model Weights (General)
-    free(weights->visual_attn_qkv_bias);
-    free(weights->visual_attn_qkv_weight);
-    free(weights->visual_attn_proj_bias);
-    free(weights->visual_attn_proj_weight);
-    free(weights->visual_class_embedding);
-    free(weights->visual_conv1_weight);
-    free(weights->visual_ln_post_bias);
-    free(weights->visual_ln_post_weight);
-    free(weights->visual_ln_pre_bias);
-    free(weights->visual_ln_pre_weight);
-    free(weights->visual_patch_embed_proj_bias);
-    free(weights->visual_patch_embed_proj_weight);
-    free(weights->visual_positional_embedding);
+    free(const_cast<float *>(weights->visual_attn_qkv_bias));
+    free(const_cast<float *>(weights->visual_attn_qkv_weight));
+    free(const_cast<float *>(weights->visual_attn_proj_bias));
+    free(const_cast<float *>(weights->visual_attn_proj_weight));
+    free(const_cast<float *>(weights->visual_class_embedding));
+    free(const_cast<float *>(weights->visual_conv1_weight));
+    free(const_cast<float *>(weights->visual_ln_post_bias));
+    free(const_cast<float *>(weights->visual_ln_post_weight));
+    free(const_cast<float *>(weights->visual_ln_pre_bias));
+    free(const_cast<float *>(weights->visual_ln_pre_weight));
+    free(const_cast<float *>(weights->visual_patch_embed_proj_bias));
+    free(const_cast<float *>(weights->visual_patch_embed_proj_weight));
+    free(const_cast<float *>(weights->visual_positional_embedding));
 
     // Vision ResBlocks Weights (Continuous Blocks)
-    free(weights->visual_resblocks_attn_in_proj_bias);
-    free(weights->visual_resblocks_attn_in_proj_weight);
-    free(weights->visual_resblocks_attn_out_proj_bias);
-    free(weights->visual_resblocks_attn_out_proj_weight);
-    free(weights->visual_resblocks_ln_1_bias);
-    free(weights->visual_resblocks_ln_1_weight);
-    free(weights->visual_resblocks_ln_2_bias);
-    free(weights->visual_resblocks_ln_2_weight);
-    free(weights->visual_resblocks_mlp_c_fc_bias);
-    free(weights->visual_resblocks_mlp_c_fc_weight);
-    free(weights->visual_resblocks_mlp_c_proj_bias);
-    free(weights->visual_resblocks_mlp_c_proj_weight);
+    free(const_cast<float *>(weights->visual_resblocks_attn_in_proj_bias));
+    free(const_cast<float *>(weights->visual_resblocks_attn_in_proj_weight));
+    free(const_cast<float *>(weights->visual_resblocks_attn_out_proj_bias));
+    free(const_cast<float *>(weights->visual_resblocks_attn_out_proj_weight));
+    free(const_cast<float *>(weights->visual_resblocks_ln_1_bias));
+    free(const_cast<float *>(weights->visual_resblocks_ln_1_weight));
+    free(const_cast<float *>(weights->visual_resblocks_ln_2_bias));
+    free(const_cast<float *>(weights->visual_resblocks_ln_2_weight));
+    free(const_cast<float *>(weights->visual_resblocks_mlp_c_fc_bias));
+    free(const_cast<float *>(weights->visual_resblocks_mlp_c_fc_weight));
+    free(const_cast<float *>(weights->visual_resblocks_mlp_c_proj_bias));
+    free(const_cast<float *>(weights->visual_resblocks_mlp_c_proj_weight));
 
     // Vision Deepstack Merger Weights (Continuous Blocks)
-    free(weights->visual_deepstack_merger_list_linear_fc1_bias);
-    free(weights->visual_deepstack_merger_list_linear_fc1_weight);
-    free(weights->visual_deepstack_merger_list_linear_fc2_bias);
-    free(weights->visual_deepstack_merger_list_linear_fc2_weight);
-    free(weights->visual_deepstack_merger_list_norm_bias);
-    free(weights->visual_deepstack_merger_list_rms_out_w);
+    free(const_cast<float *>(weights->visual_deepstack_merger_list_linear_fc1_bias));
+    free(const_cast<float *>(weights->visual_deepstack_merger_list_linear_fc1_weight));
+    free(const_cast<float *>(weights->visual_deepstack_merger_list_linear_fc2_bias));
+    free(const_cast<float *>(weights->visual_deepstack_merger_list_linear_fc2_weight));
+    free(const_cast<float *>(weights->visual_deepstack_merger_list_norm_bias));
+    free(const_cast<float *>(weights->visual_deepstack_merger_list_rms_out_w));
 
     // Final Merger Weights
-    free(weights->visual_merger_linear_fc1_bias);
-    free(weights->visual_merger_linear_fc1_weight);
-    free(weights->visual_merger_linear_fc2_bias);
-    free(weights->visual_merger_linear_fc2_weight);
-    free(weights->visual_merger_norm_bias);
-    free(weights->visual_merger_rms_out_w);
+    free(const_cast<float *>(weights->visual_merger_linear_fc1_bias));
+    free(const_cast<float *>(weights->visual_merger_linear_fc1_weight));
+    free(const_cast<float *>(weights->visual_merger_linear_fc2_bias));
+    free(const_cast<float *>(weights->visual_merger_linear_fc2_weight));
+    free(const_cast<float *>(weights->visual_merger_norm_bias));
+    free(const_cast<float *>(weights->visual_merger_rms_out_w));
     
     // Set the struct memory to zero to prevent accidental double-free attempts
     memset(weights, 0, sizeof(QwenWeight)); 
@@ -257,7 +297,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     int D   = 128;
     int S   = 1024;
 
-    size_t cache_size = (size_t)L * NKV * S * D * sizeof(float);
+    size_t cache_size = (size_t)L * S * NKV * D * sizeof(float);
 
     // ---- Hidden / intermediate ----
     state->x = (float*)malloc(H * sizeof(float));
@@ -270,6 +310,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     CHECK_ALLOC(state->q, NH * D * sizeof(float));
 
     state->k = (float*)malloc(NKV * D * sizeof(float));
+    printf("Shape of state->k: (%d, %d)\n", NKV, D);
     CHECK_ALLOC(state->k, NKV * D * sizeof(float));
 
     state->v = (float*)malloc(NKV * D * sizeof(float));
@@ -296,17 +337,18 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->down = (float*)malloc(H * sizeof(float));
     CHECK_ALLOC(state->down, H * sizeof(float));
 
-    state->cos_tensor = (float*)malloc(S * (D / 2) * sizeof(float));
-    CHECK_ALLOC(state->cos_tensor, S * (D / 2) * sizeof(float));
+    state->cos_tensor = (float*)malloc(3 * S * (D / 2) * sizeof(float));
+    CHECK_ALLOC(state->cos_tensor, 3 * S * (D / 2) * sizeof(float));
 
-    state->sin_tensor = (float*)malloc(S * (D / 2) * sizeof(float));
-    CHECK_ALLOC(state->sin_tensor, S * (D / 2) * sizeof(float));
+    state->sin_tensor = (float*)malloc(3 * S * (D / 2) * sizeof(float));
+    CHECK_ALLOC(state->sin_tensor, 3 * S * (D / 2) * sizeof(float));
 
     state->logits = (float*)malloc(V * sizeof(float));
     CHECK_ALLOC(state->logits, V * sizeof(float));
 
     // ---- KV cache ----
     state->key_cache = (float*)malloc(cache_size);
+    printf("Allocating key_cache of size: %d x %d x %d x %d\n", L, S, NKV, D);
     CHECK_ALLOC(state->key_cache, cache_size);
 
     state->value_cache = (float*)malloc(cache_size);
@@ -340,49 +382,81 @@ void free_model_run_state(QwenRunState* state) {
 }
 
 void qwen_rope_precompute(
-    float *cos_all_out,  // (seq_len * head_dim/2)
-    float *sin_all_out,  // (seq_len * head_dim/2)
+    float *cos_all_out,  // (3, seq_len, head_dim/2) 
+    float *sin_all_out,  // (3, seq_len, head_dim/2)
     const QwenConfig *config
 ) {
-    int seq_len = 1024;
-    int head_dim = 128;
+    // Extract parameters from config
+    int seq_len = 1024;  // Should be config->max_position_embeddings
+    int head_dim = 128;  // Should be config->hidden_size / config->num_attention_heads
     float rope_theta = 5000000.0f;
+    
+    // MRoPE sections - should come from config->rope_scaling->mrope_section
     const int mrope_section[] = {24, 20, 20};
-    int num_sections = 3;
-    bool mrope_interleaved = true;
-
+    int num_dimensions = 3;
+    
     int d_half = head_dim / 2;
 
-    // --- Step 1: compute inv_freq (standard RoPE)
+    // Step 1: compute inv_freq (standard RoPE)
     float *inv_freq = (float *)malloc(d_half * sizeof(float));
     for (int i = 0; i < d_half; i++) {
         inv_freq[i] = 1.0f / powf(rope_theta, (2.0f * i) / (float)head_dim);
     }
 
-    // --- Step 2: optionally handle mRoPE interleaving ---
-    // For Qwen with "rope_type": "default", rope_theta is same across sections,
-    // so we just leave inv_freq as-is.
-    // If you wanted to enforce section-based remapping, here’s where you’d do it.
-
-    // Example of section-wise adjustment (not needed for "default")
-    // int offset = 0;
-    // for (int s = 0; s < num_sections; ++s) {
-    //     int section_len = mrope_section[s];
-    //     for (int i = 0; i < section_len && (offset + i) < d_half; ++i) {
-    //         inv_freq[offset + i] = 1.0f / powf(rope_theta, (2.0f * (offset + i)) / head_dim);
-    //     }
-    //     offset += section_len;
-    // }
-
-    // --- Step 3: precompute sin/cos for all positions ---
-    for (int pos = 0; pos < seq_len; pos++) {
-        for (int j = 0; j < d_half; j++) {
-            float angle = (float)pos * inv_freq[j];
-            int index = pos * d_half + j;
-            cos_all_out[index] = cosf(angle);
-            sin_all_out[index] = sinf(angle);
+    // Step 2: Compute frequencies for each dimension and position
+    // We'll create temporary arrays for frequencies of each dimension
+    float *freqs[3];  // freqs[dim][pos * d_half]
+    
+    for (int dim = 0; dim < num_dimensions; dim++) {
+        freqs[dim] = (float *)malloc(seq_len * d_half * sizeof(float));
+        
+        for (int pos = 0; pos < seq_len; pos++) {
+            for (int i = 0; i < d_half; i++) {
+                float freq = pos * inv_freq[i];
+                freqs[dim][pos * d_half + i] = freq;
+            }
         }
     }
 
+    // Step 3: Apply interleaved MRoPE pattern
+    for (int pos = 0; pos < seq_len; pos++) {
+        // Start with T dimension frequencies
+        float *freq_ptr = &freqs[0][pos * d_half];
+        
+        // Apply interleaving pattern for H and W dimensions
+        // Pattern: [THTHWHTHW...TT] as in Python implementation
+        for (int dim = 1; dim <= 2; dim++) {  // H and W dimensions
+            int length = mrope_section[dim] * 3;
+            for (int offset = dim; offset < length; offset += 3) {
+                if (offset < d_half) {
+                    freq_ptr[offset] = freqs[dim][pos * d_half + offset];
+                }
+            }
+        }
+        
+        // Step 4: Compute cosine and sine from interleaved frequencies
+        for (int i = 0; i < d_half; i++) {
+            float freq = freq_ptr[i];
+            
+            // Output for T dimension (after interleaving)
+            int t_idx = (0 * seq_len * d_half) + (pos * d_half) + i;
+            cos_all_out[t_idx] = cosf(freq);
+            sin_all_out[t_idx] = sinf(freq);
+            
+            // For H and W dimensions, we use the original frequencies
+            // (These might be overwritten in actual forward pass)
+            for (int dim = 1; dim < num_dimensions; dim++) {
+                int hw_idx = (dim * seq_len * d_half) + (pos * d_half) + i;
+                float orig_freq = freqs[dim][pos * d_half + i];
+                cos_all_out[hw_idx] = cosf(orig_freq);
+                sin_all_out[hw_idx] = sinf(orig_freq);
+            }
+        }
+    }
+
+    // Cleanup
     free(inv_freq);
+    for (int dim = 0; dim < num_dimensions; dim++) {
+        free(freqs[dim]);
+    }
 }
