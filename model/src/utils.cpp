@@ -8,7 +8,6 @@ void forward_example(QwenConfig *config, QwenWeight *weights, QwenRunState* stat
 
     // Forward pass
     forward_image_encoder(state, weights, image);
-    
 
     // Get final logits
     float* logits = forward_llm(config, state, weights, input_tokens[0], 0); // [vocab_size]
@@ -51,17 +50,24 @@ void print_config(QwenConfig *config) {
     printf("video_token_id: %d\n", config->video_token_id);
 }
 
-int forward_validate(const char *in_token_file, const char *out_token_file, TokenizerStruct *tokenizer, QwenConfig *config, QwenWeight *weight, QwenRunState *state) {
+int forward_validate(const char *in_token_file, const char *in_img_path, const char *out_token_file, TokenizerStruct *tokenizer, QwenConfig *config, QwenWeight *weight, QwenRunState *state) {
     FILE* in_file = fopen(in_token_file, "r");
+    FILE* in_img_file = fopen(in_img_path, "r");
     FILE* out_file = fopen(out_token_file, "r");
 
     if (!in_file) {
         fprintf(stderr, "Error: Could not open input token file: %s\n", in_token_file);
         return 1;
     }
+    if (!in_img_file) {
+        fprintf(stderr, "Error: Could not open input image path file: %s\n", in_img_file);
+        fclose(in_file);
+        return 1;
+    }
     if (!out_file) {
         fprintf(stderr, "Error: Could not open output token file: %s\n", out_token_file);
         fclose(in_file);
+        fclose(in_img_file);
         return 1;
     }
 
@@ -73,16 +79,22 @@ int forward_validate(const char *in_token_file, const char *out_token_file, Toke
 
     while (1) {
         char* in_line = read_full_line(in_file);
+        char* in_img_line = read_full_line(in_img_file);
         char* out_line = read_full_line(out_file);
 
-        if (!in_line || !out_line) {
+        if (!in_line || !in_img_line || !out_line) {
             free(in_line);
-            free(out_line);
+            free(in_img_line);
+            free(in_line);
             break;
         }
 
         sample_count++;
         printf("Starting new forward cycle %d...\n", sample_count);
+
+        float *img_processed_output;
+        int img_processed_h, img_processed_w;
+        image_processor(in_img_line, config->vision_patch_size, config->vision_spatial_merge_size, 256 * 256, 1024 * 1024, img_processed_output, &img_processed_h, &img_processed_w);
 
         int *input_tokens = NULL;
         int input_count = 0;
@@ -114,7 +126,7 @@ int forward_validate(const char *in_token_file, const char *out_token_file, Toke
         int pos = 0; // position in the sequence
         int im_end_count = 0;
 
-        while (pos < 1024) { // max steps
+        while (pos < 1024 + input_count) { // max steps
             // Forward the transformer to get logits for the next token
             // Using your existing forward functions
             float *logits = forward_llm(config, state, weight, token, pos);
@@ -220,6 +232,8 @@ int forward_validate(const char *in_token_file, const char *out_token_file, Toke
         // 6. Cleanup
         // ------------------------------------------------------------
         free(in_line);
+        free(in_img_line);
+        free(img_processed_output);
         free(out_line);
         free(input_tokens);
         free(expected_tokens);
@@ -229,11 +243,103 @@ int forward_validate(const char *in_token_file, const char *out_token_file, Toke
     }
 
     fclose(in_file);
+    fclose(in_img_file);
     fclose(out_file);
 
     printf("\n--- Forward Validation Summary ---\n");
     printf("Total Samples Processed: %d\n", sample_count);
     printf("Total Failures: %d\n", validation_failures);
     
+    return (validation_failures > 0) ? 1 : 0;
+}
+
+bool str_none(const char *str_to_check) {
+    // Skip if "none"
+    if (strcmp(str_to_check, "none") == 0 || strcmp(str_to_check, "NONE") == 0 || strcmp(str_to_check, "None") == 0) {
+        return true;
+    }
+    if (strcmp(str_to_check, "none\n") == 0 || strcmp(str_to_check, "NONE\n") == 0 || strcmp(str_to_check, "None\n") == 0) {
+        return true;
+    }
+
+    return false;
+}
+
+int image_processor_validate(const char *in_img_path,
+                             TokenizerStruct *tokenizer,
+                             QwenConfig *config,
+                             QwenWeight *weight,
+                             QwenRunState *state)
+{
+    FILE* img_file = fopen(in_img_path, "r");
+    if (!img_file) {
+        fprintf(stderr, "Error: Could not open image path file: %s\n", in_img_path);
+        return 1;
+    }
+
+    printf("\nStarting Image Processor Validation...\n");
+    setbuf(stdout, NULL);
+
+    int sample_count = 0;
+    int validation_failures = 0;
+
+    float *prev_embedding = NULL;        // used to compare image features
+    int embed_dim = config->hidden_size; // typical 4096 for QwenVL
+
+    while (1) {
+        char* img_path = read_full_line(img_file);
+        size_t len = strlen(img_path);
+        if (len > 0 && img_path[len - 1] == '\n') {
+            img_path[len - 1] = '\0';
+        }
+
+        if (!img_path) {
+            free(img_path);
+            break;
+        }
+
+        if (str_none(img_path)) {
+            printf("Skipping 'none' image path.\n");
+            free(img_path);
+            continue;
+        }
+
+        printf("%s %d\n", img_path, strlen(img_path));
+        fflush(stdout);
+
+        sample_count++;
+        printf("\n--- Image Validation Sample %d ---\n", sample_count);
+        printf("Image Path: %s\n", img_path);
+
+        // ------------------------------------------------------------
+        // Run Vision Encoder Input (same call used in forward_validate)
+        // ------------------------------------------------------------
+        float *img_processed_output;
+        int img_processed_h, img_processed_w;
+        image_processor(
+            img_path, config->vision_patch_size,
+            config->vision_spatial_merge_size, 256 * 256,
+            1024 * 1024, img_processed_output, &img_processed_h,
+            &img_processed_w
+        );
+        free(img_processed_output);
+
+        forward_image_encoder(state, weight, NULL);
+
+        free(img_path);
+
+        exit(1);
+    }  
+
+    fclose(img_file);
+    free(prev_embedding);
+
+    // ------------------------------------------------------------
+    // Summary
+    // ------------------------------------------------------------
+    printf("\n--- Image Processor Validation Summary ---\n");
+    printf("Total Images Processed: %d\n", sample_count);
+    printf("Total Failures: %d\n", validation_failures);
+
     return (validation_failures > 0) ? 1 : 0;
 }

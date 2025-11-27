@@ -60,6 +60,7 @@ def main():
         # Construct prompt and inputs
         if image_path and os.path.exists(image_path):
             image = Image.open(image_path).convert("RGB")
+            print("image orig", image.size)
             prompt_text = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{text}\n<|im_end|>\n<|im_start|>assistant\n"
             inputs = processor(images=image, text=prompt_text, return_tensors="pt").to(device)
         else:
@@ -69,44 +70,28 @@ def main():
         input_token_ids = inputs["input_ids"][0].tolist()
         num_img_pad_input = input_token_ids.count(151655)
 
-        past_key_values = None
-        prompt_logits = []
+        if image_path is None:
+            continue
+        else:
+            continue
 
-        for t in range(len(input_token_ids)):
-            cur_token = input_token_ids[t]   # [1, 1]
+        print(inputs)
 
-            outputs = model(
-                input_ids = torch.tensor([[cur_token]], dtype=torch.long, device=device, requires_grad=False),
-                past_key_values=past_key_values,
-                use_cache=True,
-                return_dict=True
-            )
-
-            # logits for this token
-            prompt_logits.append(outputs.logits[:, -1, :].detach().cpu())
-
-            # update KV cache
-            past_key_values = outputs.past_key_values
-
-            print(prompt_logits[-1][0, :5], flush=True)
-
-
-        # Stack prompt logits
-        prompt_logits = torch.stack(prompt_logits, dim=1)    # [1, seq_len, vocab]
-
-        assert 0 == 1
-
-        # GENERATION PASS
         with torch.no_grad():
-            generated = model.generate(
-                **inputs,
-                max_new_tokens=1024,
-                do_sample=False,
-                num_beams=1,
-                use_cache=True
-            )
-
-        print(generated)
+            try:
+                generated = model.generate(
+                    **inputs,
+                    max_new_tokens=1024,
+                    do_sample=False,
+                    num_beams=1
+                )
+            # except:
+            #     pass
+            except Exception as e:
+                raise e
+        
+        continue
+        assert 0 == 1
 
         # ---- Clean output tokens (remove special tokens) ----
         output_token_ids_full = generated[0].tolist()

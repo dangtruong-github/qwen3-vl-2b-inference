@@ -57,8 +57,12 @@ def split_json_to_files(args):
                 
                 elif field_key in ['input_token_ids', 'output_token_ids', 'output_token_ids_full'] and isinstance(value, list):
                     # Token ID lists: convert list of numbers to a space-separated string
-                    line = ' '.join(map(str, value))
-                
+                    if field_key == 'output_token_ids_full':
+                        # Only save the first 1024 tokens
+                        line = ' '.join(map(str, value[:1024]))
+                    else:
+                        line = ' '.join(map(str, value))
+
                 elif field_key == "image":
                     if value is None:
                         line = "None"

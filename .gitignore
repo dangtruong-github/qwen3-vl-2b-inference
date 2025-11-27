@@ -115,6 +115,7 @@ __marimo__/
 !**/*.h
 !**/*.hpp
 !**/*.py
+scripts/*
 
 # 4️⃣ (Optional) CUDA files
 !**/*.cu

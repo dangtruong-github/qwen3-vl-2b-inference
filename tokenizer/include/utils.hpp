@@ -3,6 +3,7 @@
 #include <float.h>
 
 #include "../config.hpp"
+#include "img_processor.hpp"
 
 int compare_tokens(const void *a, const void *b);
 int greedy_decode(float* logits, int vocab_size);

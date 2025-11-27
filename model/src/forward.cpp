@@ -207,7 +207,7 @@ float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, 
             }
             printf("\n");
 
-            if (pos == 0) exit(1);
+            if (pos == 1) exit(1);
         #endif
 
         // Store k, v in cache - FIXED VERSION
