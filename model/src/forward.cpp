@@ -35,7 +35,7 @@ void extract_image_patches(const float* img, float* patches, const QwenConfig* c
 // -------------------------
 // Forward Image Encoder
 // -------------------------
-void forward_image_encoder(QwenRunState* state, const QwenWeight* weights, const float* image) {
+void forward_image_encoder(QwenRunState* state, const QwenWeight* weights, const float* image, int img_h, int img_w, int grid_h, int grid_w) {
     if (!image) {
         state->vision_embed_true = false;
         return; // no image

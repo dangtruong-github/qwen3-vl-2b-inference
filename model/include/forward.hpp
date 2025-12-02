@@ -13,7 +13,7 @@
 // ================================================================
 // Forward Functions
 // ================================================================
-void forward_image_encoder(QwenRunState* state, const QwenWeight* weights, const float* image);
+void forward_image_encoder(QwenRunState* state, const QwenWeight* weights, const float* image, int img_h, int img_w, int grid_h, int grid_w);
 void forward_language(QwenRunState* state, const QwenWeight* weights, const int* input_tokens, int n_tokens);
 void forward_transformer(QwenRunState* state, const QwenWeight* weights);
 void extract_image_patches(const float* img, float* patches, const QwenConfig* config);

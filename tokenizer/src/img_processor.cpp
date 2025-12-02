@@ -188,9 +188,28 @@ void duplicate_to_batch(const cv::Mat& img, float* batch, int B, int C, int H, i
 }
 
 
-void image_processor(
-    const char *img_path, int patch_size, int merge_size, long long min_pixels, long long max_pixels, float *out_data, int *out_h, int *out_w
+
+bool str_none(const char *str_to_check) {
+    // Skip if "none"
+    if (strcmp(str_to_check, "none") == 0 || strcmp(str_to_check, "NONE") == 0 || strcmp(str_to_check, "None") == 0) {
+        return true;
+    }
+    if (strcmp(str_to_check, "none\n") == 0 || strcmp(str_to_check, "NONE\n") == 0 || strcmp(str_to_check, "None\n") == 0) {
+        return true;
+    }
+
+    return false;
+}
+
+bool image_processor(
+    const char *img_path, int patch_size, int merge_size, long long min_pixels, long long max_pixels, float *out_data, int *out_h, int *out_w,
+    int *out_grid_h, int *out_grid_w 
 ) {
+    if (str_none(img_path)) {
+        printf("Skipping 'none' image path.\n");
+        return false;
+    }
+
     int orig_height, orig_width, h_bar, w_bar;
     printf("Start reading %s\n", img_path);
     fflush(stdout);
@@ -286,17 +305,22 @@ void image_processor(
     int final_h = grid_h * grid_w;
     int final_w = temporal_patch_size * channels * patch_size * patch_size;
 
-    printf("fina_h: %d, final_w: %d\n", final_h, final_w);
+    printf("final_h: %d, final_w: %d\n", final_h, final_w);
     fflush(stdout);
 
+    /*
     for (int i = 0; i < final_h; i++) {
         for (int j = 0; j < final_w; j++) {
             printf("%.2f ", out_data[i * final_w + j]);
         }
         printf("\n");
     }
+    */
     
     *out_h = final_h;
     *out_w = final_w;
+    *out_grid_h = grid_h;
+    *out_grid_w = grid_w;
     free(batch_img);
+    return true;
 }

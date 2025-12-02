@@ -54,9 +54,16 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
 
     long VH = config->vision_hidden_size;
     long VP = config->vision_patch_size;
+    long VTP = config->vision_temporal_patch_size;
     long VD = config->vision_depth;
     long VI = config->vision_intermediate_size;
     long OH = config->out_hidden_size;
+    config->vision_num_channels = 3;
+    long VC = config->vision_num_channels;
+    config->vision_num_position_embeddings = 2304;
+    long VNPE = config->vision_num_position_embeddings;
+    config->vision_deep_stack_depth = 3;
+    long VDSD = config->vision_deep_stack_depth;
     long QKVD = vision_qkv_dim;
     int M = num_deepstack_mergers;
 
@@ -159,57 +166,167 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     tmp_ptr = nullptr;
 
     // --- Vision model general
-    tmp_ptr = (float*)malloc(QKVD * sizeof(float));
-    fread(tmp_ptr, sizeof(float), QKVD, file);
-    printf("Shape of visual_attn_qkv_bias: (%ld)\n", QKVD);
-    weights->visual_attn_qkv_bias = (const float *)tmp_ptr;
-    tmp_ptr = nullptr;
-
-    tmp_ptr = (float*)malloc(QKVD * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), QKVD * VH, file);
-    printf("Shape of visual_attn_qkv_weight: (%ld, %ld)\n", QKVD, VH);
-    weights->visual_attn_qkv_weight = (const float *)tmp_ptr;
-    tmp_ptr = nullptr;
-
     tmp_ptr = (float*)malloc(VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), VH, file);
-    printf("Shape of visual_attn_proj_bias: (%ld)\n", VH);
-    weights->visual_attn_proj_bias = (const float *)tmp_ptr;
+    printf("Shape of vl_patch_emb_b: (%ld)\n", VH);
+    weights->vl_patch_emb_b = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
-    tmp_ptr = (float*)malloc(VH * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), VH * VH, file);
-    printf("Shape of visual_attn_proj_weight: (%ld, %ld)\n", VH, VH);
-    weights->visual_attn_proj_weight = (const float *)tmp_ptr;
+    tmp_ptr = (float*)malloc(VH * VC * VTP * VP * VP * sizeof(float));
+    fread(tmp_ptr, sizeof(float), VH * VC * VTP * VP * VP, file);
+    printf("Shape of vl_patch_emb_w: (%ld, %ld, %ld, %ld, %ld)\n", VH, VC, VTP, VP, VP);
+    weights->vl_patch_emb_w = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
-    tmp_ptr = (float*)malloc(VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), VH, file);
-    printf("Shape of visual_class_embedding: (%ld)\n", VH);
-    weights->visual_class_embedding = (const float *)tmp_ptr;
+    tmp_ptr = (float*)malloc(1ll * VNPE * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VNPE * VH, file);
+    printf("Shape of vl_pos_emb_w: (%ld, %ld)\n", VNPE, VH);
+    weights->vl_pos_emb_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+    
+    tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    printf("Shape of vl_attn_proj_b: (%ld, %ld)\n", VD, VH);
+    weights->vl_attn_proj_b = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
-    tmp_ptr = (float*)malloc(VH * 3 * VP * VP * sizeof(float));
-    fread(tmp_ptr, sizeof(float), VH * 3 * VP * VP, file);
-    printf("Shape of visual_conv1_weight: (%ld, 3, %ld, %ld)\n", VH, VP, VP);
-    weights->visual_conv1_weight = (const float *)tmp_ptr;
+    tmp_ptr = (float*)malloc(1ll * VD * VH * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * VH * VH, file);
+    printf("Shape of vl_attn_proj_w: (%ld, %ld, %ld)\n", VD, VH, VH);
+    weights->vl_attn_proj_w = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
-    tmp_ptr = (float*)malloc(VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), VH, file);
-    printf("Shape of visual_ln_post_bias: (%ld)\n", VH);
-    weights->visual_ln_post_bias = (const float *)tmp_ptr;
+    tmp_ptr = (float*)malloc(1ll * VD * 3 * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * 3 * VH, file);
+    printf("Shape of vl_attn_qkv_b: (%ld, %ld)\n", VD, 3 * VH);
+    weights->vl_attn_qkv_b = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+    
+    tmp_ptr = (float*)malloc(1ll * VD * 3 * VH * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * 3 * VH * VH, file);
+    printf("Shape of vl_attn_qkv_w: (%ld, %ld, %ld)\n", VD, 3 * VH, VH);
+    weights->vl_attn_qkv_w = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
-    tmp_ptr = (float*)malloc(VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), VH, file);
-    printf("Shape of visual_ln_post_weight: (%ld)\n", VH);
-    weights->visual_ln_post_weight = (const float *)tmp_ptr;
+    tmp_ptr = (float*)malloc(1ll * VD * VI * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * VI, file);
+    printf("Shape of vl_mlp1_b: (%ld, %ld)\n", VD, VI);
+    weights->vl_mlp1_b = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
-    // (continues with the same allocate + fread + printf pattern)
-    // for all remaining vision weights, resblocks, merger_list, and final merger
-    // ...
+    tmp_ptr = (float*)malloc(1ll * VD * VI * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * VI * VH, file);
+    printf("Shape of vl_mlp1_w: (%ld, %ld, %ld)\n", VD, VI, VH);
+    weights->vl_mlp1_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+    
+    tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    printf("Shape of vl_mlp2_b: (%ld, %ld)\n", VD, VH);
+    weights->vl_mlp2_b = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VD * VH * VI * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * VH * VI, file);
+    printf("Shape of vl_mlp2_w: (%ld, %ld, %ld)\n", VD, VH, VI);
+    weights->vl_mlp2_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    printf("Shape of vl_norm1_b: (%ld, %ld)\n", VD, VH);
+    weights->vl_norm1_b = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+    
+    tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    printf("Shape of vl_norm1_w: (%ld, %ld)\n", VD, VH);
+    weights->vl_norm1_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    printf("Shape of vl_norm2_b: (%ld, %ld)\n", VD, VH);
+    weights->vl_norm2_b = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    printf("Shape of vl_norm2_w: (%ld, %ld)\n", VD, VH);
+    weights->vl_norm2_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
+    printf("Shape of vl_d_merge_mlp1_b: (%ld, %ld)\n", VDSD, VI);
+    weights->vl_d_merge_mlp1_b = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VDSD * VI * VI * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI * VI, file);
+    printf("Shape of vl_d_merge_mlp1_w: (%ld, %ld, %ld)\n", VDSD, VI, VI);
+    weights->vl_d_merge_mlp1_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VDSD * OH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VDSD * OH, file);
+    printf("Shape of vl_d_merge_mlp2_b: (%ld, %ld)\n", VDSD, OH);
+    weights->vl_d_merge_mlp2_b = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VDSD * OH * VI * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VDSD * OH * VI, file);
+    printf("Shape of vl_d_merge_mlp2_w: (%ld, %ld, %ld)\n", VDSD, OH, VI);
+    weights->vl_d_merge_mlp2_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
+    printf("Shape of vl_d_merge_norm_b: (%ld, %ld)\n", VDSD, VI);
+    weights->vl_d_merge_norm_b = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
+    printf("Shape of vl_d_merge_norm_w: (%ld, %ld)\n", VDSD, VI);
+    weights->vl_d_merge_norm_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+    
+    tmp_ptr = (float*)malloc(1ll * VI * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VI, file);
+    printf("Shape of vl_merge_mlp1_b: (%ld)\n", VI);
+    weights->vl_merge_mlp1_b = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VI * VI * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VI * VI, file);
+    printf("Shape of vl_merge_mlp1_w: (%ld, %ld)\n", VI, VI);
+    weights->vl_merge_mlp1_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * OH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * OH, file);
+    printf("Shape of vl_merge_mlp2_b: (%ld)\n", OH);
+    weights->vl_merge_mlp2_b = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * OH * VI * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * OH * VI, file);
+    printf("Shape of vl_merge_mlp2_w: (%ld, %ld)\n", OH, VI);
+    weights->vl_merge_mlp2_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VH, file);
+    printf("Shape of vl_merge_norm_b: (%ld)\n", VH);
+    weights->vl_merge_norm_b = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
+
+    tmp_ptr = (float*)malloc(1ll * VH * sizeof(float));
+    fread(tmp_ptr, sizeof(float), 1ll * VH, file);
+    printf("Shape of vl_merge_norm_w: (%ld)\n", VH);
+    weights->vl_merge_norm_w = (const float *)tmp_ptr;
+    tmp_ptr = nullptr;
     
     fclose(file);
     printf("Successfully loaded model from %s\n", path);
@@ -236,49 +353,18 @@ void free_model_weights(QwenWeight* weights) {
     free(const_cast<float *>(weights->w_attn_v));
 
     // Vision Model Weights (General)
-    free(const_cast<float *>(weights->visual_attn_qkv_bias));
-    free(const_cast<float *>(weights->visual_attn_qkv_weight));
-    free(const_cast<float *>(weights->visual_attn_proj_bias));
-    free(const_cast<float *>(weights->visual_attn_proj_weight));
-    free(const_cast<float *>(weights->visual_class_embedding));
-    free(const_cast<float *>(weights->visual_conv1_weight));
-    free(const_cast<float *>(weights->visual_ln_post_bias));
-    free(const_cast<float *>(weights->visual_ln_post_weight));
-    free(const_cast<float *>(weights->visual_ln_pre_bias));
-    free(const_cast<float *>(weights->visual_ln_pre_weight));
-    free(const_cast<float *>(weights->visual_patch_embed_proj_bias));
-    free(const_cast<float *>(weights->visual_patch_embed_proj_weight));
-    free(const_cast<float *>(weights->visual_positional_embedding));
-
-    // Vision ResBlocks Weights (Continuous Blocks)
-    free(const_cast<float *>(weights->visual_resblocks_attn_in_proj_bias));
-    free(const_cast<float *>(weights->visual_resblocks_attn_in_proj_weight));
-    free(const_cast<float *>(weights->visual_resblocks_attn_out_proj_bias));
-    free(const_cast<float *>(weights->visual_resblocks_attn_out_proj_weight));
-    free(const_cast<float *>(weights->visual_resblocks_ln_1_bias));
-    free(const_cast<float *>(weights->visual_resblocks_ln_1_weight));
-    free(const_cast<float *>(weights->visual_resblocks_ln_2_bias));
-    free(const_cast<float *>(weights->visual_resblocks_ln_2_weight));
-    free(const_cast<float *>(weights->visual_resblocks_mlp_c_fc_bias));
-    free(const_cast<float *>(weights->visual_resblocks_mlp_c_fc_weight));
-    free(const_cast<float *>(weights->visual_resblocks_mlp_c_proj_bias));
-    free(const_cast<float *>(weights->visual_resblocks_mlp_c_proj_weight));
-
-    // Vision Deepstack Merger Weights (Continuous Blocks)
-    free(const_cast<float *>(weights->visual_deepstack_merger_list_linear_fc1_bias));
-    free(const_cast<float *>(weights->visual_deepstack_merger_list_linear_fc1_weight));
-    free(const_cast<float *>(weights->visual_deepstack_merger_list_linear_fc2_bias));
-    free(const_cast<float *>(weights->visual_deepstack_merger_list_linear_fc2_weight));
-    free(const_cast<float *>(weights->visual_deepstack_merger_list_norm_bias));
-    free(const_cast<float *>(weights->visual_deepstack_merger_list_rms_out_w));
-
-    // Final Merger Weights
-    free(const_cast<float *>(weights->visual_merger_linear_fc1_bias));
-    free(const_cast<float *>(weights->visual_merger_linear_fc1_weight));
-    free(const_cast<float *>(weights->visual_merger_linear_fc2_bias));
-    free(const_cast<float *>(weights->visual_merger_linear_fc2_weight));
-    free(const_cast<float *>(weights->visual_merger_norm_bias));
-    free(const_cast<float *>(weights->visual_merger_rms_out_w));
+    free(const_cast<float *>(weights->vl_patch_emb_b));
+    free(const_cast<float *>(weights->vl_patch_emb_w));
+    free(const_cast<float *>(weights->vl_attn_qkv_b));
+    free(const_cast<float *>(weights->vl_attn_qkv_w));
+    free(const_cast<float *>(weights->vl_mlp1_b));
+    free(const_cast<float *>(weights->vl_mlp1_w));
+    free(const_cast<float *>(weights->vl_mlp2_b));
+    free(const_cast<float *>(weights->vl_mlp2_w));
+    free(const_cast<float *>(weights->vl_norm1_b));
+    free(const_cast<float *>(weights->vl_norm1_w));
+    free(const_cast<float *>(weights->vl_norm2_b));
+    free(const_cast<float *>(weights->vl_norm2_w));
     
     // Set the struct memory to zero to prevent accidental double-free attempts
     memset(weights, 0, sizeof(QwenWeight)); 

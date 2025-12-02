@@ -7,7 +7,7 @@ void forward_example(QwenConfig *config, QwenWeight *weights, QwenRunState* stat
     int n_tokens = sizeof(input_tokens) / sizeof(int);
 
     // Forward pass
-    forward_image_encoder(state, weights, image);
+    // forward_image_encoder(state, weights, image);
 
     // Get final logits
     float* logits = forward_llm(config, state, weights, input_tokens[0], 0); // [vocab_size]
@@ -89,12 +89,13 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
             break;
         }
 
+        size_t len = strlen(in_img_line);
+        if (len > 0 && in_img_line[len - 1] == '\n') {
+            in_img_line[len - 1] = '\0';
+        }
+
         sample_count++;
         printf("Starting new forward cycle %d...\n", sample_count);
-
-        float *img_processed_output;
-        int img_processed_h, img_processed_w;
-        image_processor(in_img_line, config->vision_patch_size, config->vision_spatial_merge_size, 256 * 256, 1024 * 1024, img_processed_output, &img_processed_h, &img_processed_w);
 
         int *input_tokens = NULL;
         int input_count = 0;
@@ -107,12 +108,17 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         // ------------------------------------------------------------
         // 3. Reset state and run initial forward pass
         // ------------------------------------------------------------
-        forward_image_encoder(state, weight, nullptr);  // No image
+        float *img_processed_output;
+        int img_processed_h = 0, img_processed_w = 0;
+        int img_grid_h = 0, img_grid_w = 0;
+        bool img_true = image_processor(in_img_line, config->vision_patch_size, config->vision_spatial_merge_size, 256 * 256, 1024 * 1024, img_processed_output, &img_processed_h, &img_processed_w, &img_grid_h, &img_grid_w);
+
+        forward_image_encoder(state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
         
         // ------------------------------------------------------------
         // 4. Generation loop - matching the structure from run.cpp
         // ------------------------------------------------------------
-        int *generated_tokens = (int*)malloc((input_count + 1024) * sizeof(int));
+        int *generated_tokens = (int*)malloc((1024) * sizeof(int));
         int total_generated_count = 0;
         
         // Copy initial input tokens
@@ -233,7 +239,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         // ------------------------------------------------------------
         free(in_line);
         free(in_img_line);
-        free(img_processed_output);
+        if (img_true) free(img_processed_output);
         free(out_line);
         free(input_tokens);
         free(expected_tokens);
@@ -251,18 +257,6 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
     printf("Total Failures: %d\n", validation_failures);
     
     return (validation_failures > 0) ? 1 : 0;
-}
-
-bool str_none(const char *str_to_check) {
-    // Skip if "none"
-    if (strcmp(str_to_check, "none") == 0 || strcmp(str_to_check, "NONE") == 0 || strcmp(str_to_check, "None") == 0) {
-        return true;
-    }
-    if (strcmp(str_to_check, "none\n") == 0 || strcmp(str_to_check, "NONE\n") == 0 || strcmp(str_to_check, "None\n") == 0) {
-        return true;
-    }
-
-    return false;
 }
 
 int image_processor_validate(const char *in_img_path,
@@ -288,48 +282,57 @@ int image_processor_validate(const char *in_img_path,
 
     while (1) {
         char* img_path = read_full_line(img_file);
+
+        if (img_path == NULL) {
+            break;
+        }
+
         size_t len = strlen(img_path);
         if (len > 0 && img_path[len - 1] == '\n') {
             img_path[len - 1] = '\0';
         }
 
-        if (!img_path) {
-            free(img_path);
-            break;
-        }
-
-        if (str_none(img_path)) {
-            printf("Skipping 'none' image path.\n");
+        // if len = 0, skip
+        if (strlen(img_path) == 0) {
             free(img_path);
             continue;
         }
 
-        printf("%s %d\n", img_path, strlen(img_path));
-        fflush(stdout);
-
         sample_count++;
         printf("\n--- Image Validation Sample %d ---\n", sample_count);
         printf("Image Path: %s\n", img_path);
+        fflush(stdout);
 
         // ------------------------------------------------------------
         // Run Vision Encoder Input (same call used in forward_validate)
         // ------------------------------------------------------------
         float *img_processed_output;
         int img_processed_h, img_processed_w;
-        image_processor(
+        int img_grid_h, img_grid_w;
+        bool img_true = image_processor(
             img_path, config->vision_patch_size,
             config->vision_spatial_merge_size, 256 * 256,
             1024 * 1024, img_processed_output, &img_processed_h,
-            &img_processed_w
+            &img_processed_w, &img_grid_h, &img_grid_w
         );
-        free(img_processed_output);
 
-        forward_image_encoder(state, weight, NULL);
+        printf("Finish validation sample %d\n", sample_count);
+        fflush(stdout);
+
+        forward_image_encoder(state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
+
+        printf("Finish forward validation sample %d\n", sample_count);
+        fflush(stdout);
 
         free(img_path);
+        if (img_true) free(img_processed_output);
 
-        exit(1);
-    }  
+        printf("Finish free sample %d\n", sample_count);
+        fflush(stdout);
+    }
+
+    printf("Finish validation\n");
+    fflush(stdout);
 
     fclose(img_file);
     free(prev_embedding);
