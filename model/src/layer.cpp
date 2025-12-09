@@ -213,7 +213,7 @@ void attn_scores_all_heads(
 }
 
 // Fix attn_weighted_sum_all_heads function:
-// This function was already correct. 'loff' passed from forward_llm
+// This function was already correct. 'loff' passed from forward_text
 // corresponds to the layer_cache_start.
 void attn_weighted_sum_all_heads(
     const float *value_cache, const float *q, const float *att, float *tb,
@@ -290,4 +290,252 @@ void apply_rotary(
             x[x_idx2] = o2;
         }
     }
+}
+
+void conv_3d(
+    const float *conv_w, const float *conv_b, float *in_img, float *out_img,
+    long img_h, long VC, long VTP, long VP, long VH
+) {
+    // Total size of the VTP * VP * VP plane
+    const long PLANE_SIZE = VTP * VP * VP;
+    // Total size of the VC * VTP * VP * VP feature block
+    const long FEATURE_BLOCK_SIZE = VC * PLANE_SIZE;
+
+    // --- Outer loop: Iterate over the 'batch' dimension (img_h) ---
+    for (long i = 0; i < img_h; ++i) {
+        // Pointer to the current feature block in the input
+        const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
+
+        // --- Second loop: Iterate over the output channels (VH) ---
+        for (long h = 0; h < VH; ++h) {
+            float accumulator = 0.0f;
+
+            // Pointer to the current kernel slice (VC * VTP * VP * VP) for this output channel
+            const float *kernel_slice_ptr = conv_w + h * FEATURE_BLOCK_SIZE;
+
+            // --- Innermost loop: Perform the dot product (contraction) ---
+            // This loop iterates over the flattened feature block (VC * VTP * VP * VP)
+            for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
+                accumulator += input_block_ptr[c] * kernel_slice_ptr[c];
+            }
+
+            // Add the bias and store the result
+            // Output index: i * VH + h
+            out_img[i * VH + h] = accumulator + conv_b[h];
+        }
+    }
+}
+
+void vision_pos_embed(const float *pos_embed_w, float *x_embed, int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH) {
+
+    if (grid_h <= 0 || grid_w <= 0 || num_grid_per_side <= 0) {
+        return;
+    }
+
+    size_t total_elements = (size_t)grid_h * (size_t)grid_w;
+    
+    // --- Allocate Temporary Buffers (equivalent to Python's intermediate lists/tensors) ---
+    // The final result tensors would also be total_elements * 4, but cannot be returned.
+    
+    // Float arrays
+    float *h_idxs = (float *)malloc(grid_h * sizeof(float));
+    float *w_idxs = (float *)malloc(grid_w * sizeof(float));
+    float *dh = (float *)malloc(grid_h * sizeof(float));
+    float *dw = (float *)malloc(grid_w * sizeof(float));
+    
+    // Long/int arrays
+    long *h_idxs_floor = (long *)malloc(grid_h * sizeof(long));
+    long *w_idxs_floor = (long *)malloc(grid_w * sizeof(long));
+    long *h_idxs_ceil = (long *)malloc(grid_h * sizeof(long));
+    long *w_idxs_ceil = (long *)malloc(grid_w * sizeof(long));
+    long *base_h = (long *)malloc(grid_h * sizeof(long));
+    long *base_h_ceil = (long *)malloc(grid_h * sizeof(long));
+
+    // Array of pointers for the 4 final index and weight results (allocated here but effectively lost)
+    // This is the memory for the FINAL idx_tensor and weight_tensor
+    long *idx_list_mem[4];
+    float *weight_list_mem[4];
+    
+    for (int i = 0; i < 4; ++i) {
+        idx_list_mem[i] = (long *)malloc(total_elements * sizeof(long));
+        weight_list_mem[i] = (float *)malloc(total_elements * sizeof(float));
+        // Check for malloc failure in a real application here...
+    }
+
+    // --- Check for malloc failure on ALL buffers (omitted for brevity) ---
+    // If any malloc failed, free everything successfully allocated and return.
+    
+    // --- 1. Calculate the normalized floating-point indices (h_idxs, w_idxs) ---
+    float max_idx = (float)(num_grid_per_side - 1);
+    
+    if (grid_h > 1) {
+        float h_step = max_idx / (float)(grid_h - 1);
+        for (int i = 0; i < grid_h; ++i) h_idxs[i] = (float)i * h_step;
+    } else if (grid_h == 1) {
+        h_idxs[0] = 0.0f;
+    }
+    
+    if (grid_w > 1) {
+        float w_step = max_idx / (float)(grid_w - 1);
+        for (int i = 0; i < grid_w; ++i) w_idxs[i] = (float)i * w_step;
+    } else if (grid_w == 1) {
+        w_idxs[0] = 0.0f;
+    }
+
+    // --- 2. Calculate floor, ceil, and delta (dh, dw) ---
+    long max_clip = (long)num_grid_per_side - 1;
+
+    for (int i = 0; i < grid_h; ++i) {
+        h_idxs_floor[i] = (long)floorf(h_idxs[i]);
+        long h_ceil_temp = h_idxs_floor[i] + 1;
+        h_idxs_ceil[i] = (h_ceil_temp < max_clip) ? h_ceil_temp : max_clip;
+        dh[i] = h_idxs[i] - (float)h_idxs_floor[i];
+        base_h[i] = h_idxs_floor[i] * num_grid_per_side;
+        base_h_ceil[i] = h_idxs_ceil[i] * num_grid_per_side;
+    }
+
+    for (int i = 0; i < grid_w; ++i) {
+        w_idxs_floor[i] = (long)floorf(w_idxs[i]);
+        long w_ceil_temp = w_idxs_floor[i] + 1;
+        w_idxs_ceil[i] = (w_ceil_temp < max_clip) ? w_ceil_temp : max_clip;
+        dw[i] = w_idxs[i] - (float)w_idxs_floor[i];
+    }
+    
+    // --- 3. Flatten and calculate indices/weights into the *allocated* result arrays ---
+    size_t linear_idx = 0;
+    
+    for (int h_idx = 0; h_idx < grid_h; ++h_idx) {
+        float one_minus_dh = 1.0f - dh[h_idx];
+        float current_dh = dh[h_idx];
+        
+        long current_base_h = base_h[h_idx];
+        long current_base_h_ceil = base_h_ceil[h_idx];
+
+        for (int w_idx = 0; w_idx < grid_w; ++w_idx) {
+            float one_minus_dw = 1.0f - dw[w_idx];
+            float current_dw = dw[w_idx];
+            long current_w_floor = w_idxs_floor[w_idx];
+            long current_w_ceil = w_idxs_ceil[w_idx];
+            
+            // Indices (written to the malloc'd result arrays)
+            idx_list_mem[0][linear_idx] = current_base_h + current_w_floor;
+            idx_list_mem[1][linear_idx] = current_base_h + current_w_ceil;
+            idx_list_mem[2][linear_idx] = current_base_h_ceil + current_w_floor;
+            idx_list_mem[3][linear_idx] = current_base_h_ceil + current_w_ceil;
+
+            // Weights (written to the malloc'd result arrays)
+            weight_list_mem[0][linear_idx] = one_minus_dh * one_minus_dw; 
+            weight_list_mem[1][linear_idx] = one_minus_dh * current_dw;   
+            weight_list_mem[2][linear_idx] = current_dh * one_minus_dw;   
+            weight_list_mem[3][linear_idx] = current_dh * current_dw;     
+
+            linear_idx++;
+        }
+    }
+
+    // --- 4. Clean up dynamically allocated TEMPORARY memory ---
+    free(h_idxs); free(w_idxs);
+    free(h_idxs_floor); free(w_idxs_floor);
+    free(h_idxs_ceil); free(w_idxs_ceil);
+    free(dh); free(dw);
+    free(base_h); free(base_h_ceil);
+
+    float *pos_embed_ptr = (float *)malloc(1ll * total_elements * VH * sizeof(float));
+
+    for (size_t i = 0; i < total_elements; ++i) {
+        float *pos_embed_ptr_cur = pos_embed_ptr + (i * VH);
+
+        for (size_t j = 0; j < VH; j++) {
+            pos_embed_ptr_cur[j] = 0.0f;
+        }
+
+        for (int k = 0; k < 4; ++k) {
+
+            long source_index = idx_list_mem[k][i];
+            const float *pos_embed_w_idx_start = pos_embed_w + (source_index * VH);
+
+            float weight = weight_list_mem[k][i];
+
+            for (int j = 0; j < VH; ++j) {
+                pos_embed_ptr_cur[j] += pos_embed_w_idx_start[j] * weight;
+            }
+        }   
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        free(idx_list_mem[i]);
+        free(weight_list_mem[i]);
+    }
+
+    int grid_t = 1;
+
+    // Tensors dimensions after view and permute (6D structure):
+    // (T, H_grid, W_grid, H_intra, W_intra, D)
+    int H_grid = grid_h / VSP;
+    int W_grid = grid_w / VSP;
+    int H_intra = VSP;
+    int W_intra = VSP;
+
+    // The total size of the final tensor
+    size_t total_elements_with_t = (size_t)grid_t * grid_h * grid_w * VH;
+    size_t token_size = (size_t)VH;
+    size_t patch_size_d = (size_t)H_intra * W_intra * VH; // VSP * VSP * D
+    size_t hw_size_d = (size_t)grid_h * grid_w * VH;                // H * W * D (size of the input)
+
+    // --- C-Style Implementation of Repeat, View, Permute, and Flatten ---
+    
+    // pos_embed.repeat(t, 1) is achieved implicitly in the outer loop:
+    for (int it = 0; it < grid_t; ++it) {
+        // Loop over the new 6D shape dimensions: T, H_grid, W_grid, H_intra, W_intra
+        for (int ih_grid = 0; ih_grid < H_grid; ++ih_grid) {
+            for (int iw_grid = 0; iw_grid < W_grid; ++iw_grid) {
+                for (int ih_intra = 0; ih_intra < H_intra; ++ih_intra) {
+                    for (int iw_intra = 0; iw_intra < W_intra; ++iw_intra) {
+                        
+                        // --- 1. Calculate source index (Original H*W layout) ---
+                        // The source index is based on the original (H, W) coordinates.
+                        // H_original = H_grid * VSP + H_intra
+                        // W_original = W_grid * VSP + W_intra
+                        
+                        int h_original = ih_grid * VSP + ih_intra;
+                        int w_original = iw_grid * VSP + iw_intra;
+                        
+                        // Source index offset for the start of the (H, W) token in pos_embed_in
+                        size_t source_token_offset = (size_t)(h_original * grid_w + w_original) * token_size;
+                        const float *source_ptr = pos_embed_ptr + source_token_offset;
+
+                        // --- 2. Calculate destination index (Flattened 5D layout) ---
+                        // The Python code results in a flattened tensor:
+                        // Index = (T * H_grid * W_grid * H_intra * W_intra) * D
+                        
+                        // This corresponds to the permutation: (T, H_grid, W_grid, H_intra, W_intra, D)
+                        size_t dest_flat_idx = 0;
+                        
+                        // Contribution of T
+                        dest_flat_idx += (size_t)it * (H_grid * W_grid * patch_size_d);
+                        
+                        // Contribution of H_grid
+                        dest_flat_idx += (size_t)ih_grid * (W_grid * patch_size_d);
+                        
+                        // Contribution of W_grid
+                        dest_flat_idx += (size_t)iw_grid * (patch_size_d);
+                        
+                        // Contribution of H_intra
+                        dest_flat_idx += (size_t)ih_intra * (W_intra * VH);
+                        
+                        // Contribution of W_intra
+                        dest_flat_idx += (size_t)iw_intra * (VH);
+
+                        float *dest_ptr = x_embed + dest_flat_idx;
+                        
+                        // --- 3. Copy the token (D elements) ---
+                        // Copy the D-dimensional token vector from source to destination
+                        memcpy(dest_ptr, source_ptr, token_size * sizeof(float));
+                    }
+                }
+            }
+        }
+    }
+
+    free(pos_embed_ptr);
 }

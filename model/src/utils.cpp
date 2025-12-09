@@ -10,7 +10,7 @@ void forward_example(QwenConfig *config, QwenWeight *weights, QwenRunState* stat
     // forward_image_encoder(state, weights, image);
 
     // Get final logits
-    float* logits = forward_llm(config, state, weights, input_tokens[0], 0); // [vocab_size]
+    float* logits = forward_text(config, state, weights, input_tokens[0], 0); // [vocab_size]
 
     printf("Logits: ");
     for (int i = 0; i < 5; i++) {
@@ -111,9 +111,22 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         float *img_processed_output;
         int img_processed_h = 0, img_processed_w = 0;
         int img_grid_h = 0, img_grid_w = 0;
-        bool img_true = image_processor(in_img_line, config->vision_patch_size, config->vision_spatial_merge_size, 256 * 256, 1024 * 1024, img_processed_output, &img_processed_h, &img_processed_w, &img_grid_h, &img_grid_w);
+        bool img_true = image_processor(
+            in_img_line, config->vision_patch_size, config->vision_spatial_merge_size, 256 * 256, 1024 * 1024,
+            &img_processed_output, &img_processed_h, &img_processed_w,
+            &img_grid_h, &img_grid_w
+        );
 
-        forward_image_encoder(state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
+        if (!img_true) continue;
+
+        printf("Before forward img, %p\n", img_processed_output);
+        fflush(stdout);
+
+        forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
+
+        printf("After forward img\n");
+        fflush(stdout);
+        exit(1);
         
         // ------------------------------------------------------------
         // 4. Generation loop - matching the structure from run.cpp
@@ -135,7 +148,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         while (pos < 1024 + input_count) { // max steps
             // Forward the transformer to get logits for the next token
             // Using your existing forward functions
-            float *logits = forward_llm(config, state, weight, token, pos);
+            float *logits = forward_text(config, state, weight, token, pos);
 
             // Advance the state machine - similar to run.cpp
             if (pos < input_count - 1) {
@@ -312,14 +325,14 @@ int image_processor_validate(const char *in_img_path,
         bool img_true = image_processor(
             img_path, config->vision_patch_size,
             config->vision_spatial_merge_size, 256 * 256,
-            1024 * 1024, img_processed_output, &img_processed_h,
+            1024 * 1024, &img_processed_output, &img_processed_h,
             &img_processed_w, &img_grid_h, &img_grid_w
         );
 
         printf("Finish validation sample %d\n", sample_count);
         fflush(stdout);
 
-        forward_image_encoder(state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
+        forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
 
         printf("Finish forward validation sample %d\n", sample_count);
         fflush(stdout);

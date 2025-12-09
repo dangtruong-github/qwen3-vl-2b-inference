@@ -355,6 +355,10 @@ void free_model_weights(QwenWeight* weights) {
     // Vision Model Weights (General)
     free(const_cast<float *>(weights->vl_patch_emb_b));
     free(const_cast<float *>(weights->vl_patch_emb_w));
+    free(const_cast<float *>(weights->vl_pos_emb_w));
+
+    free(const_cast<float *>(weights->vl_attn_proj_b));
+    free(const_cast<float *>(weights->vl_attn_proj_w));
     free(const_cast<float *>(weights->vl_attn_qkv_b));
     free(const_cast<float *>(weights->vl_attn_qkv_w));
     free(const_cast<float *>(weights->vl_mlp1_b));
@@ -365,6 +369,20 @@ void free_model_weights(QwenWeight* weights) {
     free(const_cast<float *>(weights->vl_norm1_w));
     free(const_cast<float *>(weights->vl_norm2_b));
     free(const_cast<float *>(weights->vl_norm2_w));
+
+    free(const_cast<float *>(weights->vl_d_merge_mlp1_b));
+    free(const_cast<float *>(weights->vl_d_merge_mlp1_w));
+    free(const_cast<float *>(weights->vl_d_merge_mlp2_b));
+    free(const_cast<float *>(weights->vl_d_merge_mlp2_w));
+    free(const_cast<float *>(weights->vl_d_merge_norm_b));
+    free(const_cast<float *>(weights->vl_d_merge_norm_w));
+
+    free(const_cast<float *>(weights->vl_merge_mlp1_b));
+    free(const_cast<float *>(weights->vl_merge_mlp1_w));
+    free(const_cast<float *>(weights->vl_merge_mlp2_b));
+    free(const_cast<float *>(weights->vl_merge_mlp2_w));
+    free(const_cast<float *>(weights->vl_merge_norm_b));
+    free(const_cast<float *>(weights->vl_merge_norm_w));
     
     // Set the struct memory to zero to prevent accidental double-free attempts
     memset(weights, 0, sizeof(QwenWeight)); 
@@ -382,6 +400,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     int NKV = config->num_key_value_heads;
     int D   = 128;
     int S   = 1024;
+
+    int VH = config->vision_hidden_size;
 
     size_t cache_size = (size_t)L * S * NKV * D * sizeof(float);
 
@@ -440,6 +460,13 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->value_cache = (float*)malloc(cache_size);
     CHECK_ALLOC(state->value_cache, cache_size);
 
+    long long vl_x_size = 1000ll * VH * sizeof(float);
+    state->vl_x = (float *)malloc(vl_x_size);
+    CHECK_ALLOC(state->vl_x, vl_x_size);
+
+    state->vl_embed = (float *)malloc(vl_x_size);
+    CHECK_ALLOC(state->vl_embed, vl_x_size);
+
     qwen_rope_precompute(state->cos_tensor, state->sin_tensor, config);
 }
 
@@ -463,6 +490,9 @@ void free_model_run_state(QwenRunState* state) {
     if (state->logits) free(state->logits);
     if (state->key_cache) free(state->key_cache);
     if (state->value_cache) free(state->value_cache);
+
+    if (state->vl_x) free(state->vl_x);
+    if (state->vl_embed) free(state->vl_embed);
 
     memset(state, 0, sizeof(QwenRunState));
 }

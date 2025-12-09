@@ -202,7 +202,7 @@ bool str_none(const char *str_to_check) {
 }
 
 bool image_processor(
-    const char *img_path, int patch_size, int merge_size, long long min_pixels, long long max_pixels, float *out_data, int *out_h, int *out_w,
+    const char *img_path, int patch_size, int merge_size, long long min_pixels, long long max_pixels, float **out_data, int *out_h, int *out_w,
     int *out_grid_h, int *out_grid_w 
 ) {
     if (str_none(img_path)) {
@@ -280,14 +280,14 @@ bool image_processor(
     int grid_h = h_bar / patch_size;
     int grid_w = w_bar / patch_size;
 
-    out_data = (float *)malloc(
+    *out_data = (float *)malloc(
         sizeof(float) * 1ll * temporal_patch_size * channels *
         (grid_h / merge_size) * merge_size * patch_size *
         (grid_w / merge_size) * merge_size * patch_size
     );
 
     permute_8d(
-        out_data,
+        *out_data,
         batch_img,
         temporal_patch_size,
         channels,

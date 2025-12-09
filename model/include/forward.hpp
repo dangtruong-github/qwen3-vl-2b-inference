@@ -9,17 +9,10 @@
 
 #include "../config.hpp"
 #include "layer.hpp"
+#include "../../tokenizer/include/img_processor.hpp"
 
 // ================================================================
 // Forward Functions
 // ================================================================
-void forward_image_encoder(QwenRunState* state, const QwenWeight* weights, const float* image, int img_h, int img_w, int grid_h, int grid_w);
-void forward_language(QwenRunState* state, const QwenWeight* weights, const int* input_tokens, int n_tokens);
-void forward_transformer(QwenRunState* state, const QwenWeight* weights);
-void extract_image_patches(const float* img, float* patches, const QwenConfig* config);
-
-// Utility functions
-void matrix_multiply_add(float* output, const float* input, const float* weight,
-                        const float* bias, int rows, int cols, int inner_dim);
-void softmax(float* output, const float* input, int size);
-float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token, int pos);
+void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, float *img_data, int img_h, int img_w, int grid_h, int grid_w);
+float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token, int pos);

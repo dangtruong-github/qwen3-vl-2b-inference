@@ -72,10 +72,6 @@ def main():
 
         if image_path is None:
             continue
-        else:
-            continue
-
-        print(inputs)
 
         with torch.no_grad():
             try:
@@ -90,7 +86,6 @@ def main():
             except Exception as e:
                 raise e
         
-        continue
         assert 0 == 1
 
         # ---- Clean output tokens (remove special tokens) ----

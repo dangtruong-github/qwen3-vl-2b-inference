@@ -1,59 +1,34 @@
 #include "../include/forward.hpp"
 
-// ================================================================
-// Patch Extraction (completed)
-// ================================================================
-void extract_image_patches(const float* img, float* patches, const QwenConfig* config) {
-    if (img == nullptr) {
+void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, float *img_data, int img_h, int img_w, int grid_h, int grid_w) {
+    if (img_data == nullptr) {
         return;
     }
 
-    int H = config->vision_patch_size * 16;
-    int W = config->vision_patch_size * 16;
-    int P = config->vision_patch_size;
-    int C = 3;
-    int idx = 0;
+    printf("img_h=%d, img_w=%d, grid_h=%d, grid_w=%d\n", img_h, img_w, grid_h, grid_w);
+    printf("vision_num_channels=%d, vision_temporal_patch_size=%d, vision_patch_size=%d\n", config->vision_num_channels, config->vision_temporal_patch_size, config->vision_patch_size);
+    fflush(stdout);
+
+    long VC = config->vision_num_channels;
+    long VTP = config->vision_temporal_patch_size;
+    long VP = config->vision_patch_size;
+    long VH = config->vision_hidden_size;
+    long VSP = config->vision_spatial_merge_size;
+
+    conv_3d(weight->vl_patch_emb_w, weight->vl_patch_emb_b, img_data, state->vl_x, img_h, VC, VTP, VP, VH);
+
+    free(img_data);
+
+    long num_grid_per_side = 48;
+
+    printf("num_grid_per_side=%d\n", num_grid_per_side);
+
+    vision_pos_embed(weight->vl_pos_emb_w, state->vl_embed, grid_h, grid_w, num_grid_per_side, VSP, VH);
+
     
-    int patches_h = H / P;
-    int patches_w = W / P;
-    
-    for (int py = 0; py < patches_h; py++) {
-        for (int px = 0; px < patches_w; px++) {
-            for (int c = 0; c < C; ++c) {
-                for (int dy = 0; dy < P; ++dy) {
-                    for (int dx = 0; dx < P; ++dx) {
-                        int img_y = py * P + dy;
-                        int img_x = px * P + dx;
-                        patches[idx++] = img[(img_y * W + img_x) * C + c];
-                    }
-                }
-            }
-        }
-    }
 }
 
-// -------------------------
-// Forward Image Encoder
-// -------------------------
-void forward_image_encoder(QwenRunState* state, const QwenWeight* weights, const float* image, int img_h, int img_w, int grid_h, int grid_w) {
-    if (!image) {
-        state->vision_embed_true = false;
-        return; // no image
-    }
-
-    return;
-}
-
-// -------------------------
-// Merge Vision + Text
-// -------------------------
-void merge_vision_text(QwenRunState* state) {
-    if (!state->vision_embed_true) return;
-
-    return;
-}
-
-float *forward_llm(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token_id, int pos) {
+float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token_id, int pos) {
     // Embed layer
     embedding_lookup(
         weight->token_embedding_table, token_id, state->x,

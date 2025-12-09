@@ -116,6 +116,10 @@ typedef struct {
     // ---- KV cache (for autoregressive decoding) ----
     float *key_cache;    // [num_hidden_layers, num_key_value_heads, max_position_embeddings, head_dim]
     float *value_cache;  // same shape
+
+    // vision
+    float *vl_x;
+    float *vl_embed;
     
     bool vision_embed_true;
 } QwenRunState;

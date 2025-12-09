@@ -60,3 +60,8 @@ void apply_rotary(
     const float *sin_table /*[seq_len*hd/2]*/, int n_heads, int head_dim,
     int pos
 );
+void conv_3d(
+    const float *conv_w, const float *conv_b, float *in_img, float *out_img,
+    long img_h, long VC, long VTP, long VP, long VH
+);
+void vision_pos_embed(const float *pos_embed_w, float *x_embed, int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH);
