@@ -481,6 +481,17 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->vl_pos_embed_sin = (float *)malloc(vl_embed_size);
     CHECK_ALLOC(state->vl_pos_embed_sin, vl_embed_size);
 
+    state->vl_q = (float *)malloc(vl_x_size);
+    CHECK_ALLOC(state->vl_q, vl_x_size);
+    state->vl_k = (float *)malloc(vl_x_size);
+    CHECK_ALLOC(state->vl_k, vl_x_size);
+    state->vl_v = (float *)malloc(vl_x_size);
+    CHECK_ALLOC(state->vl_v, vl_x_size);
+    state->vl_q_rot = (float *)malloc(vl_x_size);
+    CHECK_ALLOC(state->vl_q_rot, vl_x_size);
+    state->vl_k_rot = (float *)malloc(vl_x_size);
+    CHECK_ALLOC(state->vl_k_rot, vl_x_size);
+
     qwen_rope_precompute(state->cos_tensor, state->sin_tensor, config);
     qwen_vision_rope_precompute(state->vision_cos_tensor, state->vision_sin_tensor, config);
 }
@@ -513,6 +524,13 @@ void free_model_run_state(QwenRunState* state) {
     if (state->vl_embed) free(state->vl_embed);
     if (state->vl_pos_embed_cos) free(state->vl_pos_embed_cos);
     if (state->vl_pos_embed_sin) free(state->vl_pos_embed_sin);
+
+    if (state->vl_q) free(state->vl_q);
+    if (state->vl_k) free(state->vl_k);
+    if (state->vl_v) free(state->vl_v);
+
+    if (state->vl_q_rot) free(state->vl_q_rot);
+    if (state->vl_k_rot) free(state->vl_k_rot);
 
     memset(state, 0, sizeof(QwenRunState));
 }

@@ -125,6 +125,12 @@ typedef struct {
     float *vl_embed;
     float *vl_pos_embed_cos;
     float *vl_pos_embed_sin;
+
+    float *vl_q;
+    float *vl_k;
+    float *vl_v;
+    float *vl_q_rot;
+    float *vl_k_rot;
     
     bool vision_embed_true;
 } QwenRunState;

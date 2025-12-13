@@ -590,19 +590,95 @@ void vision_rot_pos_emb(
             }
         }
     }
+}
 
-    printf("\nEmb cos:\n");
-    for (int i = 0; i < total_tokens; i++) {
-        for (int j = 0; j < head_dim; j++) {
-            printf("%.2f ", pos_emb_out_cos[i * head_dim + j]);
-        }
-        printf("\n");
+void layer_norm(
+    const float *x,           /* [hidden] */
+    const float *scale,       /* [layers, hidden] */
+    const float *bias,        /* [layers, hidden] */
+    float *out,               /* [hidden] */
+    float eps, 
+    size_t hidden_size, 
+    size_t layer_offset
+) {
+    // 1. Pointers to current layer's weights
+    const float *scale_buf = scale + (long long)layer_offset * hidden_size;
+    const float *bias_buf = (bias != NULL) ? (bias + (long long)layer_offset * hidden_size) : NULL;
+
+    // 2. Calculate Mean
+    float mean = 0.0f;
+    for (size_t j = 0; j < hidden_size; j++) {
+        mean += x[j];
     }
-    printf("Emb sin:\n");
-    for (int i = 0; i < total_tokens; i++) {
-        for (int j = 0; j < head_dim; j++) {
-            printf("%.2f ", pos_emb_out_sin[i * head_dim + j]);
+    mean /= hidden_size;
+
+    // 3. Calculate Variance (Sum of Squared Differences)
+    float variance = 0.0f;
+    for (size_t j = 0; j < hidden_size; j++) {
+        float diff = x[j] - mean;
+        variance += diff * diff;
+    }
+    variance /= hidden_size;
+
+    // 4. Calculate Inverse Standard Deviation
+    // nn.LayerNorm uses sqrt(variance + eps)
+    float inv_std = 1.0f / sqrt(variance + eps);
+
+    // 5. Normalize and Apply Affine Transform
+    if (bias_buf != NULL) {
+        for (size_t j = 0; j < hidden_size; j++) {
+            // (x - mean) * inv_std * gamma + beta
+            out[j] = (x[j] - mean) * inv_std * scale_buf[j] + bias_buf[j];
         }
-        printf("\n");
+    } else {
+        for (size_t j = 0; j < hidden_size; j++) {
+            out[j] = (x[j] - mean) * inv_std * scale_buf[j];
+        }
+    }
+}
+
+void vision_apply_rotary(
+    const float *cos_tensor, // shape (total_tokens, head_dim)
+    const float *sin_tensor, // shape (total_tokens, head_dim)
+    const float *in, // shape (total_tokens, num_heads, head_dim)
+    float *out, // shape (total_tokens, num_heads, head_dim)
+    long total_tokens, int num_heads, int head_dim
+) {
+    const int half_dim = head_dim / 2;
+    const int head_size = head_dim;
+
+    for (long i = 0; i < total_tokens * num_heads; ++i) {
+        const long head_start_idx = i * head_size;
+        const long token_index = i / num_heads;
+        
+        // Cos/sin offset should be token_index * head_dim (not half_dim)
+        const long cos_sin_offset = token_index * head_dim;
+
+        const float *current_in = in + head_start_idx;
+        float *current_out = out + head_start_idx;
+        const float *current_cos = cos_tensor + cos_sin_offset;
+        const float *current_sin = sin_tensor + cos_sin_offset;
+
+        // Process all dimensions in one pass
+        for (int m = 0; m < half_dim; ++m) {
+            const float x1 = current_in[m];
+            const float x2 = current_in[m + half_dim];
+            
+            // For the first half: use cos[m] and sin[m]
+            const float cos_val_first = current_cos[m];
+            const float sin_val_first = current_sin[m];
+            
+            // For the second half: we need the corresponding cos/sin values
+            // In Python's rotate_half, x1 becomes -x2 and x2 becomes x1
+            // So for the second half output, we use the cos/sin values at m+half_dim
+            const float cos_val_second = current_cos[m + half_dim];
+            const float sin_val_second = current_sin[m + half_dim];
+            
+            // First half: (x1 * cos[m]) + ((-x2) * sin[m])
+            current_out[m] = (x1 * cos_val_first) + (-x2 * sin_val_first);
+            
+            // Second half: (x2 * cos[m+half_dim]) + (x1 * sin[m+half_dim])
+            current_out[m + half_dim] = (x2 * cos_val_second) + (x1 * sin_val_second);
+        }
     }
 }

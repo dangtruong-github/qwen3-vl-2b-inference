@@ -14,6 +14,9 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     long VP = config->vision_patch_size;
     long VH = config->vision_hidden_size;
     long VSP = config->vision_spatial_merge_size;
+    long total_tokens = grid_h * grid_w;
+    long VNH = config->vision_num_heads;
+    long VHD = 64;  // vision_head_dim
 
     conv_3d(weight->vl_patch_emb_w, weight->vl_patch_emb_b, img_data, state->vl_x, img_h, VC, VTP, VP, VH);
 
@@ -31,6 +34,46 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         state->vl_pos_embed_cos, state->vl_pos_embed_sin, state->vision_cos_tensor, state->vision_sin_tensor,
         grid_h, grid_w, config->vision_spatial_merge_size, 64
     );
+
+    for (size_t l = 0; l < config->vision_depth; l++) {
+        for (int i = 0; i < total_tokens; i++) {
+            layer_norm(
+                state->vl_x + 1ll * i * VH, weight->vl_norm1_w,
+                weight->vl_norm1_b, state->vl_x + 1ll * i * VH,
+                config->rms_norm_eps, VH, 1ll * l
+            );
+        }
+
+        const size_t qkv_layer_off_w = 1ll * 3 * VH * VH;
+        const size_t qkv_each_off_w = 1ll * VH * VH;
+        const float *w_q = weight->vl_attn_qkv_w + 1ll * l * qkv_layer_off_w;
+        const float *w_k = weight->vl_attn_qkv_w + 1ll * l * qkv_layer_off_w + 1ll * qkv_each_off_w;
+        const float *w_v = weight->vl_attn_qkv_w + 1ll * l * qkv_layer_off_w + 1ll * 2 * qkv_each_off_w;
+        const float *b_q = weight->vl_attn_qkv_b + 1ll * l * 3 * VH;
+        const float *b_k = weight->vl_attn_qkv_b + 1ll * l * 3 * VH + 1ll * VH;
+        const float *b_v = weight->vl_attn_qkv_b + 1ll * l * 3 * VH + 1ll * 2 * VH;
+        
+        linear(
+            state->vl_x, w_q, b_q, state->vl_q, total_tokens, VH, VH, true
+        );
+        linear(
+            state->vl_x, w_k, b_k, state->vl_k, total_tokens, VH, VH, true
+        );
+        linear(
+            state->vl_x, w_v, b_v, state->vl_v, total_tokens, VH, VH, true
+        );
+        
+        vision_apply_rotary(
+            state->vl_pos_embed_cos, state->vl_pos_embed_sin,
+            state->vl_q, state->vl_q_rot, total_tokens, VNH, VHD
+        );
+        vision_apply_rotary(
+            state->vl_pos_embed_cos, state->vl_pos_embed_sin,
+            state->vl_k, state->vl_k_rot, total_tokens, VNH, VHD
+        );
+
+        break;
+    }
 }
 
 float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token_id, int pos) {

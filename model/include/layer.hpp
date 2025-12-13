@@ -71,3 +71,16 @@ void vision_rot_pos_emb(
     const float *cos_tensor, const float *sin_tensor,
     int grid_h, int grid_w, int merge_size, int head_dim
 );
+void layer_norm(
+    const float *x,           /* [hidden] */
+    const float *scale,       /* [layers, hidden] */
+    const float *bias,        /* [layers, hidden] */
+    float *out,               /* [hidden] */
+    float eps, 
+    size_t hidden_size, 
+    size_t layer_offset
+);
+void vision_apply_rotary(
+    const float *cos_tensor, const float *sin_tensor, const float *in,
+    float *out, long total_tokens, int num_heads, int head_dim
+);
