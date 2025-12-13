@@ -27,7 +27,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
 
     add_vector(state->vl_x, state->vl_embed, 1ll * img_h * VH);
 
-    vision_rot_pos_emb(state->vl_pos_embed, state->vision_freqs, grid_h, grid_w, config->vision_spatial_merge_size, 32);
+    vision_rot_pos_emb(
+        state->vl_pos_embed_cos, state->vl_pos_embed_sin, state->vision_cos_tensor, state->vision_sin_tensor,
+        grid_h, grid_w, config->vision_spatial_merge_size, 64
+    );
 }
 
 float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token_id, int pos) {

@@ -541,10 +541,15 @@ void vision_pos_embed(const float *pos_embed_w, float *x_embed, int grid_h, int 
 }
 
 // Full vision_rot_pos_emb wrapper function example
-void vision_rot_pos_emb(float *pos_emb_out, const float *freqs, int grid_h, int grid_w, int merge_size, int embedding_dim) {
+void vision_rot_pos_emb(
+    float *pos_emb_out_cos, float *pos_emb_out_sin,
+    const float *cos_tensor, const float *sin_tensor,
+    int grid_h, int grid_w, int merge_size, int head_dim
+) {
     int max_hw = max(grid_h, grid_w);
     int total_tokens = grid_h * grid_w;
-    int freqs_depth_dim = embedding_dim / 2;
+    int freqs_depth_dim = head_dim / 4;
+    size_t size_copy = freqs_depth_dim * sizeof(float);
 
     // --- 1. Generate Coordinates (as completed previously) ---
     int merged_h = grid_h / merge_size;
@@ -559,17 +564,45 @@ void vision_rot_pos_emb(float *pos_emb_out, const float *freqs, int grid_h, int 
                 for (int intra_col = 0; intra_col < merge_size; intra_col++) {
                     int col_idx = start_col + intra_col;
                     if (k < total_tokens) {
-                        const float *row_freqs_ptr = freqs + (row_idx * freqs_depth_dim); 
-                        const float *col_freqs_ptr = freqs + (col_idx * freqs_depth_dim);
-                        float *out_ptr = pos_emb_out + (k * embedding_dim);
+                        // cos
+                        const float *row_freqs_cos = cos_tensor + (row_idx * freqs_depth_dim); 
+                        const float *col_freqs_cos = cos_tensor + (col_idx * freqs_depth_dim);
+                        float *out_cos = pos_emb_out_cos + (k * head_dim);
 
-                        memcpy(out_ptr, row_freqs_ptr, freqs_depth_dim * sizeof(float));
-                        memcpy(out_ptr + freqs_depth_dim, col_freqs_ptr, freqs_depth_dim * sizeof(float));
+                        memcpy(out_cos, row_freqs_cos, size_copy);
+                        memcpy(out_cos + 2 * freqs_depth_dim, row_freqs_cos, size_copy);
+                        memcpy(out_cos + freqs_depth_dim, col_freqs_cos, size_copy);
+                        memcpy(out_cos + 3 * freqs_depth_dim, col_freqs_cos, size_copy);
+
+                        // sin
+                        const float *row_freqs_sin = sin_tensor + (row_idx * freqs_depth_dim); 
+                        const float *col_freqs_sin = sin_tensor + (col_idx * freqs_depth_dim);
+                        float *out_sin = pos_emb_out_sin + (k * head_dim);
+
+                        memcpy(out_sin, row_freqs_sin, size_copy);
+                        memcpy(out_sin + 2 * freqs_depth_dim, row_freqs_sin, size_copy);
+                        memcpy(out_sin + freqs_depth_dim, col_freqs_sin, size_copy);
+                        memcpy(out_sin + 3 * freqs_depth_dim, col_freqs_sin, size_copy);
                         
                         k++;
                     }
                 }
             }
         }
+    }
+
+    printf("\nEmb cos:\n");
+    for (int i = 0; i < total_tokens; i++) {
+        for (int j = 0; j < head_dim; j++) {
+            printf("%.2f ", pos_emb_out_cos[i * head_dim + j]);
+        }
+        printf("\n");
+    }
+    printf("Emb sin:\n");
+    for (int i = 0; i < total_tokens; i++) {
+        for (int j = 0; j < head_dim; j++) {
+            printf("%.2f ", pos_emb_out_sin[i * head_dim + j]);
+        }
+        printf("\n");
     }
 }

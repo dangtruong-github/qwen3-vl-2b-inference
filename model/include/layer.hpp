@@ -66,4 +66,8 @@ void conv_3d(
     long img_h, long VC, long VTP, long VP, long VH
 );
 void vision_pos_embed(const float *pos_embed_w, float *x_embed, int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH);
-void vision_rot_pos_emb(float *pos_emb_out, const float *freqs, int grid_h, int grid_w, int merge_size, int embedding_dim);
+void vision_rot_pos_emb(
+    float *pos_emb_out_cos, float *pos_emb_out_sin,
+    const float *cos_tensor, const float *sin_tensor,
+    int grid_h, int grid_w, int merge_size, int head_dim
+);

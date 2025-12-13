@@ -402,7 +402,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     int S   = 1024;
 
     int VH = config->vision_hidden_size;
-    int VNP = 2034;
+    int VNP = 2304;
     int VD = 64;
 
     size_t cache_size = (size_t)L * S * NKV * D * sizeof(float);
@@ -470,15 +470,19 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     CHECK_ALLOC(state->vl_embed, vl_x_size);
 
     long long vl_rope_size = 1ll * VNP * (VD / 4) * sizeof(float);
-    state->vision_freqs = (float *)malloc(vl_rope_size);
-    CHECK_ALLOC(state->vision_freqs, vl_rope_size);
+    state->vision_cos_tensor = (float *)malloc(vl_rope_size);
+    CHECK_ALLOC(state->vision_cos_tensor, vl_rope_size);
+    state->vision_sin_tensor = (float *)malloc(vl_rope_size);
+    CHECK_ALLOC(state->vision_sin_tensor, vl_rope_size);
 
-    long long vl_embed_size = 1ll * VNP * (VD / 2) * sizeof(float);
-    state->vl_pos_embed = (float *)malloc(vl_embed_size);
-    CHECK_ALLOC(state->vl_pos_embed, vl_embed_size);
+    long long vl_embed_size = 1ll * VNP * VD * sizeof(float);
+    state->vl_pos_embed_cos = (float *)malloc(vl_embed_size);
+    CHECK_ALLOC(state->vl_pos_embed_cos, vl_embed_size);
+    state->vl_pos_embed_sin = (float *)malloc(vl_embed_size);
+    CHECK_ALLOC(state->vl_pos_embed_sin, vl_embed_size);
 
     qwen_rope_precompute(state->cos_tensor, state->sin_tensor, config);
-    qwen_vision_rope_precompute(state->vision_freqs, config);
+    qwen_vision_rope_precompute(state->vision_cos_tensor, state->vision_sin_tensor, config);
 }
 
 void free_model_run_state(QwenRunState* state) {
@@ -502,10 +506,13 @@ void free_model_run_state(QwenRunState* state) {
     if (state->key_cache) free(state->key_cache);
     if (state->value_cache) free(state->value_cache);
 
-    if (state->vision_freqs) free(state->vision_freqs);
+    if (state->vision_cos_tensor) free(state->vision_cos_tensor);
+    if (state->vision_sin_tensor) free(state->vision_sin_tensor);
+
     if (state->vl_x) free(state->vl_x);
     if (state->vl_embed) free(state->vl_embed);
-    if (state->vl_pos_embed) free(state->vl_pos_embed);
+    if (state->vl_pos_embed_cos) free(state->vl_pos_embed_cos);
+    if (state->vl_pos_embed_sin) free(state->vl_pos_embed_sin);
 
     memset(state, 0, sizeof(QwenRunState));
 }
@@ -590,7 +597,9 @@ void qwen_rope_precompute(
     }
 }
 
-void qwen_vision_rope_precompute(float *vision_freqs, const QwenConfig *config) {
+void qwen_vision_rope_precompute(
+    float *cos_tensor, float *sin_tensor, const QwenConfig *config
+) {
     int dim = 32;
     int max_seq_len = 2304;
     int half_dim = dim / 2;
@@ -608,7 +617,9 @@ void qwen_vision_rope_precompute(float *vision_freqs, const QwenConfig *config) 
     /* Compute outer product: seq ⊗ inv_freq */
     for (int s = 0; s < max_seq_len; ++s) {
         for (int i = 0; i < half_dim; ++i) {
-            vision_freqs[s * half_dim + i] = (float)s * inv_freq[i];
+            const float freq_val = (float)s * inv_freq[i];
+            cos_tensor[s * half_dim + i] = cosf(freq_val);
+            sin_tensor[s * half_dim + i] = sinf(freq_val);
         }
     }
 
