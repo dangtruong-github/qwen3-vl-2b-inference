@@ -539,3 +539,37 @@ void vision_pos_embed(const float *pos_embed_w, float *x_embed, int grid_h, int 
 
     free(pos_embed_ptr);
 }
+
+// Full vision_rot_pos_emb wrapper function example
+void vision_rot_pos_emb(float *pos_emb_out, const float *freqs, int grid_h, int grid_w, int merge_size, int embedding_dim) {
+    int max_hw = max(grid_h, grid_w);
+    int total_tokens = grid_h * grid_w;
+    int freqs_depth_dim = embedding_dim / 2;
+
+    // --- 1. Generate Coordinates (as completed previously) ---
+    int merged_h = grid_h / merge_size;
+    int merged_w = grid_w / merge_size;
+    int k = 0; 
+    for (int block_row = 0; block_row < merged_h; block_row++) {
+        int start_row = block_row * merge_size;
+        for (int block_col = 0; block_col < merged_w; block_col++) {
+            int start_col = block_col * merge_size;
+            for (int intra_row = 0; intra_row < merge_size; intra_row++) {
+                int row_idx = start_row + intra_row;
+                for (int intra_col = 0; intra_col < merge_size; intra_col++) {
+                    int col_idx = start_col + intra_col;
+                    if (k < total_tokens) {
+                        const float *row_freqs_ptr = freqs + (row_idx * freqs_depth_dim); 
+                        const float *col_freqs_ptr = freqs + (col_idx * freqs_depth_dim);
+                        float *out_ptr = pos_emb_out + (k * embedding_dim);
+
+                        memcpy(out_ptr, row_freqs_ptr, freqs_depth_dim * sizeof(float));
+                        memcpy(out_ptr + freqs_depth_dim, col_freqs_ptr, freqs_depth_dim * sizeof(float));
+                        
+                        k++;
+                    }
+                }
+            }
+        }
+    }
+}

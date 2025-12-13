@@ -118,8 +118,11 @@ typedef struct {
     float *value_cache;  // same shape
 
     // vision
+    float *vision_freqs;
+
     float *vl_x;
     float *vl_embed;
+    float *vl_pos_embed;
     
     bool vision_embed_true;
 } QwenRunState;

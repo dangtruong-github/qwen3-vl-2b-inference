@@ -5,6 +5,7 @@
 #include <cstring>
 
 // #define DEBUG
+#define max(a, b) ((a) > (b) ? (a) : (b))
 
 // Forward declarations for helper functions
 void layer_norm(float* buffer, const float* input, const float* weight, const float* bias,
@@ -65,3 +66,4 @@ void conv_3d(
     long img_h, long VC, long VTP, long VP, long VH
 );
 void vision_pos_embed(const float *pos_embed_w, float *x_embed, int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH);
+void vision_rot_pos_emb(float *pos_emb_out, const float *freqs, int grid_h, int grid_w, int merge_size, int embedding_dim);

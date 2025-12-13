@@ -402,6 +402,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     int S   = 1024;
 
     int VH = config->vision_hidden_size;
+    int VNP = 2034;
+    int VD = 64;
 
     size_t cache_size = (size_t)L * S * NKV * D * sizeof(float);
 
@@ -460,14 +462,23 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->value_cache = (float*)malloc(cache_size);
     CHECK_ALLOC(state->value_cache, cache_size);
 
-    long long vl_x_size = 1000ll * VH * sizeof(float);
+    long long vl_x_size = 1ll * VNP * VH * sizeof(float);
     state->vl_x = (float *)malloc(vl_x_size);
     CHECK_ALLOC(state->vl_x, vl_x_size);
 
     state->vl_embed = (float *)malloc(vl_x_size);
     CHECK_ALLOC(state->vl_embed, vl_x_size);
 
+    long long vl_rope_size = 1ll * VNP * (VD / 4) * sizeof(float);
+    state->vision_freqs = (float *)malloc(vl_rope_size);
+    CHECK_ALLOC(state->vision_freqs, vl_rope_size);
+
+    long long vl_embed_size = 1ll * VNP * (VD / 2) * sizeof(float);
+    state->vl_pos_embed = (float *)malloc(vl_embed_size);
+    CHECK_ALLOC(state->vl_pos_embed, vl_embed_size);
+
     qwen_rope_precompute(state->cos_tensor, state->sin_tensor, config);
+    qwen_vision_rope_precompute(state->vision_freqs, config);
 }
 
 void free_model_run_state(QwenRunState* state) {
@@ -491,8 +502,10 @@ void free_model_run_state(QwenRunState* state) {
     if (state->key_cache) free(state->key_cache);
     if (state->value_cache) free(state->value_cache);
 
+    if (state->vision_freqs) free(state->vision_freqs);
     if (state->vl_x) free(state->vl_x);
     if (state->vl_embed) free(state->vl_embed);
+    if (state->vl_pos_embed) free(state->vl_pos_embed);
 
     memset(state, 0, sizeof(QwenRunState));
 }
@@ -575,4 +588,29 @@ void qwen_rope_precompute(
     for (int dim = 0; dim < num_dimensions; dim++) {
         free(freqs[dim]);
     }
+}
+
+void qwen_vision_rope_precompute(float *vision_freqs, const QwenConfig *config) {
+    int dim = 32;
+    int max_seq_len = 2304;
+    int half_dim = dim / 2;
+    float theta = 10000.0f;
+
+    /* Allocate inv_freq (same as register_buffer in PyTorch) */
+    float *inv_freq = (float *)malloc(sizeof(float) * half_dim);
+
+    /* Compute inv_freq */
+    for (int i = 0; i < half_dim; ++i) {
+        float exponent = (float)(2 * i) / (float)dim;
+        inv_freq[i] = 1.0f / powf(theta, exponent);
+    }
+
+    /* Compute outer product: seq ⊗ inv_freq */
+    for (int s = 0; s < max_seq_len; ++s) {
+        for (int i = 0; i < half_dim; ++i) {
+            vision_freqs[s * half_dim + i] = (float)s * inv_freq[i];
+        }
+    }
+
+    free(inv_freq);
 }

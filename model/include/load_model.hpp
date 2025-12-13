@@ -17,3 +17,4 @@ void qwen_rope_precompute(
     float *sin_all_out,  // (seq_len * head_dim/2)
     const QwenConfig *config
 );
+void qwen_vision_rope_precompute(float *vision_freqs, const QwenConfig *config);
