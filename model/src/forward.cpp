@@ -17,6 +17,8 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     long total_tokens = grid_h * grid_w;
     long VNH = config->vision_num_heads;
     long VHD = 64;  // vision_head_dim
+    long VI = config->vision_intermediate_size;
+    float vision_scale = 0.125;
 
     conv_3d(weight->vl_patch_emb_w, weight->vl_patch_emb_b, img_data, state->vl_x, img_h, VC, VTP, VP, VH);
 
@@ -39,7 +41,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         for (int i = 0; i < total_tokens; i++) {
             layer_norm(
                 state->vl_x + 1ll * i * VH, weight->vl_norm1_w,
-                weight->vl_norm1_b, state->vl_x + 1ll * i * VH,
+                weight->vl_norm1_b, state->vl_b + 1ll * i * VH,
                 config->rms_norm_eps, VH, 1ll * l
             );
         }
@@ -54,13 +56,13 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         const float *b_v = weight->vl_attn_qkv_b + 1ll * l * 3 * VH + 1ll * 2 * VH;
         
         linear(
-            state->vl_x, w_q, b_q, state->vl_q, total_tokens, VH, VH, true
+            state->vl_b, w_q, b_q, state->vl_q, total_tokens, VH, VH, true
         );
         linear(
-            state->vl_x, w_k, b_k, state->vl_k, total_tokens, VH, VH, true
+            state->vl_b, w_k, b_k, state->vl_k, total_tokens, VH, VH, true
         );
         linear(
-            state->vl_x, w_v, b_v, state->vl_v, total_tokens, VH, VH, true
+            state->vl_b, w_v, b_v, state->vl_v_orig, total_tokens, VH, VH, true
         );
         
         vision_apply_rotary(
@@ -72,7 +74,71 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vl_k, state->vl_k_rot, total_tokens, VNH, VHD
         );
 
-        break;
+        tensor_transpose(state->vl_q_rot, state->vl_q, total_tokens, VNH, VHD);
+        tensor_transpose(state->vl_k_rot, state->vl_k, total_tokens, VNH, VHD);
+        tensor_transpose(state->vl_v_orig, state->vl_v, total_tokens, VNH, VHD);
+
+        vision_att(
+            state->vl_q, state->vl_k, state->vl_v, state->vl_qkv_out_orig, 
+            VNH, total_tokens, VHD, vision_scale
+        );
+
+        tensor_transpose(state->vl_qkv_out_orig, state->vl_qkv_out, VNH, total_tokens, VHD);
+
+        const float *w_attn_proj_ptr = weight->vl_attn_proj_w + 1ll * l * VH * VH;
+        const float *b_attn_proj_ptr = weight->vl_attn_proj_b + 1ll * l * VH;
+        linear(
+            state->vl_qkv_out, w_attn_proj_ptr, b_attn_proj_ptr,
+            state->vl_proj_out, total_tokens, VH, VH, true
+        );
+
+        add_vector(state->vl_x, state->vl_proj_out, 1ll * total_tokens * VH);
+        
+        for (int i = 0; i < total_tokens; i++) {
+            layer_norm(
+                state->vl_x + 1ll * i * VH, weight->vl_norm2_w,
+                weight->vl_norm2_b, state->vl_b + 1ll * i * VH,
+                config->rms_norm_eps, VH, 1ll * l
+            );
+        }
+        
+        const float *w_mlp1_ptr = weight->vl_mlp1_w + 1ll * l * VI * VH;
+        const float *b_mlp1_ptr = weight->vl_mlp1_b + 1ll * l * VI;
+        linear(
+            state->vl_b, w_mlp1_ptr, b_mlp1_ptr, state->vl_mlp1_out,
+            total_tokens, VI, VH, true
+        );
+
+        gelu_tanh(state->vl_mlp1_out, 1ll * total_tokens * VI);
+        
+        const float *w_mlp2_ptr = weight->vl_mlp2_w + 1ll * l * VH * VI;
+        const float *b_mlp2_ptr = weight->vl_mlp2_b + 1ll * l * VH;
+        linear(
+            state->vl_mlp1_out, w_mlp2_ptr, b_mlp2_ptr, state->vl_b,
+            total_tokens, VH, VI, true
+        );
+
+        add_vector(state->vl_x, state->vl_b, 1ll * total_tokens * VH);
+        
+        printf("Finish layer %zu\n", l);
+        if (l >= 9) {
+            printf("hidden layer %zu\n", l);
+            for (int i = 0; i < total_tokens; i++) {
+                for (int j = 0; j < VH; j++) {
+                    printf("%.2f ", state->vl_x[i * VH + j]);
+                }
+                printf("\n");
+            }
+            fflush(stdout);
+            exit(1);
+        }
+    }
+    printf("hidden final:\n");
+    for (int i = 0; i < total_tokens; i++) {
+        for (int j = 0; j < VH; j++) {
+            printf("%.2f ", state->vl_x[i * VH + j]);
+        }
+        printf("\n");
     }
 }
 

@@ -682,3 +682,129 @@ void vision_apply_rotary(
         }
     }
 }
+
+void tensor_transpose(const float *in, float *out, int dim_0, int dim_1, int dim_2) {
+    // dim_0 is D0, dim_1 is D1, dim_2 is D2
+    const int D0 = dim_0;
+    const int D1 = dim_1;
+    const int D2 = dim_2;
+
+    // The inner-most dimension (D2) remains the same in both the input and output
+    // The dimensions change from (D0, D1, D2) to (D1, D0, D2)
+
+    // Stride for the D0 dimension in the input (D1 * D2)
+    const int in_stride_0 = D1 * D2;
+    // Stride for the D1 dimension in the input (D2)
+    const int in_stride_1 = D2;
+
+    // Stride for the D1 dimension in the output (D0 * D2)
+    const int out_stride_1 = D0 * D2;
+    // Stride for the D0 dimension in the output (D2)
+    const int out_stride_0 = D2;
+    
+    // Total size check (optional but good practice)
+    // const int total_size = D0 * D1 * D2;
+
+    // i iterates through dim_0 (D0)
+    for (int i = 0; i < D0; ++i) {
+        // j iterates through dim_1 (D1)
+        for (int j = 0; j < D1; ++j) {
+            // k iterates through dim_2 (D2)
+            for (int k = 0; k < D2; ++k) {
+                
+                // Calculate the linear index for the input tensor in (D0, D1, D2) order
+                // in_idx = i * D1 * D2 + j * D2 + k
+                const int in_idx = i * in_stride_0 + j * in_stride_1 + k;
+
+                // Calculate the linear index for the output tensor in (D1, D0, D2) order
+                // The element at (i, j, k) in 'in' moves to (j, i, k) in 'out'
+                // out_idx = j * D0 * D2 + i * D2 + k
+                const int out_idx = j * out_stride_1 + i * out_stride_0 + k;
+
+                // Perform the element copy
+                out[out_idx] = in[in_idx];
+            }
+        }
+    }
+}
+
+void vision_att(const float *q, const float *k, const float *v, float *out, 
+                int num_heads, int total_tokens, int head_dim, float scale) {
+    
+    // 1. Allocate memory for attention scores (attn_weight)
+    // Size needed is (total_tokens * total_tokens) for a single head.
+    // We will reuse this buffer for every head to save memory.
+    size_t score_size = (size_t)total_tokens * total_tokens;
+    float *attn_scores = (float *)malloc(score_size * sizeof(float));
+
+    if (attn_scores == NULL) {
+        // Handle allocation failure (in a real scenario)
+        return; 
+    }
+
+    // Strides to move pointers to the next head
+    size_t head_stride = (size_t)total_tokens * head_dim;
+
+    // Loop over each head
+    for (int h = 0; h < num_heads; h++) {
+        // Calculate pointers for the current head
+        const float *curr_q = q + (h * head_stride);
+        const float *curr_k = k + (h * head_stride);
+        const float *curr_v = v + (h * head_stride);
+        float *curr_out = out + (h * head_stride);
+
+        // ---------------------------------------------------------
+        // Step 1: Query x Key^T
+        // Q shape: [total_tokens, head_dim]
+        // K shape: [total_tokens, head_dim] (transposed logic handled by linear)
+        // Result:  [total_tokens, total_tokens]
+        // M = total_tokens, N = total_tokens, K = head_dim
+        // ---------------------------------------------------------
+        linear(curr_q, curr_k, NULL, attn_scores, total_tokens, total_tokens, head_dim, true);
+        
+        
+
+        // ---------------------------------------------------------
+        // Step 2: Scale Factor and Bias
+        // Python: attn_weight = ... * scale_factor + attn_bias
+        // Note: attn_bias is zeros in the python sample, so we skip adding it.
+        // We iterate manually as 'linear' does not support scalar multiplication.
+        // ---------------------------------------------------------
+        for (size_t i = 0; i < score_size; i++) {
+            attn_scores[i] *= scale;
+        }
+
+        // ---------------------------------------------------------
+        // Step 3: Softmax
+        // Applied along the last dimension (rows of the score matrix)
+        // ---------------------------------------------------------
+        for (int row = 0; row < total_tokens; row++) {
+            softmax(attn_scores + (row * total_tokens), total_tokens);
+        }
+
+        // ---------------------------------------------------------
+        // Step 4: Attn_Weights x Value
+        // Weights shape: [total_tokens, total_tokens]
+        // V shape:       [total_tokens, head_dim]
+        // Result:        [total_tokens, head_dim] -> written to curr_out
+        // M = total_tokens, N = head_dim, K = total_tokens
+        // ---------------------------------------------------------
+        linear(attn_scores, curr_v, NULL, curr_out, total_tokens, head_dim, total_tokens, false);
+    }
+
+    // Free the intermediate buffer
+    free(attn_scores);
+}
+
+void gelu_tanh(float *x, size_t x_size) {
+    const float sqrt_2_over_pi = 0.7978845608028654f;  // sqrt(2/pi)
+    const float coeff = 0.044715f;
+
+    for (size_t i = 0; i < x_size; ++i) {
+        float xi = x[i];
+        float xi3 = xi * xi * xi;
+        float inner = sqrt_2_over_pi * (xi + coeff * xi3);
+        float tanh_inner = tanhf(inner);
+        x[i] = 0.5f * xi * (1.0f + tanh_inner);
+    }
+}

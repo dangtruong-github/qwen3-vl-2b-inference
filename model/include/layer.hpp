@@ -8,8 +8,6 @@
 #define max(a, b) ((a) > (b) ? (a) : (b))
 
 // Forward declarations for helper functions
-void layer_norm(float* buffer, const float* input, const float* weight, const float* bias,
-                int hidden_size, float eps);
 float gelu(float x);
 int argmax(const float* array, int size);
 
@@ -84,3 +82,7 @@ void vision_apply_rotary(
     const float *cos_tensor, const float *sin_tensor, const float *in,
     float *out, long total_tokens, int num_heads, int head_dim
 );
+void tensor_transpose(const float *in, float *out, int dim_0, int dim_1, int dim_2);
+void vision_att(const float *q, const float *k, const float *v, float *out, 
+                int num_heads, int total_tokens, int head_dim, float scale);
+void gelu_tanh(float *x, size_t x_size);
