@@ -463,7 +463,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->value_cache = (float*)malloc(cache_size);
     CHECK_ALLOC(state->value_cache, cache_size);
 
-    long long vl_x_size = 1ll * VNP * VH * sizeof(float);
+    long long vl_x_size = 1ll * VNP * VNP * VH * sizeof(float);
     state->vl_x = (float *)malloc(vl_x_size);
     CHECK_ALLOC(state->vl_x, vl_x_size);
     state->vl_b = (float *)malloc(vl_x_size);
@@ -478,7 +478,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->vision_sin_tensor = (float *)malloc(vl_rope_size);
     CHECK_ALLOC(state->vision_sin_tensor, vl_rope_size);
 
-    long long vl_embed_size = 1ll * VNP * VD * sizeof(float);
+    long long vl_embed_size = 1ll * VNP * VNP * VD * sizeof(float);
     state->vl_pos_embed_cos = (float *)malloc(vl_embed_size);
     CHECK_ALLOC(state->vl_pos_embed_cos, vl_embed_size);
     state->vl_pos_embed_sin = (float *)malloc(vl_embed_size);
@@ -504,11 +504,11 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->vl_proj_out = (float *)malloc(vl_x_size);
     CHECK_ALLOC(state->vl_proj_out, vl_x_size);
     
-    long long vl_mlp1_out_size = 1ll * VNP * VI * sizeof(float);
+    long long vl_mlp1_out_size = 1ll * VNP * VNP * VI * sizeof(float);
     state->vl_mlp1_out = (float *)malloc(vl_mlp1_out_size);
     CHECK_ALLOC(state->vl_mlp1_out, vl_mlp1_out_size);
 
-    long long vl_deep_stack_size = 1ll * 3 * VNP * (VH / 2) * sizeof(float);
+    long long vl_deep_stack_size = 1ll * 3 * VNP * VNP * (VH / 2) * sizeof(float);
     state->vl_deep_stack = (float *)malloc(vl_deep_stack_size);
     CHECK_ALLOC(state->vl_deep_stack, vl_deep_stack_size);
 

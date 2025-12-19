@@ -51,6 +51,10 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
     int validation_failures = 0;
     int sample_count = 0;
 
+    double first_tok_gen_time_total = 0.0;
+    double gen_time_total = 0.0;
+    int new_tokens_gen_num = 0;
+
     while (1) {
         char* in_line = read_full_line(in_file);
         char* in_img_line = read_full_line(in_img_file);
@@ -91,16 +95,16 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
             &img_grid_h, &img_grid_w
         );
 
-        if (!img_true) continue;
+        double t_gen_start = now_sec();
+        double t_first_token = 0.0;
+        double t_gen_end = 0.0;
 
-        printf("Before forward img, %p\n", img_processed_output);
-        fflush(stdout);
+        int first_token_recorded = 0;
 
-        forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
+        if (img_true) {
+            forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
+        }
 
-        printf("After forward img\n");
-        fflush(stdout);
-        
         // ------------------------------------------------------------
         // 4. Generation loop - matching the structure from run.cpp
         // ------------------------------------------------------------
@@ -118,7 +122,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         int pos = 0; // position in the sequence
         int im_end_count = 0;
 
-        while (pos < 1024 + input_count) { // max steps
+        while (pos < 1024) { // max steps
             // Forward the transformer to get logits for the next token
             // Using your existing forward functions
             float *logits = forward_text(config, state, weight, token, pos);
@@ -130,6 +134,10 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
             } else {
                 // Otherwise use greedy decoding (temperature=0 equivalent)
                 next = greedy_decode(logits, config->vocab_size);
+                if (!first_token_recorded) {
+                    t_first_token = now_sec();
+                    first_token_recorded = 1;
+                }
             }
             pos++;
 
@@ -138,7 +146,6 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                 generated_tokens[total_generated_count++] = next;
             }
 
-            
             printf("%d %s", generated_tokens[pos], tokenizer->vocab[generated_tokens[pos]]);
             printf("\nLogits: ");
             for (int i = 0; i < 5; i++) {
@@ -166,8 +173,14 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
 
             token = next; // Update token for next iteration
         }
+        
+        t_gen_end = now_sec();
 
         printf("  Generated %d total tokens (%d new tokens)\n", total_generated_count, total_generated_count - input_count);
+
+        new_tokens_gen_num += (total_generated_count - input_count);
+        first_tok_gen_time_total += (t_first_token - t_gen_start);
+        gen_time_total += (t_gen_end - t_gen_start);
 
         // ------------------------------------------------------------
         // 5. Compare generated sequence with expected sequence
@@ -234,6 +247,9 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         printf("End of forward cycle %d\n", sample_count);
     }
 
+    double avg_ttft = first_tok_gen_time_total / sample_count;
+    double avg_tps = new_tokens_gen_num * sample_count / gen_time_total;
+
     fclose(in_file);
     fclose(in_img_file);
     fclose(out_file);
@@ -241,6 +257,8 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
     printf("\n--- Forward Validation Summary ---\n");
     printf("Total Samples Processed: %d\n", sample_count);
     printf("Total Failures: %d\n", validation_failures);
+    printf("Average TTFT: %lf (s)\n", avg_ttft);
+    printf("Average generated tokens per second: %lf (toks/s)\n", avg_tps);
     
     return (validation_failures > 0) ? 1 : 0;
 }

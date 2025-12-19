@@ -8,7 +8,7 @@ NVCCFLAGS := -std=c++17 -O2 -Xcompiler -fopenmp
 CONDA_PATH := /your/conda/path
 
 # === Manually list top-level modules ===
-MODULES := tokenizer model
+MODULES := tokenizer model utils
 
 # === Automatically derived directories ===
 SRC_DIRS := $(foreach m,$(MODULES),$(m)/src)

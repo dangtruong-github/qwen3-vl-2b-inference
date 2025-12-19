@@ -196,6 +196,11 @@ bool str_none(const char *str_to_check) {
     return false;
 }
 
+void resize_bicubic(const cv::Mat img, cv::Mat &resized_img, int new_height, int new_width) {
+    // Bicubic interpolation
+    cv::resize(img, resized_img, cv::Size(new_width, new_height), 0, 0, cv::INTER_CUBIC);
+}
+
 bool image_processor(
     const char *img_path, int patch_size, int merge_size, long long min_pixels, long long max_pixels, float **out_data, int *out_h, int *out_w,
     int *out_grid_h, int *out_grid_w 
@@ -206,19 +211,11 @@ bool image_processor(
     }
 
     int orig_height, orig_width, h_bar, w_bar;
-    printf("Start reading %s\n", img_path);
-    fflush(stdout);
 
     read_img_size(img_path, &orig_height, &orig_width);
 
-    printf("Finish read_img_size: %d %d\n", orig_height, orig_width);
-    fflush(stdout);
-
     const int factor = patch_size * merge_size;  // 32
     smart_resize_qwen3(orig_height, orig_width, &h_bar, &w_bar, factor, min_pixels, max_pixels);
-
-    printf("Finish smart_resize_qwen3: %d %d\n", h_bar, w_bar);
-    fflush(stdout);
 
     cv::Mat img = cv::imread(img_path, cv::IMREAD_COLOR);
     cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
@@ -226,22 +223,6 @@ bool image_processor(
 
     resize_bicubic(img, resized_img, h_bar, w_bar);
     img.convertTo(img, CV_32FC3);
-
-    /*
-    for (int c = 0; c < 3; c++) {
-        for (int i = 0; i < h_bar; i++) {
-            for (int j = 0; j < w_bar; j++) {
-                float pixel_value = resized_img.at<cv::Vec3f>(i, j)[c];
-                printf("%.2f ", pixel_value);
-            }
-            printf("\n");
-        }
-        printf("\n");
-    }
-    */
-
-    printf("Finish resize_bicubic: %d %d\n", h_bar, w_bar);
-    fflush(stdout);
 
     // Normalization parameters
     const double mean[3] = {127.5000, 127.5000, 127.5000};
@@ -251,22 +232,6 @@ bool image_processor(
     int channels = 3;
 
     normalize_inplace(resized_img, mean, std, channels);
-
-    /*
-    for (int c = 0; c < 3; c++) {
-        for (int i = 0; i < h_bar; i++) {
-            for (int j = 0; j < w_bar; j++) {
-                float pixel_value = resized_img.at<cv::Vec3f>(i, j)[c];
-                printf("%.2f ", pixel_value);
-            }
-            printf("\n");
-        }
-        printf("\n");
-    }
-    */
-
-    printf("Finish normalize_inplace: %d %d\n", h_bar, w_bar);
-    fflush(stdout);
 
     float *batch_img = (float *)malloc(sizeof(float) * 1ll * temporal_patch_size * channels * h_bar * w_bar);
 
@@ -294,23 +259,8 @@ bool image_processor(
         patch_size
     );
 
-    printf("Finish permute_8d: %d %d\n", h_bar, w_bar);
-    fflush(stdout);
-
     int final_h = grid_h * grid_w;
     int final_w = temporal_patch_size * channels * patch_size * patch_size;
-
-    printf("final_h: %d, final_w: %d\n", final_h, final_w);
-    fflush(stdout);
-
-    /*
-    for (int i = 0; i < final_h; i++) {
-        for (int j = 0; j < final_w; j++) {
-            printf("%.2f ", out_data[i * final_w + j]);
-        }
-        printf("\n");
-    }
-    */
     
     *out_h = final_h;
     *out_w = final_w;
