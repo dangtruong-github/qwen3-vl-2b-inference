@@ -104,11 +104,6 @@ int get_num_img_pad(const char *img_path, int patch_size, int merge_size, long l
     return num_image_tokens;
 }
 
-void resize_bicubic(const cv::Mat img, cv::Mat &resized_img, int new_height, int new_width) {
-    // Bicubic interpolation
-    cv::resize(img, resized_img, cv::Size(new_width, new_height), 0, 0, cv::INTER_CUBIC);
-}
-
 void normalize_inplace(cv::Mat &img, const double *mean, const double *std, int C) {
 
     // Convert image to float inplace if needed
@@ -229,8 +224,8 @@ bool image_processor(
     cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
     cv::Mat resized_img;
 
-    img.convertTo(img, CV_32FC3);
     resize_bicubic(img, resized_img, h_bar, w_bar);
+    img.convertTo(img, CV_32FC3);
 
     /*
     for (int c = 0; c < 3; c++) {

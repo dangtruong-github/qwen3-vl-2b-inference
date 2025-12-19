@@ -18,7 +18,14 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     long VNH = config->vision_num_heads;
     long VHD = 64;  // vision_head_dim
     long VI = config->vision_intermediate_size;
+    long OH = config->out_hidden_size;
     float vision_scale = 0.125;
+    long d_tokens = total_tokens / 4;
+
+    int deep_layer[24] = {0}; // initialize all elements to 0
+    deep_layer[5] = 1; // set index 5 to 1
+    deep_layer[11] = 2; // set index 11 to 2
+    deep_layer[17] = 3;
 
     conv_3d(weight->vl_patch_emb_w, weight->vl_patch_emb_b, img_data, state->vl_x, img_h, VC, VTP, VP, VH);
 
@@ -119,36 +126,65 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         add_vector(state->vl_x, state->vl_b, 1ll * total_tokens * VH);
-        
-        printf("Finish layer %zu\n", l);
-        if (l >= 9) {
-            printf("hidden layer %zu\n", l);
-            for (int i = 0; i < total_tokens; i++) {
-                for (int j = 0; j < VH; j++) {
-                    printf("%.2f ", state->vl_x[i * VH + j]);
-                }
-                printf("\n");
+
+        if (deep_layer[l] > 0) {
+            int d_stride = deep_layer[l] - 1;
+            for (int i = 0; i < d_tokens; i++) {
+                layer_norm(
+                    state->vl_x + 1ll * i * VI,
+                    weight->vl_d_norm_w,
+                    weight->vl_d_norm_b,
+                    state->vl_b + 1ll * i * VI,
+                    config->rms_norm_eps, 
+                    VI, 
+                    1ll * d_stride
+                );
             }
-            fflush(stdout);
-            exit(1);
+
+            const float *w_mlp1_d_ptr = weight->vl_d_mlp1_w + 1ll * d_stride * VI * VI;
+            const float *b_mlp1_d_ptr = weight->vl_d_mlp1_b + 1ll * d_stride * VI;
+            linear(
+                state->vl_b, w_mlp1_d_ptr, b_mlp1_d_ptr,
+                state->vl_mlp1_out, d_tokens, VI, VI, true
+            );
+        
+            gelu_tanh(state->vl_mlp1_out, 1ll * d_tokens * VI);
+
+            const float *w_mlp2_d_ptr = weight->vl_d_mlp2_w + 1ll * d_stride * OH * VI;
+            const float *b_mlp2_d_ptr = weight->vl_d_mlp2_b + 1ll * d_stride * OH;
+            linear(
+                state->vl_mlp1_out, w_mlp2_d_ptr, b_mlp2_d_ptr,
+                state->vl_deep_stack + 1ll * d_stride * d_tokens * OH,
+                d_tokens, OH, VI, true
+            );
         }
     }
-    printf("hidden final:\n");
+
     for (int i = 0; i < total_tokens; i++) {
-        for (int j = 0; j < VH; j++) {
-            printf("%.2f ", state->vl_x[i * VH + j]);
-        }
-        printf("\n");
+        layer_norm(
+            state->vl_x + 1ll * i * VH, weight->vl_merge_norm_w,
+            weight->vl_merge_norm_b, state->vl_b + 1ll * i * VH,
+            config->rms_norm_eps, VH, 0
+        );
     }
+
+    linear(
+        state->vl_b, weight->vl_merge_mlp1_w, weight->vl_merge_mlp1_b,
+        state->vl_mlp1_out, d_tokens, VI, VI, true
+    );
+
+    gelu_tanh(state->vl_mlp1_out, 1ll * d_tokens * VI);
+
+    linear(
+        state->vl_mlp1_out, weight->vl_merge_mlp2_w, weight->vl_merge_mlp2_b,
+        state->vl_x, d_tokens, OH, VI, true
+    );
+    
+    state->vision_embed_tokens = d_tokens;
+    state->cur_img_token_id = 0;
 }
 
 float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token_id, int pos) {
-    // Embed layer
-    embedding_lookup(
-        weight->token_embedding_table, token_id, state->x,
-        config->vocab_size, config->hidden_size
-    );
-
     // **FIXED:** Define dimensions clearly
     int head_dim = config->hidden_size / config->num_attention_heads;
     int seq_len = 1024;
@@ -158,6 +194,18 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     long long cache_layer_size = 1ll * seq_len * kv_dim; // Size of one layer's cache
     long long loff_one = cache_layer_size;               // Offset between layers
     long long loff_pos = kv_dim;                         // Offset between positions
+    
+    // Embed layer
+    if (token_id != config->image_token_id && token_id != config->video_token_id) {
+        embedding_lookup(
+            weight->token_embedding_table, token_id, state->x,
+            config->vocab_size, config->hidden_size
+        );
+    } else {
+        const float *src = state->vl_x + 1ll * config->hidden_size * state->cur_img_token_id;
+        memcpy(state->x, src, 1ll * config->hidden_size * sizeof(float));
+        state->cur_img_token_id += 1;
+    }
 
     #ifdef DEBUG
         printf("Dimensions: head_dim=%d, kv_dim=%d, seq_len=%d\n", head_dim, kv_dim, seq_len);

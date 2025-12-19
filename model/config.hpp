@@ -71,12 +71,12 @@ typedef struct {
     const float *vl_norm2_b;
     const float *vl_norm2_w;
 
-    const float *vl_d_merge_mlp1_b;
-    const float *vl_d_merge_mlp1_w;
-    const float *vl_d_merge_mlp2_b;
-    const float *vl_d_merge_mlp2_w;
-    const float *vl_d_merge_norm_b;
-    const float *vl_d_merge_norm_w;
+    const float *vl_d_mlp1_b;
+    const float *vl_d_mlp1_w;
+    const float *vl_d_mlp2_b;
+    const float *vl_d_mlp2_w;
+    const float *vl_d_norm_b;
+    const float *vl_d_norm_w;
 
     const float *vl_merge_mlp1_b;
     const float *vl_merge_mlp1_w;
@@ -140,6 +140,9 @@ typedef struct {
     float *vl_proj_out;
     
     float *vl_mlp1_out;
+
+    float *vl_deep_stack;
     
-    bool vision_embed_true;
+    int vision_embed_tokens;
+    int cur_img_token_id;
 } QwenRunState;

@@ -258,38 +258,38 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
-    printf("Shape of vl_d_merge_mlp1_b: (%ld, %ld)\n", VDSD, VI);
-    weights->vl_d_merge_mlp1_b = (const float *)tmp_ptr;
+    printf("Shape of vl_d_mlp1_b: (%ld, %ld)\n", VDSD, VI);
+    weights->vl_d_mlp1_b = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI * VI, file);
-    printf("Shape of vl_d_merge_mlp1_w: (%ld, %ld, %ld)\n", VDSD, VI, VI);
-    weights->vl_d_merge_mlp1_w = (const float *)tmp_ptr;
+    printf("Shape of vl_d_mlp1_w: (%ld, %ld, %ld)\n", VDSD, VI, VI);
+    weights->vl_d_mlp1_w = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * OH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * OH, file);
-    printf("Shape of vl_d_merge_mlp2_b: (%ld, %ld)\n", VDSD, OH);
-    weights->vl_d_merge_mlp2_b = (const float *)tmp_ptr;
+    printf("Shape of vl_d_mlp2_b: (%ld, %ld)\n", VDSD, OH);
+    weights->vl_d_mlp2_b = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * OH * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * OH * VI, file);
-    printf("Shape of vl_d_merge_mlp2_w: (%ld, %ld, %ld)\n", VDSD, OH, VI);
-    weights->vl_d_merge_mlp2_w = (const float *)tmp_ptr;
+    printf("Shape of vl_d_mlp2_w: (%ld, %ld, %ld)\n", VDSD, OH, VI);
+    weights->vl_d_mlp2_w = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
-    printf("Shape of vl_d_merge_norm_b: (%ld, %ld)\n", VDSD, VI);
-    weights->vl_d_merge_norm_b = (const float *)tmp_ptr;
+    printf("Shape of vl_d_norm_b: (%ld, %ld)\n", VDSD, VI);
+    weights->vl_d_norm_b = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
-    printf("Shape of vl_d_merge_norm_w: (%ld, %ld)\n", VDSD, VI);
-    weights->vl_d_merge_norm_w = (const float *)tmp_ptr;
+    printf("Shape of vl_d_norm_w: (%ld, %ld)\n", VDSD, VI);
+    weights->vl_d_norm_w = (const float *)tmp_ptr;
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VI * sizeof(float));
@@ -370,12 +370,12 @@ void free_model_weights(QwenWeight* weights) {
     free(const_cast<float *>(weights->vl_norm2_b));
     free(const_cast<float *>(weights->vl_norm2_w));
 
-    free(const_cast<float *>(weights->vl_d_merge_mlp1_b));
-    free(const_cast<float *>(weights->vl_d_merge_mlp1_w));
-    free(const_cast<float *>(weights->vl_d_merge_mlp2_b));
-    free(const_cast<float *>(weights->vl_d_merge_mlp2_w));
-    free(const_cast<float *>(weights->vl_d_merge_norm_b));
-    free(const_cast<float *>(weights->vl_d_merge_norm_w));
+    free(const_cast<float *>(weights->vl_d_mlp1_b));
+    free(const_cast<float *>(weights->vl_d_mlp1_w));
+    free(const_cast<float *>(weights->vl_d_mlp2_b));
+    free(const_cast<float *>(weights->vl_d_mlp2_w));
+    free(const_cast<float *>(weights->vl_d_norm_b));
+    free(const_cast<float *>(weights->vl_d_norm_w));
 
     free(const_cast<float *>(weights->vl_merge_mlp1_b));
     free(const_cast<float *>(weights->vl_merge_mlp1_w));
@@ -390,7 +390,7 @@ void free_model_weights(QwenWeight* weights) {
 
 void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     memset(state, 0, sizeof(QwenRunState));
-    state->vision_embed_true = false;
+    state->vision_embed_tokens = 0;
 
     int H   = config->hidden_size;
     int I   = config->intermediate_size;
@@ -508,6 +508,10 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->vl_mlp1_out = (float *)malloc(vl_mlp1_out_size);
     CHECK_ALLOC(state->vl_mlp1_out, vl_mlp1_out_size);
 
+    long long vl_deep_stack_size = 1ll * 3 * VNP * (VH / 2) * sizeof(float);
+    state->vl_deep_stack = (float *)malloc(vl_deep_stack_size);
+    CHECK_ALLOC(state->vl_deep_stack, vl_deep_stack_size);
+
     qwen_rope_precompute(state->cos_tensor, state->sin_tensor, config);
     qwen_vision_rope_precompute(state->vision_cos_tensor, state->vision_sin_tensor, config);
 }
@@ -556,6 +560,8 @@ void free_model_run_state(QwenRunState* state) {
     if (state->vl_proj_out) free(state->vl_proj_out);
 
     if (state->vl_mlp1_out) free(state->vl_mlp1_out);
+
+    if (state->vl_deep_stack) free(state->vl_deep_stack);
 
     memset(state, 0, sizeof(QwenRunState));
 }

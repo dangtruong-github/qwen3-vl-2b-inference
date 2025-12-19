@@ -1,5 +1,6 @@
 #pragma once
 
+#include "img_processor_utils.hpp"
 #include <opencv2/opencv.hpp>
 #include <stdio.h>   // for printf()
 #include <stdlib.h>  // for exit()

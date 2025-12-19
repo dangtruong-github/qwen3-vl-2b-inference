@@ -1,31 +1,5 @@
 #include "../include/utils.hpp"
 
-void forward_example(QwenConfig *config, QwenWeight *weights, QwenRunState* state) {
-    // Example inputs
-    float* image = nullptr; // load_image_as_float("example.jpg"); // Implement your own
-    int input_tokens[] = {101, 234, 543, 99};          // Already tokenized text
-    int n_tokens = sizeof(input_tokens) / sizeof(int);
-
-    // Forward pass
-    // forward_image_encoder(state, weights, image);
-
-    // Get final logits
-    float* logits = forward_text(config, state, weights, input_tokens[0], 0); // [vocab_size]
-
-    printf("Logits: ");
-    for (int i = 0; i < 5; i++) {
-        printf("%.6f ", logits[i]);
-    }
-    printf("\n");
-
-    // Greedy decoding
-    int next_token = greedy_decode(logits, config->vocab_size);
-    printf("Predicted token: %d\n", next_token);
-
-    printf("Finished!\n");
-    if (image) free(image);
-}
-
 void print_config(QwenConfig *config) {
     printf("vocab_size: %d\n", config->vocab_size);
     printf("hidden_size: %d\n", config->hidden_size);
@@ -126,7 +100,6 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
 
         printf("After forward img\n");
         fflush(stdout);
-        exit(1);
         
         // ------------------------------------------------------------
         // 4. Generation loop - matching the structure from run.cpp
