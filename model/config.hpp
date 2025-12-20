@@ -107,13 +107,10 @@ typedef struct {
 
     float *att;          // attention scores (temporary buffer) [num_attention_heads * max_position_embeddings]
     float *qkv_out;      // attention output before projection [hidden_size]
-    float *attn_out;     // after output projection [hidden_size]
 
     // ---- MLP intermediate ----
     float *gate;         // gate projection [intermediate_size]
     float *up;           // up projection [intermediate_size]
-    float *gate_up;      // after SwiGLU [intermediate_size]
-    float *down;         // down projection [hidden_size]
 
     // ---- Rotary embeddings ----
     float *cos_tensor;   // cached cosines for rotary embedding [max_position_embeddings * head_dim/2]
@@ -127,31 +124,23 @@ typedef struct {
     float *value_cache;  // same shape
 
     // vision
+    float *vision_x;
+    float *vision_t;
+    float *vision_q;
+    float *vision_k;
+
     float *vision_cos_tensor;
     float *vision_sin_tensor;
 
-    float *vl_x;
-    float *vl_b;
-    float *vl_embed;
-    float *vl_pos_embed_cos;
-    float *vl_pos_embed_sin;
-
-    float *vl_q;
-    float *vl_k;
-    float *vl_v;
-    float *vl_q_rot;
-    float *vl_k_rot;
-    float *vl_v_orig;
+    float *vision_pe_cos;
+    float *vision_pe_sin;
     
-    float *vl_qkv_out;
-    float *vl_qkv_out_orig;
+    float *vision_mlp_out;
 
-    float *vl_proj_out;
+    float *vision_deep_stack;
     
-    float *vl_mlp1_out;
+    float *vision_attn_scores;
 
-    float *vl_deep_stack;
-    
     int vision_embed_tokens;
     int cur_img_token_id;
 } QwenRunState;

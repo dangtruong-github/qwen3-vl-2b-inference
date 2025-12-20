@@ -97,18 +97,25 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
             &img_processed_w, &img_grid_h, &img_grid_w
         );
 
+        printf("Finish processing images\n");
+        fflush(stdout);
+
         double t_gen_start = now_sec();
         double t_first_token = 0.0;
         double t_gen_end = 0.0;
 
         int first_token_recorded = 0;
 
+        // if (!img_true) continue;
+        // if (sample_count <= 3) continue;
+
         if (img_true) {
             forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
         }
-        
-        if (!img_true) continue;
 
+        printf("Finish forward images\n");
+        fflush(stdout);
+        
         // ------------------------------------------------------------
         // 4. Generation loop - matching the structure from run.cpp
         // ------------------------------------------------------------
@@ -150,14 +157,18 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                 generated_tokens[total_generated_count++] = next;
             }
 
+            /*
             printf("%d %s", generated_tokens[pos], tokenizer->vocab[generated_tokens[pos]]);
             printf("\nLogits: ");
             for (int i = 0; i < 5; i++) {
                 printf("%.6f ", logits[i]);
             }
             printf("\n");
+            */
 
-            // printf("%s ", tokenizer->vocab[generated_tokens[pos]]);
+            if (generated_tokens[pos] != 151655) {   
+                printf("%s ", tokenizer->vocab[generated_tokens[pos]]);
+            }
 
             // Data-dependent terminating condition - match your EOS tokens
             // Using the same condition as original forward_validate
@@ -165,7 +176,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                 // Count consecutive im_end tokens like original
                 im_end_count++;
                 if (im_end_count >= 2) {
-                    printf("  Stopping generation: <im_end> token encountered twice\n");
+                    printf("\nStopping generation: <im_end> token encountered twice\n");
                     break;
                 }
             }

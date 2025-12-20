@@ -40,8 +40,7 @@ void qkv_project(
     size_t hidden, size_t n_q, size_t n_kv, size_t layer_offset
 );
 void swiglu(
-    const float *gate /*[d]*/, const float *up /*[d]*/,
-    float *out /*[d]*/, size_t size_vec
+    float *gate /*[d]*/, const float *up /*[d]*/, size_t size_vec
 );
 void add_vector(float *add_to, const float *add_from, size_t size_vec);
 void attn_scores_all_heads(
@@ -82,7 +81,18 @@ void vision_apply_rotary(
     const float *cos_tensor, const float *sin_tensor, const float *in,
     float *out, long total_tokens, int num_heads, int head_dim
 );
+void vision_apply_rotary_inplace(
+    const float *cos_tensor, // shape (total_tokens, head_dim)
+    const float *sin_tensor, // shape (total_tokens, head_dim)
+    float *buffer,           // shape (total_tokens, num_heads, head_dim)
+    long total_tokens,
+    int num_heads,
+    int head_dim
+);
 void tensor_transpose(const float *in, float *out, int dim_0, int dim_1, int dim_2);
-void vision_att(const float *q, const float *k, const float *v, float *out, 
-                int num_heads, int total_tokens, int head_dim, float scale);
+void tensor_transpose_inplace(float *data, int D0, int D1, int D2);
+void vision_att(
+    const float *q, const float *k, const float *v, float *attn_scores,
+    float *out, int num_heads, int total_tokens, int head_dim, float scale
+);
 void gelu_tanh(float *x, size_t x_size);

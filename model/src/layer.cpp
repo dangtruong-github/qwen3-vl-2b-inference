@@ -124,15 +124,14 @@ void add_vector(float *add_to, const float *add_from, size_t size_vec) {
 }
 
 void swiglu(
-    const float *gate,  // [d]
+    float *gate,  // [d]
     const float *up,    // [d]
-    float *out,         // [d]
     size_t size_vec
 ) {
     for (size_t i = 0; i < size_vec; i++) {
         float x = gate[i];
         float silu = x / (1.0f + expf(-x));  // SiLU(x) = x * sigmoid(x)
-        out[i] = silu * up[i];               // SwiGLU = SiLU(gate) * up
+        gate[i] = silu * up[i];               // SwiGLU = SiLU(gate) * up
     }
 }
 
@@ -657,6 +656,49 @@ void vision_apply_rotary(
     }
 }
 
+void vision_apply_rotary_inplace(
+    const float *cos_tensor, // shape (total_tokens, head_dim)
+    const float *sin_tensor, // shape (total_tokens, head_dim)
+    float *buffer,           // shape (total_tokens, num_heads, head_dim)
+    long total_tokens,
+    int num_heads,
+    int head_dim
+) {
+    const int half_dim = head_dim / 2;
+    const int head_size = head_dim;
+
+    for (long i = 0; i < total_tokens * num_heads; ++i) {
+        const long head_start_idx = i * head_size;
+        const long token_index = i / num_heads;
+
+        // cos/sin indexed by token
+        const long cos_sin_offset = token_index * head_dim;
+
+        float *current = buffer + head_start_idx;
+        const float *current_cos = cos_tensor + cos_sin_offset;
+        const float *current_sin = sin_tensor + cos_sin_offset;
+
+        for (int m = 0; m < half_dim; ++m) {
+            // Cache before overwrite (CRITICAL)
+            const float x1 = current[m];
+            const float x2 = current[m + half_dim];
+
+            const float cos_first  = current_cos[m];
+            const float sin_first  = current_sin[m];
+            const float cos_second = current_cos[m + half_dim];
+            const float sin_second = current_sin[m + half_dim];
+
+            // First half
+            current[m] =
+                (x1 * cos_first) + (-x2 * sin_first);
+
+            // Second half
+            current[m + half_dim] =
+                (x2 * cos_second) + (x1 * sin_second);
+        }
+    }
+}
+
 void tensor_transpose(const float *in, float *out, int dim_0, int dim_1, int dim_2) {
     // dim_0 is D0, dim_1 is D1, dim_2 is D2
     const int D0 = dim_0;
@@ -702,19 +744,55 @@ void tensor_transpose(const float *in, float *out, int dim_0, int dim_1, int dim
     }
 }
 
-void vision_att(const float *q, const float *k, const float *v, float *out, 
-                int num_heads, int total_tokens, int head_dim, float scale) {
-    
+void tensor_transpose_inplace(float *data, int D0, int D1, int D2) {
+    const int N = D0 * D1;
+    const int block_size = D2 * sizeof(float);
+
+    bool *visited = (bool *)calloc(N, sizeof(bool));
+    float *tmp_source = (float *)malloc(block_size);
+    float *tmp_dest = (float *)malloc(block_size);
+
+    if (!visited || !tmp_source || !tmp_dest) { /* Handle error */ return; }
+
+    for (int start = 0; start < N; ++start) {
+        if (visited[start]) continue;
+
+        int cur = start;
+        // Keep track of the block we are currently moving
+        memcpy(tmp_source, data + cur * D2, block_size);
+
+        while (!visited[cur]) {
+            visited[cur] = true;
+            
+            // Where does the element at 'cur' belong?
+            int i = cur / D1;
+            int j = cur % D1;
+            int next = j * D0 + i;
+
+            // Save what's at the destination so we don't lose it
+            memcpy(tmp_dest, data + next * D2, block_size);
+            // Put our current block in its home
+            memcpy(data + next * D2, tmp_source, block_size);
+            
+            // The destination block is now our next source
+            memcpy(tmp_source, tmp_dest, block_size);
+            cur = next;
+        }
+    }
+
+    free(tmp_source);
+    free(tmp_dest);
+    free(visited);
+}
+
+void vision_att(
+    const float *q, const float *k, const float *v, float *attn_scores,
+    float *out, int num_heads, int total_tokens, int head_dim, float scale
+) {    
     // 1. Allocate memory for attention scores (attn_weight)
     // Size needed is (total_tokens * total_tokens) for a single head.
     // We will reuse this buffer for every head to save memory.
     size_t score_size = (size_t)total_tokens * total_tokens;
-    float *attn_scores = (float *)malloc(score_size * sizeof(float));
-
-    if (attn_scores == NULL) {
-        // Handle allocation failure (in a real scenario)
-        return; 
-    }
 
     // Strides to move pointers to the next head
     size_t head_stride = (size_t)total_tokens * head_dim;
@@ -765,9 +843,6 @@ void vision_att(const float *q, const float *k, const float *v, float *out,
         // ---------------------------------------------------------
         linear(attn_scores, curr_v, NULL, curr_out, total_tokens, head_dim, total_tokens, false);
     }
-
-    // Free the intermediate buffer
-    free(attn_scores);
 }
 
 void gelu_tanh(float *x, size_t x_size) {

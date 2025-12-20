@@ -23,7 +23,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     long d_tokens = total_tokens / (VSP * VSP);
 
     
-    conv_3d(weight->vl_patch_emb_w, weight->vl_patch_emb_b, img_data, state->vl_x, img_h, VC, VTP, VP, VH);
+    conv_3d(weight->vl_patch_emb_w, weight->vl_patch_emb_b, img_data, state->vision_x, img_h, VC, VTP, VP, VH);
 
     free(img_data);
 
@@ -31,20 +31,23 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
 
     printf("num_grid_per_side=%d\n", num_grid_per_side);
 
-    vision_pos_embed(weight->vl_pos_emb_w, state->vl_embed, grid_h, grid_w, num_grid_per_side, VSP, VH);
+    vision_pos_embed(weight->vl_pos_emb_w, state->vision_t, grid_h, grid_w, num_grid_per_side, VSP, VH);
 
-    add_vector(state->vl_x, state->vl_embed, 1ll * total_tokens * VH);
+    add_vector(state->vision_x, state->vision_t, 1ll * total_tokens * VH);
 
     vision_rot_pos_emb(
-        state->vl_pos_embed_cos, state->vl_pos_embed_sin, state->vision_cos_tensor, state->vision_sin_tensor,
+        state->vision_pe_cos, state->vision_pe_sin, state->vision_cos_tensor, state->vision_sin_tensor,
         grid_h, grid_w, config->vision_spatial_merge_size, VHD
     );
+
+    printf("Finish preprocessing forward_img\n");
+    fflush(stdout);
 
     for (size_t l = 0; l < config->vision_depth; l++) {
         for (int i = 0; i < total_tokens; i++) {
             layer_norm(
-                state->vl_x + 1ll * i * VH, weight->vl_norm1_w,
-                weight->vl_norm1_b, state->vl_b + 1ll * i * VH,
+                state->vision_x + 1ll * i * VH, weight->vl_norm1_w,
+                weight->vl_norm1_b, state->vision_t + 1ll * i * VH,
                 config->rms_norm_eps, VH, 1ll * l
             );
         }
@@ -58,49 +61,67 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         const float *b_k = weight->vl_attn_qkv_b + 1ll * l * 3 * VH + 1ll * VH;
         const float *b_v = weight->vl_attn_qkv_b + 1ll * l * 3 * VH + 1ll * 2 * VH;
         
+        // use vl_v as temporary buffer for vision_q
         linear(
-            state->vl_b, w_q, b_q, state->vl_q, total_tokens, VH, VH, true
+            state->vision_t, w_q, b_q, state->vision_mlp_out,
+            total_tokens, VH, VH, true
         );
-        linear(
-            state->vl_b, w_k, b_k, state->vl_k, total_tokens, VH, VH, true
+        vision_apply_rotary_inplace(
+            state->vision_pe_cos, state->vision_pe_sin,
+            state->vision_mlp_out, total_tokens, VNH, VHD
         );
+        tensor_transpose(
+            state->vision_mlp_out, state->vision_q, total_tokens, VNH, VHD
+        );
+
+        // use vl_v as temporary buffer for vision_k
         linear(
-            state->vl_b, w_v, b_v, state->vl_v_orig, total_tokens, VH, VH, true
+            state->vision_t, w_k, b_k, state->vision_mlp_out,
+            total_tokens, VH, VH, true
+        );
+        vision_apply_rotary_inplace(
+            state->vision_pe_cos, state->vision_pe_sin,
+            state->vision_mlp_out, total_tokens, VNH, VHD
+        );
+        tensor_transpose(
+            state->vision_mlp_out, state->vision_k, total_tokens, VNH, VHD
+        );
+
+        // swap vision_t and vl_v
+        linear(
+            state->vision_t, w_v, b_v, state->vision_mlp_out,
+            total_tokens, VH, VH, true
+        );
+        tensor_transpose(
+            state->vision_mlp_out, state->vision_t, total_tokens, VNH, VHD
         );
         
-        vision_apply_rotary(
-            state->vl_pos_embed_cos, state->vl_pos_embed_sin,
-            state->vl_q, state->vl_q_rot, total_tokens, VNH, VHD
-        );
-        vision_apply_rotary(
-            state->vl_pos_embed_cos, state->vl_pos_embed_sin,
-            state->vl_k, state->vl_k_rot, total_tokens, VNH, VHD
-        );
-
-        tensor_transpose(state->vl_q_rot, state->vl_q, total_tokens, VNH, VHD);
-        tensor_transpose(state->vl_k_rot, state->vl_k, total_tokens, VNH, VHD);
-        tensor_transpose(state->vl_v_orig, state->vl_v, total_tokens, VNH, VHD);
-
         vision_att(
-            state->vl_q, state->vl_k, state->vl_v, state->vl_qkv_out_orig, 
+            state->vision_q, state->vision_k, state->vision_t, 
+            state->vision_attn_scores, state->vision_mlp_out, 
             VNH, total_tokens, VHD, vision_scale
         );
-
-        tensor_transpose(state->vl_qkv_out_orig, state->vl_qkv_out, VNH, total_tokens, VHD);
+        
+        // swap back vision_t and vl_v
+        tensor_transpose(
+            state->vision_mlp_out, state->vision_t, VNH, total_tokens, VHD
+        );
 
         const float *w_attn_proj_ptr = weight->vl_attn_proj_w + 1ll * l * VH * VH;
         const float *b_attn_proj_ptr = weight->vl_attn_proj_b + 1ll * l * VH;
+
+        // use vision_q as temporary buffer here
         linear(
-            state->vl_qkv_out, w_attn_proj_ptr, b_attn_proj_ptr,
-            state->vl_proj_out, total_tokens, VH, VH, true
+            state->vision_t, w_attn_proj_ptr, b_attn_proj_ptr,
+            state->vision_q, total_tokens, VH, VH, true
         );
 
-        add_vector(state->vl_x, state->vl_proj_out, 1ll * total_tokens * VH);
+        add_vector(state->vision_x, state->vision_q, 1ll * total_tokens * VH);
         
         for (int i = 0; i < total_tokens; i++) {
             layer_norm(
-                state->vl_x + 1ll * i * VH, weight->vl_norm2_w,
-                weight->vl_norm2_b, state->vl_b + 1ll * i * VH,
+                state->vision_x + 1ll * i * VH, weight->vl_norm2_w,
+                weight->vl_norm2_b, state->vision_t + 1ll * i * VH,
                 config->rms_norm_eps, VH, 1ll * l
             );
         }
@@ -108,29 +129,29 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         const float *w_mlp1_ptr = weight->vl_mlp1_w + 1ll * l * VI * VH;
         const float *b_mlp1_ptr = weight->vl_mlp1_b + 1ll * l * VI;
         linear(
-            state->vl_b, w_mlp1_ptr, b_mlp1_ptr, state->vl_mlp1_out,
+            state->vision_t, w_mlp1_ptr, b_mlp1_ptr, state->vision_mlp_out,
             total_tokens, VI, VH, true
         );
 
-        gelu_tanh(state->vl_mlp1_out, 1ll * total_tokens * VI);
+        gelu_tanh(state->vision_mlp_out, 1ll * total_tokens * VI);
         
         const float *w_mlp2_ptr = weight->vl_mlp2_w + 1ll * l * VH * VI;
         const float *b_mlp2_ptr = weight->vl_mlp2_b + 1ll * l * VH;
         linear(
-            state->vl_mlp1_out, w_mlp2_ptr, b_mlp2_ptr, state->vl_b,
+            state->vision_mlp_out, w_mlp2_ptr, b_mlp2_ptr, state->vision_t,
             total_tokens, VH, VI, true
         );
 
-        add_vector(state->vl_x, state->vl_b, 1ll * total_tokens * VH);
+        add_vector(state->vision_x, state->vision_t, 1ll * total_tokens * VH);
 
         if (config->deep_layer[l] > 0) {
             int d_stride = config->deep_layer[l] - 1;
             for (int i = 0; i < d_tokens; i++) {
                 layer_norm(
-                    state->vl_x + 1ll * i * VI,
+                    state->vision_x + 1ll * i * VI,
                     weight->vl_d_norm_w,
                     weight->vl_d_norm_b,
-                    state->vl_b + 1ll * i * VI,
+                    state->vision_t + 1ll * i * VI,
                     config->rms_norm_eps, 
                     VI, 
                     1ll * d_stride
@@ -140,40 +161,43 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             const float *w_mlp1_d_ptr = weight->vl_d_mlp1_w + 1ll * d_stride * VI * VI;
             const float *b_mlp1_d_ptr = weight->vl_d_mlp1_b + 1ll * d_stride * VI;
             linear(
-                state->vl_b, w_mlp1_d_ptr, b_mlp1_d_ptr,
-                state->vl_mlp1_out, d_tokens, VI, VI, true
+                state->vision_t, w_mlp1_d_ptr, b_mlp1_d_ptr,
+                state->vision_mlp_out, d_tokens, VI, VI, true
             );
         
-            gelu_tanh(state->vl_mlp1_out, 1ll * d_tokens * VI);
+            gelu_tanh(state->vision_mlp_out, 1ll * d_tokens * VI);
 
             const float *w_mlp2_d_ptr = weight->vl_d_mlp2_w + 1ll * d_stride * OH * VI;
             const float *b_mlp2_d_ptr = weight->vl_d_mlp2_b + 1ll * d_stride * OH;
             linear(
-                state->vl_mlp1_out, w_mlp2_d_ptr, b_mlp2_d_ptr,
-                state->vl_deep_stack + 1ll * d_stride * d_tokens * OH,
+                state->vision_mlp_out, w_mlp2_d_ptr, b_mlp2_d_ptr,
+                state->vision_deep_stack + 1ll * d_stride * d_tokens * OH,
                 d_tokens, OH, VI, true
             );
         }
+
+        printf("Finish layer %ld\n", l);
+        fflush(stdout);
     }
 
     for (int i = 0; i < total_tokens; i++) {
         layer_norm(
-            state->vl_x + 1ll * i * VH, weight->vl_merge_norm_w,
-            weight->vl_merge_norm_b, state->vl_b + 1ll * i * VH,
+            state->vision_x + 1ll * i * VH, weight->vl_merge_norm_w,
+            weight->vl_merge_norm_b, state->vision_t + 1ll * i * VH,
             config->rms_norm_eps, VH, 0
         );
     }
 
     linear(
-        state->vl_b, weight->vl_merge_mlp1_w, weight->vl_merge_mlp1_b,
-        state->vl_mlp1_out, d_tokens, VI, VI, true
+        state->vision_t, weight->vl_merge_mlp1_w, weight->vl_merge_mlp1_b,
+        state->vision_mlp_out, d_tokens, VI, VI, true
     );
 
-    gelu_tanh(state->vl_mlp1_out, 1ll * d_tokens * VI);
+    gelu_tanh(state->vision_mlp_out, 1ll * d_tokens * VI);
 
     linear(
-        state->vl_mlp1_out, weight->vl_merge_mlp2_w, weight->vl_merge_mlp2_b,
-        state->vl_x, d_tokens, OH, VI, true
+        state->vision_mlp_out, weight->vl_merge_mlp2_w, weight->vl_merge_mlp2_b,
+        state->vision_x, d_tokens, OH, VI, true
     );
     
     state->vision_embed_tokens = d_tokens;
@@ -199,7 +223,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             config->vocab_size, hidden_size
         );
     } else {
-        const float *src = state->vl_x + 1ll * hidden_size * state->cur_img_token_id;
+        const float *src = state->vision_x + 1ll * hidden_size * state->cur_img_token_id;
         memcpy(state->x, src, 1ll * hidden_size * sizeof(float));
         state->cur_img_token_id += 1;
     }
@@ -279,16 +303,16 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             kv_dim, seq_len, pos
         );
 
-        // Output projection
+        // Output projection: using state->t for attn_out
         const float *w_out_proj = weight->w_attn_o + 1ll * l * hidden_size * hidden_size;
         linear(
-            state->qkv_out, w_out_proj, nullptr, state->attn_out, 1,
+            state->qkv_out, w_out_proj, nullptr, state->t, 1,
             hidden_size, hidden_size, true
         );
 
         // Residual connection 1
         add_vector(
-            state->x, state->attn_out, hidden_size
+            state->x, state->t, hidden_size
         );
 
         // Post-attention RMSNorm
@@ -311,19 +335,19 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         
         // SwiGLU activation
         swiglu(
-            state->gate, state->up, state->gate_up, config->intermediate_size
+            state->gate, state->up, config->intermediate_size
         );
 
-        // MLP: Down projection
+        // MLP: Down projection: using state->t for down
         const float *w_down = weight->w_mlp_down + 1ll * l * config->intermediate_size * hidden_size;
         linear(
-            state->gate_up, w_down, nullptr, state->down, 1,
+            state->gate, w_down, nullptr, state->t, 1,
             hidden_size, config->intermediate_size, true
         );
 
         // Residual connection 2
         add_vector(
-            state->x, state->down, hidden_size
+            state->x, state->t, hidden_size
         );
     }
 

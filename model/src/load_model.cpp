@@ -440,7 +440,6 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     CHECK_ALLOC(state->q, NH * D * sizeof(float));
 
     state->k = (float*)malloc(NKV * D * sizeof(float));
-    printf("Shape of state->k: (%d, %d)\n", NKV, D);
     CHECK_ALLOC(state->k, NKV * D * sizeof(float));
 
     state->v = (float*)malloc(NKV * D * sizeof(float));
@@ -452,20 +451,11 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->qkv_out = (float*)malloc(H * sizeof(float));
     CHECK_ALLOC(state->qkv_out, H * sizeof(float));
 
-    state->attn_out = (float*)malloc(H * sizeof(float));
-    CHECK_ALLOC(state->attn_out, H * sizeof(float));
-
     state->gate = (float*)malloc(I * sizeof(float));
     CHECK_ALLOC(state->gate, I * sizeof(float));
 
     state->up = (float*)malloc(I * sizeof(float));
     CHECK_ALLOC(state->up, I * sizeof(float));
-
-    state->gate_up = (float*)malloc(I * sizeof(float));
-    CHECK_ALLOC(state->gate_up, I * sizeof(float));
-
-    state->down = (float*)malloc(H * sizeof(float));
-    CHECK_ALLOC(state->down, H * sizeof(float));
 
     state->cos_tensor = (float*)malloc(3 * S * (D / 2) * sizeof(float));
     CHECK_ALLOC(state->cos_tensor, 3 * S * (D / 2) * sizeof(float));
@@ -484,14 +474,16 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->value_cache = (float*)malloc(cache_size);
     CHECK_ALLOC(state->value_cache, cache_size);
 
-    long long vl_x_size = 1ll * VNP * VH * sizeof(float);
-    state->vl_x = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_x, vl_x_size);
-    state->vl_b = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_b, vl_x_size);
-
-    state->vl_embed = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_embed, vl_x_size);
+    // -- Vision states --
+    long long vision_x_size = 1ll * VNP * VH * sizeof(float);
+    state->vision_x = (float *)malloc(vision_x_size);
+    CHECK_ALLOC(state->vision_x, vision_x_size);
+    state->vision_t = (float *)malloc(vision_x_size);
+    CHECK_ALLOC(state->vision_t, vision_x_size);
+    state->vision_q = (float *)malloc(vision_x_size);
+    CHECK_ALLOC(state->vision_q, vision_x_size);
+    state->vision_k = (float *)malloc(vision_x_size);
+    CHECK_ALLOC(state->vision_k, vision_x_size);
 
     long long vl_rope_size = 1ll * (long)sqrt(VNP) * (VD / 4) * sizeof(float);
     state->vision_cos_tensor = (float *)malloc(vl_rope_size);
@@ -500,38 +492,22 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     CHECK_ALLOC(state->vision_sin_tensor, vl_rope_size);
 
     long long vl_embed_size = 1ll * VNP * VD * sizeof(float);
-    state->vl_pos_embed_cos = (float *)malloc(vl_embed_size);
-    CHECK_ALLOC(state->vl_pos_embed_cos, vl_embed_size);
-    state->vl_pos_embed_sin = (float *)malloc(vl_embed_size);
-    CHECK_ALLOC(state->vl_pos_embed_sin, vl_embed_size);
-
-    state->vl_q = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_q, vl_x_size);
-    state->vl_k = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_k, vl_x_size);
-    state->vl_v = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_v, vl_x_size);
-    state->vl_q_rot = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_q_rot, vl_x_size);
-    state->vl_k_rot = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_k_rot, vl_x_size);
-    state->vl_v_orig = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_v_orig, vl_x_size);
+    state->vision_pe_cos = (float *)malloc(vl_embed_size);
+    CHECK_ALLOC(state->vision_pe_cos, vl_embed_size);
+    state->vision_pe_sin = (float *)malloc(vl_embed_size);
+    CHECK_ALLOC(state->vision_pe_sin, vl_embed_size);
     
-    state->vl_qkv_out = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_qkv_out, vl_x_size);
-    state->vl_qkv_out_orig = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_qkv_out_orig, vl_x_size);
-    state->vl_proj_out = (float *)malloc(vl_x_size);
-    CHECK_ALLOC(state->vl_proj_out, vl_x_size);
-    
-    long long vl_mlp1_out_size = 1ll * VNP * VI * sizeof(float);
-    state->vl_mlp1_out = (float *)malloc(vl_mlp1_out_size);
-    CHECK_ALLOC(state->vl_mlp1_out, vl_mlp1_out_size);
+    long long vision_mlp_out_size = 1ll * VNP * VI * sizeof(float);
+    state->vision_mlp_out = (float *)malloc(vision_mlp_out_size);
+    CHECK_ALLOC(state->vision_mlp_out, vision_mlp_out_size);
 
-    long long vl_deep_stack_size = 1ll * 3 * VNP * (VH / 2) * sizeof(float);
-    state->vl_deep_stack = (float *)malloc(vl_deep_stack_size);
-    CHECK_ALLOC(state->vl_deep_stack, vl_deep_stack_size);
+    long long vision_deep_stack_size = 1ll * 3 * VNP * (VH / 2) * sizeof(float);
+    state->vision_deep_stack = (float *)malloc(vision_deep_stack_size);
+    CHECK_ALLOC(state->vision_deep_stack, vision_deep_stack_size);
+
+    long long vision_attn_scores_size = 1ll * VNP * VNP * sizeof(float);
+    state->vision_attn_scores = (float *)malloc(vision_attn_scores_size);
+    CHECK_ALLOC(state->vision_attn_scores, vision_attn_scores_size);
 
     qwen_rope_precompute(state->cos_tensor, state->sin_tensor, config);
     qwen_vision_rope_precompute(state->vision_cos_tensor, state->vision_sin_tensor, config);
@@ -547,11 +523,8 @@ void free_model_run_state(QwenRunState* state) {
     if (state->v) free(state->v);
     if (state->att) free(state->att);
     if (state->qkv_out) free(state->qkv_out);
-    if (state->attn_out) free(state->attn_out);
     if (state->gate) free(state->gate);
     if (state->up) free(state->up);
-    if (state->gate_up) free(state->gate_up);
-    if (state->down) free(state->down);
     if (state->cos_tensor) free(state->cos_tensor);
     if (state->sin_tensor) free(state->sin_tensor);
     if (state->logits) free(state->logits);
@@ -561,28 +534,19 @@ void free_model_run_state(QwenRunState* state) {
     if (state->vision_cos_tensor) free(state->vision_cos_tensor);
     if (state->vision_sin_tensor) free(state->vision_sin_tensor);
 
-    if (state->vl_x) free(state->vl_x);
-    if (state->vl_b) free(state->vl_b);
-    if (state->vl_embed) free(state->vl_embed);
-    if (state->vl_pos_embed_cos) free(state->vl_pos_embed_cos);
-    if (state->vl_pos_embed_sin) free(state->vl_pos_embed_sin);
+    if (state->vision_x) free(state->vision_x);
+    if (state->vision_t) free(state->vision_t);
+    if (state->vision_pe_cos) free(state->vision_pe_cos);
+    if (state->vision_pe_sin) free(state->vision_pe_sin);
 
-    if (state->vl_q) free(state->vl_q);
-    if (state->vl_k) free(state->vl_k);
-    if (state->vl_v) free(state->vl_v);
+    if (state->vision_q) free(state->vision_q);
+    if (state->vision_k) free(state->vision_k);
 
-    if (state->vl_q_rot) free(state->vl_q_rot);
-    if (state->vl_k_rot) free(state->vl_k_rot);
-    if (state->vl_v_orig) free(state->vl_v_orig);
+    if (state->vision_mlp_out) free(state->vision_mlp_out);
 
-    if (state->vl_qkv_out) free(state->vl_qkv_out);
-    if (state->vl_qkv_out_orig) free(state->vl_qkv_out_orig);
-    
-    if (state->vl_proj_out) free(state->vl_proj_out);
+    if (state->vision_deep_stack) free(state->vision_deep_stack);
 
-    if (state->vl_mlp1_out) free(state->vl_mlp1_out);
-
-    if (state->vl_deep_stack) free(state->vl_deep_stack);
+    if (state->vision_attn_scores) free(state->vision_attn_scores);
 
     memset(state, 0, sizeof(QwenRunState));
 }

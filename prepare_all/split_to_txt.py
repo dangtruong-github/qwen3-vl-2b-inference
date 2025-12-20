@@ -59,7 +59,7 @@ def split_json_to_files(args):
                     # Token ID lists: convert list of numbers to a space-separated string
                     if field_key == 'output_token_ids_full':
                         # Only save the first 1024 tokens
-                        line = ' '.join(map(str, value[:1024]))
+                        line = ' '.join(map(str, value[:3072]))
                     else:
                         line = ' '.join(map(str, value))
 
