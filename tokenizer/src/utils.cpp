@@ -178,8 +178,8 @@ static int utf8_char_len(unsigned char lead) {
 }
 
 void encode(
-    TokenizerStruct *t, char *text, int *tokens, int *n_tokens,
-    char *img_path, int patch_size, int merge_size
+    TokenizerStruct *t, QwenConfig *config, char *text, int *tokens,
+    int *n_tokens, char *img_path, int patch_size, int merge_size
 ) {
     if (text == NULL) {
         fprintf(stderr, "cannot encode NULL text\n");
@@ -362,8 +362,8 @@ void encode(
     const int image_pad = 151655;
     const int vision_end = 151653;
 
-    const long long min_pixels = 256ll * 256ll;
-    const long long max_pixels = 16777216ll; // 16777216
+    const long long min_pixels = config->min_pixels;
+    const long long max_pixels = config->max_pixels;
     int num_img_pad = get_num_img_pad(img_path, patch_size, merge_size, min_pixels, max_pixels);  // dynamically computed later if needed
     int prefix_len = (num_img_pad > 0) ? (4 + num_img_pad + 2) : 3;
 

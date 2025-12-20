@@ -37,6 +37,25 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
         fclose(file);
         return;
     }
+    config->seq_len = 1024;
+    config->mrope_section = (int *)malloc(3 * sizeof(int));
+    config->mrope_section[0] = 24;
+    config->mrope_section[1] = 20;
+    config->mrope_section[2] = 20;
+    config->num_dimensions = 3;
+
+    config->min_pixels = 256ll * 256ll;
+    config->max_pixels = 1024ll * 1024ll;
+    config->vision_theta = 10000.0f;
+    config->vision_scale = 0.125;
+    config->max_vision_embeddings = 2304;
+    config->vision_num_channels = 3;
+    config->vision_deep_stack_depth = 3;
+    config->deep_layer = (int *)calloc(config->vision_depth, sizeof(int)); // set all values to 0
+    config->deep_layer[5] = 1; // set index 5 to 1
+    config->deep_layer[11] = 2; // set index 11 to 2
+    config->deep_layer[17] = 3;
+
 
     // ==================================================================================
     // 2. Derived Dimensions
@@ -58,11 +77,8 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     long VD = config->vision_depth;
     long VI = config->vision_intermediate_size;
     long OH = config->out_hidden_size;
-    config->vision_num_channels = 3;
     long VC = config->vision_num_channels;
-    config->vision_num_position_embeddings = 2304;
-    long VNPE = config->vision_num_position_embeddings;
-    config->vision_deep_stack_depth = 3;
+    long VNPE = config->max_vision_embeddings;
     long VDSD = config->vision_deep_stack_depth;
     long QKVD = vision_qkv_dim;
     int M = num_deepstack_mergers;
@@ -332,6 +348,11 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     printf("Successfully loaded model from %s\n", path);
 }
 
+void free_model_config(QwenConfig *config) {
+    free(config->mrope_section);
+    free(config->deep_layer);
+}
+
 void free_model_weights(QwenWeight* weights) {
     if (!weights) return;
 
@@ -398,12 +419,12 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     int L   = config->num_hidden_layers;
     int NH  = config->num_attention_heads;
     int NKV = config->num_key_value_heads;
-    int D   = 128;
-    int S   = 1024;
+    int D   = H / NH;
+    int S   = config->seq_len;
 
     int VH = config->vision_hidden_size;
-    int VNP = 2304;
-    int VD = 64;
+    int VNP = config->max_vision_embeddings;
+    int VD = VH / config->vision_num_heads;
     int VI = config->vision_intermediate_size;
 
     size_t cache_size = (size_t)L * S * NKV * D * sizeof(float);
@@ -463,7 +484,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->value_cache = (float*)malloc(cache_size);
     CHECK_ALLOC(state->value_cache, cache_size);
 
-    long long vl_x_size = 1ll * VNP * VNP * VH * sizeof(float);
+    long long vl_x_size = 1ll * VNP * VH * sizeof(float);
     state->vl_x = (float *)malloc(vl_x_size);
     CHECK_ALLOC(state->vl_x, vl_x_size);
     state->vl_b = (float *)malloc(vl_x_size);
@@ -472,13 +493,13 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->vl_embed = (float *)malloc(vl_x_size);
     CHECK_ALLOC(state->vl_embed, vl_x_size);
 
-    long long vl_rope_size = 1ll * VNP * (VD / 4) * sizeof(float);
+    long long vl_rope_size = 1ll * (long)sqrt(VNP) * (VD / 4) * sizeof(float);
     state->vision_cos_tensor = (float *)malloc(vl_rope_size);
     CHECK_ALLOC(state->vision_cos_tensor, vl_rope_size);
     state->vision_sin_tensor = (float *)malloc(vl_rope_size);
     CHECK_ALLOC(state->vision_sin_tensor, vl_rope_size);
 
-    long long vl_embed_size = 1ll * VNP * VNP * VD * sizeof(float);
+    long long vl_embed_size = 1ll * VNP * VD * sizeof(float);
     state->vl_pos_embed_cos = (float *)malloc(vl_embed_size);
     CHECK_ALLOC(state->vl_pos_embed_cos, vl_embed_size);
     state->vl_pos_embed_sin = (float *)malloc(vl_embed_size);
@@ -504,11 +525,11 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->vl_proj_out = (float *)malloc(vl_x_size);
     CHECK_ALLOC(state->vl_proj_out, vl_x_size);
     
-    long long vl_mlp1_out_size = 1ll * VNP * VNP * VI * sizeof(float);
+    long long vl_mlp1_out_size = 1ll * VNP * VI * sizeof(float);
     state->vl_mlp1_out = (float *)malloc(vl_mlp1_out_size);
     CHECK_ALLOC(state->vl_mlp1_out, vl_mlp1_out_size);
 
-    long long vl_deep_stack_size = 1ll * 3 * VNP * VNP * (VH / 2) * sizeof(float);
+    long long vl_deep_stack_size = 1ll * 3 * VNP * (VH / 2) * sizeof(float);
     state->vl_deep_stack = (float *)malloc(vl_deep_stack_size);
     CHECK_ALLOC(state->vl_deep_stack, vl_deep_stack_size);
 
@@ -572,27 +593,23 @@ void qwen_rope_precompute(
     const QwenConfig *config
 ) {
     // Extract parameters from config
-    int seq_len = 1024;  // Should be config->max_position_embeddings
-    int head_dim = 128;  // Should be config->hidden_size / config->num_attention_heads
-    float rope_theta = 5000000.0f;
+    int seq_len = config->seq_len;  // Should be config->max_position_embeddings
+    int head_dim = config->hidden_size / config->num_attention_heads;
     
     // MRoPE sections - should come from config->rope_scaling->mrope_section
-    const int mrope_section[] = {24, 20, 20};
-    int num_dimensions = 3;
-    
     int d_half = head_dim / 2;
 
     // Step 1: compute inv_freq (standard RoPE)
     float *inv_freq = (float *)malloc(d_half * sizeof(float));
     for (int i = 0; i < d_half; i++) {
-        inv_freq[i] = 1.0f / powf(rope_theta, (2.0f * i) / (float)head_dim);
+        inv_freq[i] = 1.0f / powf(config->rope_theta, (2.0f * i) / (float)head_dim);
     }
 
     // Step 2: Compute frequencies for each dimension and position
     // We'll create temporary arrays for frequencies of each dimension
     float *freqs[3];  // freqs[dim][pos * d_half]
     
-    for (int dim = 0; dim < num_dimensions; dim++) {
+    for (int dim = 0; dim < config->num_dimensions; dim++) {
         freqs[dim] = (float *)malloc(seq_len * d_half * sizeof(float));
         
         for (int pos = 0; pos < seq_len; pos++) {
@@ -611,7 +628,7 @@ void qwen_rope_precompute(
         // Apply interleaving pattern for H and W dimensions
         // Pattern: [THTHWHTHW...TT] as in Python implementation
         for (int dim = 1; dim <= 2; dim++) {  // H and W dimensions
-            int length = mrope_section[dim] * 3;
+            int length = config->mrope_section[dim] * 3;
             for (int offset = dim; offset < length; offset += 3) {
                 if (offset < d_half) {
                     freq_ptr[offset] = freqs[dim][pos * d_half + offset];
@@ -630,7 +647,7 @@ void qwen_rope_precompute(
             
             // For H and W dimensions, we use the original frequencies
             // (These might be overwritten in actual forward pass)
-            for (int dim = 1; dim < num_dimensions; dim++) {
+            for (int dim = 1; dim < config->num_dimensions; dim++) {
                 int hw_idx = (dim * seq_len * d_half) + (pos * d_half) + i;
                 float orig_freq = freqs[dim][pos * d_half + i];
                 cos_all_out[hw_idx] = cosf(orig_freq);
@@ -641,7 +658,7 @@ void qwen_rope_precompute(
 
     // Cleanup
     free(inv_freq);
-    for (int dim = 0; dim < num_dimensions; dim++) {
+    for (int dim = 0; dim < config->num_dimensions; dim++) {
         free(freqs[dim]);
     }
 }
@@ -649,10 +666,10 @@ void qwen_rope_precompute(
 void qwen_vision_rope_precompute(
     float *cos_tensor, float *sin_tensor, const QwenConfig *config
 ) {
-    int dim = 32;
-    int max_seq_len = 2304;
-    int half_dim = dim / 2;
-    float theta = 10000.0f;
+    int dim = config->vision_hidden_size / config->vision_num_heads;
+    int max_seq_len = config->max_vision_embeddings;
+    int half_dim = dim / 4;
+    float theta = config->vision_theta;
 
     /* Allocate inv_freq (same as register_buffer in PyTorch) */
     float *inv_freq = (float *)malloc(sizeof(float) * half_dim);

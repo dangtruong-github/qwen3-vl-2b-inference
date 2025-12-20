@@ -55,6 +55,8 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
     double gen_time_total = 0.0;
     int new_tokens_gen_num = 0;
 
+    int max_seq_len = config->seq_len;
+
     while (1) {
         char* in_line = read_full_line(in_file);
         char* in_img_line = read_full_line(in_img_file);
@@ -77,7 +79,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
 
         int *input_tokens = NULL;
         int input_count = 0;
-        get_expected_tokens(in_line, &input_tokens, &input_count);\
+        get_expected_tokens(in_line, &input_tokens, &input_count);
 
         int *expected_tokens = NULL;
         int expected_count = 0;
@@ -90,9 +92,9 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         int img_processed_h = 0, img_processed_w = 0;
         int img_grid_h = 0, img_grid_w = 0;
         bool img_true = image_processor(
-            in_img_line, config->vision_patch_size, config->vision_spatial_merge_size, 256 * 256, 1024 * 1024,
-            &img_processed_output, &img_processed_h, &img_processed_w,
-            &img_grid_h, &img_grid_w
+            in_img_line, config->vision_patch_size, config->vision_spatial_merge_size, config->min_pixels,
+            config->max_pixels, &img_processed_output, &img_processed_h,
+            &img_processed_w, &img_grid_h, &img_grid_w
         );
 
         double t_gen_start = now_sec();
@@ -104,11 +106,13 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         if (img_true) {
             forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
         }
+        
+        if (!img_true) continue;
 
         // ------------------------------------------------------------
         // 4. Generation loop - matching the structure from run.cpp
         // ------------------------------------------------------------
-        int *generated_tokens = (int*)malloc((1024) * sizeof(int));
+        int *generated_tokens = (int*)malloc(max_seq_len * sizeof(int));
         int total_generated_count = 0;
         
         // Copy initial input tokens
@@ -122,7 +126,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         int pos = 0; // position in the sequence
         int im_end_count = 0;
 
-        while (pos < 1024) { // max steps
+        while (pos < max_seq_len) { // max steps
             // Forward the transformer to get logits for the next token
             // Using your existing forward functions
             float *logits = forward_text(config, state, weight, token, pos);
@@ -236,15 +240,32 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         // ------------------------------------------------------------
         // 6. Cleanup
         // ------------------------------------------------------------
+        printf("Start freeing data\n");
+        fflush(stdout);
         free(in_line);
+        printf("Freeing in_line successfully\n");
+        fflush(stdout);
         free(in_img_line);
-        if (img_true) free(img_processed_output);
+        printf("Freeing in_img_line successfully\n");
+        fflush(stdout);
+        // if (img_true) free(img_processed_output);
+        printf("Freeing img_processed_output successfully\n");
+        fflush(stdout);
         free(out_line);
+        printf("Freeing out_line successfully\n");
+        fflush(stdout);
         free(input_tokens);
+        printf("Freeing input_tokens successfully\n");
+        fflush(stdout);
         free(expected_tokens);
+        printf("Freeing expected_tokens successfully\n");
+        fflush(stdout);
         free(generated_tokens);
+        printf("Freeing generated_tokens successfully\n");
+        fflush(stdout);
 
         printf("End of forward cycle %d\n", sample_count);
+        fflush(stdout);
     }
 
     double avg_ttft = first_tok_gen_time_total / sample_count;
@@ -315,8 +336,8 @@ int image_processor_validate(const char *in_img_path,
         int img_grid_h, img_grid_w;
         bool img_true = image_processor(
             img_path, config->vision_patch_size,
-            config->vision_spatial_merge_size, 256 * 256,
-            1024 * 1024, &img_processed_output, &img_processed_h,
+            config->vision_spatial_merge_size, config->min_pixels,
+            config->max_pixels, &img_processed_output, &img_processed_h,
             &img_processed_w, &img_grid_h, &img_grid_w
         );
 

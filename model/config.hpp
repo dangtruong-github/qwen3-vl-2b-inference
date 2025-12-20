@@ -9,6 +9,7 @@
 }
 
 typedef struct {
+    int seq_len;
     int vocab_size;
     int hidden_size;
     int intermediate_size;
@@ -18,6 +19,13 @@ typedef struct {
     int max_position_embeddings;
     int rope_theta;
     float rms_norm_eps;
+    int *mrope_section;
+    int num_dimensions;
+
+    long long min_pixels;
+    long long max_pixels;
+    float vision_theta;
+    float vision_scale;
     int vision_hidden_size;
     int vision_depth;
     int vision_patch_size;
@@ -31,8 +39,9 @@ typedef struct {
     int vision_end_token_id;
     int video_token_id;
     int vision_num_channels;
-    int vision_num_position_embeddings;
     int vision_deep_stack_depth;
+    int max_vision_embeddings;
+    int *deep_layer;
 } QwenConfig;
 
 typedef struct {

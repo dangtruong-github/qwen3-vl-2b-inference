@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     // ----------------------------------------------------
     // CALL THE VALIDATION FUNCTION HERE
     // ----------------------------------------------------
-    int validation_result = forward_validate("data/input_1.txt", "data/image_path.txt", "data/output_1.txt", tokenizer, config, weights, state);
+    int validation_result = forward_validate("data/input_tokens.txt", "data/image_path.txt", "data/output_tokens_full.txt", tokenizer, config, weights, state);
     // image_processor_validate("data/image_path.txt",tokenizer, config, weights, state);
     
     if (validation_result == 0) {
@@ -108,6 +108,7 @@ int main(int argc, char** argv) {
     // Cleanup
     free_model_run_state(state);
     free_model_weights(weights);
+    free_model_config(config);
     free_tokenizer(tokenizer);
     delete config;
     delete weights;

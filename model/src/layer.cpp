@@ -180,15 +180,6 @@ void attn_scores_all_heads(
         for (int t = 0; t <= pos; t++) {
             // Get the key for this timestep
             const float *k_head = key_cache_layer + 1ll * t * kv_dim + 1ll * kv_head_idx * head_dim;
-
-            #ifdef DEBUG
-                printf("Inside Layer %zu, Head %d, Time %d\n", layer_offset, h, t);
-                printf("k_head: ");
-                for (int i = 0; i < 5; i++) {
-                    printf("%.6f ", k_head[i]);
-                }
-                printf("\n");
-            #endif
             
             double score = 0.0;
             for (int i = 0; i < head_dim; i++) {
@@ -197,14 +188,6 @@ void attn_scores_all_heads(
             score /= sqrtf((float)head_dim);
             att_head[t] = (float)score;
         }
-
-        #ifdef DEBUG
-            printf("Attention scores for Layer %zu, Head %d up to pos %d:\n", layer_offset, h, pos);
-            for (int t = 0; t <= pos; t++) {
-                printf("%.6f ", att_head[t]);
-            }
-            printf("\n");
-        #endif
 
         // Softmax over the valid scores (0 to pos)
         // This implicitly handles the causal mask.
@@ -246,14 +229,6 @@ void attn_weighted_sum_all_heads(
                 tb_head[i] += a * v[i];
             }
         }
-
-        #ifdef DEBUG
-            printf("Weighted sum output for Layer offset %zu, Head %d up to pos %d:\n", loff, h, pos);
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", tb_head[i]);
-            }
-            printf("\n");
-        #endif
     }
 }
 
@@ -327,7 +302,6 @@ void conv_3d(
 }
 
 void vision_pos_embed(const float *pos_embed_w, float *x_embed, int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH) {
-
     if (grid_h <= 0 || grid_w <= 0 || num_grid_per_side <= 0) {
         return;
     }

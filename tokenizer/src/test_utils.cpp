@@ -114,6 +114,7 @@ void convert_endl(char **prompt_line) {
 
 int tokenizer_validate(
     TokenizerStruct* tokenizer,
+    QwenConfig *config,
     const char* prompt_file_path,
     const char* tokens_file_path,
     const char* img_file_path,
@@ -197,7 +198,7 @@ int tokenizer_validate(
             exit(EXIT_FAILURE);
         }
 
-        encode(tokenizer, prompt_line, actual_tokens, &num_actual_tokens, img_line, patch_size, merge_size);
+        encode(tokenizer, config, prompt_line, actual_tokens, &num_actual_tokens, img_line, patch_size, merge_size);
 
         // ------------------------------------------------------------
         // 4. Compare Results

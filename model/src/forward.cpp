@@ -16,32 +16,28 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     long VSP = config->vision_spatial_merge_size;
     long total_tokens = grid_h * grid_w;
     long VNH = config->vision_num_heads;
-    long VHD = 64;  // vision_head_dim
+    long VHD = VH / VNH;  // vision_head_dim
     long VI = config->vision_intermediate_size;
     long OH = config->out_hidden_size;
-    float vision_scale = 0.125;
-    long d_tokens = total_tokens / 4;
+    float vision_scale = config->vision_scale;
+    long d_tokens = total_tokens / (VSP * VSP);
 
-    int deep_layer[24] = {0}; // initialize all elements to 0
-    deep_layer[5] = 1; // set index 5 to 1
-    deep_layer[11] = 2; // set index 11 to 2
-    deep_layer[17] = 3;
-
+    
     conv_3d(weight->vl_patch_emb_w, weight->vl_patch_emb_b, img_data, state->vl_x, img_h, VC, VTP, VP, VH);
 
     free(img_data);
 
-    long num_grid_per_side = 48;
+    long num_grid_per_side = sqrt(config->max_vision_embeddings);
 
     printf("num_grid_per_side=%d\n", num_grid_per_side);
 
     vision_pos_embed(weight->vl_pos_emb_w, state->vl_embed, grid_h, grid_w, num_grid_per_side, VSP, VH);
 
-    add_vector(state->vl_x, state->vl_embed, 1ll * img_h * VH);
+    add_vector(state->vl_x, state->vl_embed, 1ll * total_tokens * VH);
 
     vision_rot_pos_emb(
         state->vl_pos_embed_cos, state->vl_pos_embed_sin, state->vision_cos_tensor, state->vision_sin_tensor,
-        grid_h, grid_w, config->vision_spatial_merge_size, 64
+        grid_h, grid_w, config->vision_spatial_merge_size, VHD
     );
 
     for (size_t l = 0; l < config->vision_depth; l++) {
@@ -127,8 +123,8 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
 
         add_vector(state->vl_x, state->vl_b, 1ll * total_tokens * VH);
 
-        if (deep_layer[l] > 0) {
-            int d_stride = deep_layer[l] - 1;
+        if (config->deep_layer[l] > 0) {
+            int d_stride = config->deep_layer[l] - 1;
             for (int i = 0; i < d_tokens; i++) {
                 layer_norm(
                     state->vl_x + 1ll * i * VI,
@@ -185,10 +181,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
 }
 
 float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token_id, int pos) {
-    // **FIXED:** Define dimensions clearly
-    int head_dim = config->hidden_size / config->num_attention_heads;
-    int seq_len = 1024;
-    int kv_dim = config->num_key_value_heads * head_dim;
+    long hidden_size = config->hidden_size;
+
+    long head_dim = hidden_size / config->num_attention_heads;
+    long seq_len = config->seq_len;
+    long kv_dim = config->num_key_value_heads * head_dim;
 
     // Cache dimensions: [num_layers][seq_len][kv_dim]
     long long cache_layer_size = 1ll * seq_len * kv_dim; // Size of one layer's cache
@@ -199,93 +196,36 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     if (token_id != config->image_token_id && token_id != config->video_token_id) {
         embedding_lookup(
             weight->token_embedding_table, token_id, state->x,
-            config->vocab_size, config->hidden_size
+            config->vocab_size, hidden_size
         );
     } else {
-        const float *src = state->vl_x + 1ll * config->hidden_size * state->cur_img_token_id;
-        memcpy(state->x, src, 1ll * config->hidden_size * sizeof(float));
+        const float *src = state->vl_x + 1ll * hidden_size * state->cur_img_token_id;
+        memcpy(state->x, src, 1ll * hidden_size * sizeof(float));
         state->cur_img_token_id += 1;
     }
-
-    #ifdef DEBUG
-        printf("Dimensions: head_dim=%d, kv_dim=%d, seq_len=%d\n", head_dim, kv_dim, seq_len);
-        printf("Cache: loff_one=%lld, loff_pos=%lld\n", loff_one, loff_pos);
-        printf("finish embedding_lookup\n");
-        fflush(stdout);
-        printf("state->x: ");
-        for (int i = 0; i < 5; i++) {
-            printf("%.6f ", state->x[i]);
-        }
-        printf("\n");
-    #endif
-
-    // print out the cos_table and sin_table for debugging
-    #ifdef DEBUG
-        printf("cos_table (first 5 values): ");
-        for (int i = 0; i < 5; i++) {
-            printf("%.6f ", state->cos_tensor[i]);
-        }
-        printf("\n");
-
-        printf("sin_table (first 5 values): ");
-        for (int i = 0; i < 5; i++) {
-            printf("%.6f ", state->sin_tensor[i]);
-        }
-        printf("\n");
-    #endif
 
     for (int l = 0; l < config->num_hidden_layers; l++) {
         // Pre-attention RMSNorm
         rms_norm(
-            state->x, weight->rms_ffn_w, state->t, config->rms_norm_eps, config->hidden_size, 1ll * l
+            state->x, weight->rms_ffn_w, state->t, config->rms_norm_eps, hidden_size, 1ll * l
         );
-
-        #ifdef DEBUG
-            printf("finish rms_norm layer %d\n", l);
-            fflush(stdout);
-            printf("state->t (CHECKED): ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->t[i]);
-            }
-            printf("\n");
-        #endif
 
         // QKV Projections
         long long loff = 1ll * l * loff_one;  // kv cache layer offset (layer_cache_start)
 
-        const float *w_q = weight->w_attn_q + 1ll * l * config->hidden_size * 2048ll;
-        const float *w_k = weight->w_attn_k + 1ll * l * config->hidden_size * 1024ll;
-        const float *w_v = weight->w_attn_v + 1ll * l * config->hidden_size * 1024ll;
+        const float *w_q = weight->w_attn_q + 1ll * l * hidden_size * hidden_size;
+        const float *w_k = weight->w_attn_k + 1ll * l * hidden_size * kv_dim;
+        const float *w_v = weight->w_attn_v + 1ll * l * hidden_size * kv_dim;
         
         linear(
-            state->t, w_q, nullptr, state->q, 1, 2048, config->hidden_size, true
+            state->t, w_q, nullptr, state->q, 1, hidden_size, hidden_size, true
         );
         linear(
-            state->t, w_k, nullptr, state->k, 1, 1024, config->hidden_size, true
+            state->t, w_k, nullptr, state->k, 1, kv_dim, hidden_size, true
         );
         linear(
-            state->t, w_v, nullptr, state->v, 1, 1024, config->hidden_size, true
+            state->t, w_v, nullptr, state->v, 1, kv_dim, hidden_size, true
         );
-
-        #ifdef DEBUG
-            printf("finish linear qkv layer %d\n", l);
-            fflush(stdout);
-            printf("state->q (CHECKED): ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->q[i]);
-            }
-            printf("\n");
-            printf("state->k (CHECKED): ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->k[i]);
-            }
-            printf("\n");
-            printf("state->v (CHECKED): ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->v[i]);
-            }
-            printf("\n");
-        #endif
 
         // QK RMSNorm
         for (int h = 0; h < config->num_attention_heads; h++) {
@@ -305,21 +245,6 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             }
         }
 
-        #ifdef DEBUG
-            printf("finish norm qk layer %d\n", l);
-            fflush(stdout);
-            printf("state->q: ");
-            for (int i = 0; i < 2048; i++) {
-                printf("%.6f ", state->q[i]);
-            }
-            printf("\n");
-            printf("state->k: ");
-            for (int i = 0; i < 1024; i++) {
-                printf("%.6f ", state->k[i]);
-            }
-            printf("\n");
-        #endif
-
         // Apply Rotary Position Embeddings
         apply_rotary(
             state->q, state->cos_tensor, state->sin_tensor,
@@ -330,37 +255,10 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             config->num_key_value_heads, head_dim, pos
         );
 
-        #ifdef DEBUG
-            printf("finish apply rotary layer %d\n", l);
-            fflush(stdout);
-            printf("state->q: ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->q[i]);
-            }
-            printf("\n");
-            printf("state->k: ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->k[i]);
-            }
-            printf("\n");
-
-            if (pos == 1) exit(1);
-        #endif
-
         // Store k, v in cache - FIXED VERSION
         long long loff_cache = loff + pos * kv_dim;  // Position offset within layer
         memcpy(state->key_cache + loff_cache, state->k, kv_dim * sizeof(float));
         memcpy(state->value_cache + loff_cache, state->v, kv_dim * sizeof(float));
-
-        #ifdef DEBUG
-            printf("KV cache stored at layer %d, pos %d, offset %lld\n", l, pos, loff_cache);
-            printf("Stored k (first 3): %.6f %.6f %.6f\n", 
-                   state->key_cache[loff_cache],
-                   state->key_cache[loff_cache + 1],
-                   state->key_cache[loff_cache + 2]);
-            printf("Original k (first 3): %.6f %.6f %.6f\n",
-                   state->k[0], state->k[1], state->k[2]);
-        #endif
 
         // Multi-head attention
         int kv_mul = config->num_attention_heads / config->num_key_value_heads;  // integer multiplier for GQA
@@ -373,16 +271,6 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             kv_dim, seq_len, pos
         );
 
-        #ifdef DEBUG
-            printf("finish attn_scores_all_heads layer %d\n", l);
-            fflush(stdout);
-            printf("state->att (first head, first 5 scores): ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->att[i]);
-            }
-            printf("\n");
-        #endif
-
         // Compute weighted sum of values
         attn_weighted_sum_all_heads(
             state->value_cache, state->q, state->att, state->qkv_out, 
@@ -391,173 +279,65 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             kv_dim, seq_len, pos
         );
 
-        #ifdef DEBUG
-            printf("finish attn_weighted_sum_all_heads layer %d\n", l);
-            fflush(stdout);
-            printf("state->qkv_out: ");
-            for (int i = 0; i < 129; i++) {
-                printf("%.6f ", state->qkv_out[i]);
-            }
-            printf("\n");
-        #endif
-
         // Output projection
-        const float *w_out_proj = weight->w_attn_o + 1ll * l * config->hidden_size * config->hidden_size;
+        const float *w_out_proj = weight->w_attn_o + 1ll * l * hidden_size * hidden_size;
         linear(
             state->qkv_out, w_out_proj, nullptr, state->attn_out, 1,
-            config->hidden_size, config->hidden_size, true
+            hidden_size, hidden_size, true
         );
-
-        #ifdef DEBUG
-            printf("finish w_out_proj layer %d\n", l);
-            fflush(stdout);
-            printf("state->attn_out: ");
-            for (int i = 0; i < 129; i++) {
-                printf("%.6f ", state->attn_out[i]);
-            }
-            printf("\n");
-            if (pos == 1) exit(1);
-        #endif
 
         // Residual connection 1
         add_vector(
-            state->x, state->attn_out, config->hidden_size
+            state->x, state->attn_out, hidden_size
         );
-
-        #ifdef DEBUG
-            printf("finish attn residual layer %d\n", l);
-            fflush(stdout);
-            printf("state->x: ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->x[i]);
-            }
-            printf("\n");
-        #endif
 
         // Post-attention RMSNorm
         rms_norm(
             state->x, weight->rms_attn_w, state->t,
-            config->rms_norm_eps, config->hidden_size, 1ll * l
+            config->rms_norm_eps, hidden_size, 1ll * l
         );
 
-        #ifdef DEBUG
-            printf("finish attn rms_norm layer %d\n", l);
-            fflush(stdout);
-            printf("state->t: ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->t[i]);
-            }
-            printf("\n");
-        #endif
-
         // MLP: Gate and Up projections
-        const float *w_gate = weight->w_mlp_gate + 1ll * l * config->intermediate_size * config->hidden_size;
-        const float *w_up = weight->w_mlp_up + 1ll * l * config->intermediate_size * config->hidden_size;
+        const float *w_gate = weight->w_mlp_gate + 1ll * l * config->intermediate_size * hidden_size;
+        const float *w_up = weight->w_mlp_up + 1ll * l * config->intermediate_size * hidden_size;
         linear(
             state->t, w_gate, nullptr, state->gate, 1,
-            config->intermediate_size, config->hidden_size, true
+            config->intermediate_size, hidden_size, true
         );
         linear(
             state->t, w_up, nullptr, state->up, 1,
-            config->intermediate_size, config->hidden_size, true
+            config->intermediate_size, hidden_size, true
         );
-
-        #ifdef DEBUG
-            printf("finish gate up layer %d\n", l);
-            fflush(stdout);
-            printf("state->gate: ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->gate[i]);
-            }
-            printf("\n");
-            printf("state->up: ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->up[i]);
-            }
-            printf("\n");
-        #endif
-
+        
         // SwiGLU activation
         swiglu(
             state->gate, state->up, state->gate_up, config->intermediate_size
         );
 
-        #ifdef DEBUG
-            printf("finish swiglu gate up layer %d\n", l);
-            fflush(stdout);
-            printf("state->gate_up: ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->gate_up[i]);
-            }
-            printf("\n");
-        #endif
-
         // MLP: Down projection
-        const float *w_down = weight->w_mlp_down + 1ll * l * config->intermediate_size * config->hidden_size;
+        const float *w_down = weight->w_mlp_down + 1ll * l * config->intermediate_size * hidden_size;
         linear(
             state->gate_up, w_down, nullptr, state->down, 1,
-            config->hidden_size, config->intermediate_size, true
+            hidden_size, config->intermediate_size, true
         );
-
-        #ifdef DEBUG
-            printf("finish down layer %d\n", l);
-            fflush(stdout);
-            printf("state->down: ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->down[i]);
-            }
-            printf("\n");
-        #endif
 
         // Residual connection 2
         add_vector(
-            state->x, state->down, config->hidden_size
+            state->x, state->down, hidden_size
         );
-
-        #ifdef DEBUG
-            printf("finish residual end layer %d\n", l);
-            fflush(stdout);
-            printf("state->x: ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", state->x[i]);
-            }
-            printf("\n");
-        #endif
     }
 
     // Final RMSNorm
     rms_norm(
         state->x, weight->rms_out_w, state->x, config->rms_norm_eps,
-        config->hidden_size, 0ll
+        hidden_size, 0ll
     );
-
-    #ifdef DEBUG
-        printf("finish rms_norm final, pos %d\n", pos);
-        fflush(stdout);
-        printf("state->x: ");
-        for (int i = 0; i < 5; i++) {
-            printf("%.6f ", state->x[i]);
-        }
-        printf("\n");
-    #endif
 
     // Classifier (LM Head)
     classifier_gemm(
         weight->token_embedding_table, state->x, state->logits,
-        config->vocab_size, config->hidden_size
+        config->vocab_size, hidden_size
     );
-
-    #ifdef DEBUG
-        printf("finish classifier_gemm\n");
-        fflush(stdout);
-        printf("state->logits (first 5): ");
-        for (int i = 0; i < 5; i++) {
-            printf("%.6f ", state->logits[i]);
-        }
-        printf("\n");
-
-        if (pos > 2) exit(1);
-    #endif
 
     return state->logits;
 }
