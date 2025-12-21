@@ -13,8 +13,8 @@ void free_model_config(QwenConfig *config);
 void free_model_weights(QwenWeight* weights);
 void free_model_run_state(QwenRunState* state);
 void qwen_rope_precompute(
-    float *cos_all_out,  // (seq_len * head_dim/2)
-    float *sin_all_out,  // (seq_len * head_dim/2)
+    Tensor *cos_all_out,  // (seq_len * head_dim/2)
+    Tensor *sin_all_out,  // (seq_len * head_dim/2)
     const QwenConfig *config
 );
-void qwen_vision_rope_precompute(float *cos_tensor, float *sin_tensor, const QwenConfig *config);
+void qwen_vision_rope_precompute(Tensor *cos_tensor, Tensor *sin_tensor, const QwenConfig *config);

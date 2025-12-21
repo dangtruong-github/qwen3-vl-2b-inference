@@ -1,22 +1,27 @@
 #include "../include/layer.hpp"
 
 void embedding_lookup(
-    const float *embedding /*[vocab, hidden]*/,
-    int token_id, float *out /*[hidden]*/,
+    const Tensor *embedding /*[vocab, hidden]*/,
+    int token_id, Tensor *out /*[hidden]*/,
     size_t vocab_size, size_t hidden_size
 ) {
-    memcpy(out, embedding + token_id * hidden_size, hidden_size * sizeof(float));
+    memcpy(
+        out->buf, (const float *)embedding->buf + token_id * hidden_size,
+        hidden_size * sizeof(float)
+    );
 }
 
 void rms_norm(
-    const float *x /*[hidden]*/, const float *scale /*[layers, hidden]*/,
+    const float *x /*[hidden]*/, const Tensor *scale /*[layers, hidden]*/,
     float *out /*[hidden]*/, float eps, size_t hidden_size, size_t layer_offset
 ) {
-    const float *scale_buf = scale + 1ll * layer_offset * hidden_size;
+    const float *scale_buf = (const float *)scale->buf + 1ll * layer_offset * hidden_size;
+    const float *x_buf = (const float *)x;
+    float *out_buf = (float *)out;
     // calculate sum of squares
     double ss = 0.0;
     for (size_t j = 0; j < hidden_size; j++) {
-        ss += x[j] * x[j];
+        ss += x_buf[j] * x_buf[j];
     }
     // printf("Finish get ss\n");
     // fflush(stdout);
@@ -25,53 +30,42 @@ void rms_norm(
     ss = 1.0 / sqrt(ss);
     // normalize and scale
     for (size_t j = 0; j < hidden_size; j++) {
-        out[j] = scale_buf[j] * (ss * x[j]);
+        out_buf[j] = scale_buf[j] * (ss * x_buf[j]);
     }
     // printf("Finish out\n");
     // fflush(stdout);
 }
 
 void classifier_gemm(
-    const float *embedding /*[vocab, hidden]*/,
-    const float *hid_states /*[hidden]*/, float *logits /*[vocab]*/,
+    const Tensor *embedding /*[vocab, hidden]*/,
+    const Tensor *hid_states /*[hidden]*/, Tensor *logits /*[vocab]*/,
     size_t vocab_size, size_t hidden_size
 ) {
     linear(
-        hid_states, embedding, nullptr, logits,
-        1, vocab_size, hidden_size, true
+        (const float *)hid_states->buf, (const float *)embedding->buf, nullptr, 
+        (float *)logits->buf, 1, vocab_size, hidden_size, true
     );
 }
 
-void qkv_project(
-    const float *x /*[hidden]*/,
-    const float *W_qkv /*[(n_q+2*n_kv)*hd, hidden]*/,
-    const float *b_qkv /*[(n_q+2*n_kv)*hd]*/,
-    float *qkv /*[(n_q+2*n_kv)*hd]*/,
-    size_t hidden, size_t n_q, size_t n_kv, size_t layer_offset
-) {
-    const size_t nq_kv_hd = 1ll * n_q + 2ll * n_kv;
-
-    const float *w_qkv_ptr = W_qkv + 1ll * layer_offset * nq_kv_hd * hidden;
-    const float *b_qkv_ptr = b_qkv + 1ll * layer_offset * nq_kv_hd;
-
-    linear(x, w_qkv_ptr, b_qkv_ptr, qkv, 1, nq_kv_hd, hidden, true);
-}
-
-void add_vector(float *add_to, const float *add_from, size_t size_vec) {
+void add_vector(Tensor *add_to, const Tensor *add_from, size_t size_vec) {
+    float *add_to_buf = (float *)add_to->buf;
+    const float *add_from_buf = (const float *)add_from->buf;
     for (size_t i = 0; i < size_vec; i++) {
-        add_to[i] += add_from[i];
+        add_to_buf[i] += add_from_buf[i];
     }
 }
 
 void swiglu(
-    float *gate,  // [d]
-    const float *up,    // [d]
+    Tensor *gate,  // [d]
+    const Tensor *up,    // [d]
     size_t size_vec
 ) {
+    float *gate_buf = (float *)gate->buf;
+    const float *up_buf = (const float *)up->buf;
     for (size_t i = 0; i < size_vec; i++) {
-        float x = gate[i];
+        float x = gate_buf[i];
         float silu = x / (1.0f + expf(-x));  // SiLU(x) = x * sigmoid(x)
-        gate[i] = silu * up[i];               // SwiGLU = SiLU(gate) * up
+        gate_buf[i] = silu * up_buf[i];               // SwiGLU = SiLU(gate) * up
     }
 }
 
@@ -102,17 +96,17 @@ void softmax(float *x, size_t size) {
 // **FIXED** attn_scores_all_heads function:
 // Changed signature to remove loff_one and calculate offset internally.
 void attn_scores_all_heads(
-    const float *key_cache, const float *q, float *att,
+    const Tensor *key_cache, const Tensor *q, Tensor *att,
     size_t layer_offset, size_t attn_heads, int kv_mul, int head_dim,
     int kv_dim, int seq_len, int pos
 ) {
     // Calculate the start of the current layer in the cache
     long long layer_cache_start = 1ll * layer_offset * seq_len * kv_dim;
-    const float *key_cache_layer = key_cache + 1ll * layer_cache_start;
+    const float *key_cache_layer = (const float *)key_cache->buf + 1ll * layer_cache_start;
 
     for (int h = 0; h < attn_heads; h++) {
-        const float *q_head = q + h * head_dim;
-        float *att_head = att + h * seq_len;
+        const float *q_head = (const float *)q->buf + h * head_dim;
+        float *att_head = (float *)att->buf + h * seq_len;
         int kv_head_idx = h / kv_mul;
 
         // Compute attention scores
@@ -138,30 +132,21 @@ void attn_scores_all_heads(
 // This function was already correct. 'loff' passed from forward_text
 // corresponds to the layer_cache_start.
 void attn_weighted_sum_all_heads(
-    const float *value_cache, const float *q, const float *att, float *tb,
+    const Tensor *value_cache, const Tensor *att, Tensor *tb,
     size_t loff, int attn_heads, int kv_mul, int head_dim, int kv_dim,
     int seq_len, int pos
 ) {
     // Initialize output to zero
-    memset(tb, 0, attn_heads * head_dim * sizeof(float));
+    memset(tb->buf, 0, 1ll * attn_heads * head_dim * sizeof(float));
 
     for (int h = 0; h < attn_heads; h++) {
-        const float *att_head = att + h * seq_len;
+        const float *att_head = (const float *)att->buf + h * seq_len;
         int kv_head_idx = h / kv_mul;
-        float *tb_head = tb + h * head_dim;
+        float *tb_head = (float *)tb->buf + h * head_dim;
 
         for (int t = 0; t <= pos; t++) {
             // FIX: Correct value cache indexing
-            const float *v = value_cache + loff + t * kv_dim + kv_head_idx * head_dim;
-
-            #ifdef DEBUG
-                printf("V cache Inside Layer %zu, Head %d, Time %d\n", loff, h, t);
-                printf("v_head: ");
-                for (int i = 0; i < 5; i++) {
-                    printf("%.6f ", v[i]);
-                }
-                printf("\n");
-            #endif
+            const float *v = (const float *)value_cache->buf + loff + t * kv_dim + kv_head_idx * head_dim;
 
             float a = att_head[t];
             for (int i = 0; i < head_dim; i++) {
@@ -172,11 +157,14 @@ void attn_weighted_sum_all_heads(
 }
 
 void apply_rotary(
-    float *x /*[n_heads*hd]*/, const float *cos_table /*[seq_len*hd/2]*/,
-    const float *sin_table /*[seq_len*hd/2]*/, int n_heads, int head_dim,
+    float *x /*[n_heads*hd]*/, const Tensor *cos_table /*[seq_len*hd/2]*/,
+    const Tensor *sin_table /*[seq_len*hd/2]*/, int n_heads, int head_dim,
     int pos
 ) {
     int half = head_dim / 2;
+    const float *cos_buf = (const float *)cos_table->buf;
+    const float *sin_buf = (const float *)sin_table->buf;
+    float *x_buf = (float *)x;
 
     for (int h = 0; h < n_heads; h++) {
         for (int i = 0; i < half; i++) {
@@ -184,36 +172,38 @@ void apply_rotary(
             // Calculate the index to look up the cos/sin values for the given position.
             // The tables are logically 2D [pos, i], so the 1D index is pos * (width) + i.
             int rope_idx = pos * half + i;
-            float c = cos_table[rope_idx];
-            float s = sin_table[rope_idx];
+            float c = cos_buf[rope_idx];
+            float s = sin_buf[rope_idx];
 
             // --- The rotation logic remains the same ---
             // Indexing for the input tensor: head h, dim i
             int x_idx1 = h * head_dim + i;         // first half
             int x_idx2 = h * head_dim + half + i;  // second half
 
-            float x1 = x[x_idx1];
-            float x2 = x[x_idx2];
+            float x1 = x_buf[x_idx1];
+            float x2 = x_buf[x_idx2];
 
             // Apply the 2D rotation
             float o1 = x1 * c - x2 * s;
             float o2 = x2 * c + x1 * s;
 
             // Write the results back
-            x[x_idx1] = o1;
-            x[x_idx2] = o2;
+            x_buf[x_idx1] = o1;
+            x_buf[x_idx2] = o2;
         }
     }
 }
 
 void conv_3d(
-    const float *conv_w, const float *conv_b, float *in_img, float *out_img,
+    const Tensor *conv_w, const Tensor *conv_b, float *in_img, float *out_img,
     long img_h, long VC, long VTP, long VP, long VH
 ) {
     // Total size of the VTP * VP * VP plane
     const long PLANE_SIZE = VTP * VP * VP;
     // Total size of the VC * VTP * VP * VP feature block
     const long FEATURE_BLOCK_SIZE = VC * PLANE_SIZE;
+
+    const float *conv_b_buf = (const float *)conv_b->buf;
 
     // --- Outer loop: Iterate over the 'batch' dimension (img_h) ---
     for (long i = 0; i < img_h; ++i) {
@@ -225,7 +215,7 @@ void conv_3d(
             float accumulator = 0.0f;
 
             // Pointer to the current kernel slice (VC * VTP * VP * VP) for this output channel
-            const float *kernel_slice_ptr = conv_w + h * FEATURE_BLOCK_SIZE;
+            const float *kernel_slice_ptr = (const float *)conv_w->buf + h * FEATURE_BLOCK_SIZE;
 
             // --- Innermost loop: Perform the dot product (contraction) ---
             // This loop iterates over the flattened feature block (VC * VTP * VP * VP)
@@ -235,12 +225,12 @@ void conv_3d(
 
             // Add the bias and store the result
             // Output index: i * VH + h
-            out_img[i * VH + h] = accumulator + conv_b[h];
+            out_img[i * VH + h] = accumulator + conv_b_buf[h];
         }
     }
 }
 
-void vision_pos_embed(const float *pos_embed_w, float *x_embed, int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH) {
+void vision_pos_embed(const Tensor *pos_embed_w, float *x_embed, int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH) {
     if (grid_h <= 0 || grid_w <= 0 || num_grid_per_side <= 0) {
         return;
     }
@@ -365,7 +355,7 @@ void vision_pos_embed(const float *pos_embed_w, float *x_embed, int grid_h, int 
         for (int k = 0; k < 4; ++k) {
 
             long source_index = idx_list_mem[k][i];
-            const float *pos_embed_w_idx_start = pos_embed_w + (source_index * VH);
+            const float *pos_embed_w_idx_start = (const float *)pos_embed_w->buf + (source_index * VH);
 
             float weight = weight_list_mem[k][i];
 
@@ -507,16 +497,17 @@ void vision_rot_pos_emb(
 
 void layer_norm(
     const float *x,           /* [hidden] */
-    const float *scale,       /* [layers, hidden] */
-    const float *bias,        /* [layers, hidden] */
+    const Tensor *scale,       /* [layers, hidden] */
+    const Tensor *bias,        /* [layers, hidden] */
     float *out,               /* [hidden] */
     float eps, 
     size_t hidden_size, 
     size_t layer_offset
 ) {
     // 1. Pointers to current layer's weights
-    const float *scale_buf = scale + (long long)layer_offset * hidden_size;
-    const float *bias_buf = (bias != NULL) ? (bias + (long long)layer_offset * hidden_size) : NULL;
+    const size_t offset = 1ll * layer_offset * hidden_size;
+    const float *scale_buf = (const float *)scale->buf + offset;
+    const float *bias_buf = (bias != NULL) ? ((const float *)bias->buf + offset) : NULL;
 
     // 2. Calculate Mean
     float mean = 0.0f;
@@ -546,52 +537,6 @@ void layer_norm(
     } else {
         for (size_t j = 0; j < hidden_size; j++) {
             out[j] = (x[j] - mean) * inv_std * scale_buf[j];
-        }
-    }
-}
-
-void vision_apply_rotary(
-    const float *cos_tensor, // shape (total_tokens, head_dim)
-    const float *sin_tensor, // shape (total_tokens, head_dim)
-    const float *in, // shape (total_tokens, num_heads, head_dim)
-    float *out, // shape (total_tokens, num_heads, head_dim)
-    long total_tokens, int num_heads, int head_dim
-) {
-    const int half_dim = head_dim / 2;
-    const int head_size = head_dim;
-
-    for (long i = 0; i < total_tokens * num_heads; ++i) {
-        const long head_start_idx = i * head_size;
-        const long token_index = i / num_heads;
-        
-        // Cos/sin offset should be token_index * head_dim (not half_dim)
-        const long cos_sin_offset = token_index * head_dim;
-
-        const float *current_in = in + head_start_idx;
-        float *current_out = out + head_start_idx;
-        const float *current_cos = cos_tensor + cos_sin_offset;
-        const float *current_sin = sin_tensor + cos_sin_offset;
-
-        // Process all dimensions in one pass
-        for (int m = 0; m < half_dim; ++m) {
-            const float x1 = current_in[m];
-            const float x2 = current_in[m + half_dim];
-            
-            // For the first half: use cos[m] and sin[m]
-            const float cos_val_first = current_cos[m];
-            const float sin_val_first = current_sin[m];
-            
-            // For the second half: we need the corresponding cos/sin values
-            // In Python's rotate_half, x1 becomes -x2 and x2 becomes x1
-            // So for the second half output, we use the cos/sin values at m+half_dim
-            const float cos_val_second = current_cos[m + half_dim];
-            const float sin_val_second = current_sin[m + half_dim];
-            
-            // First half: (x1 * cos[m]) + ((-x2) * sin[m])
-            current_out[m] = (x1 * cos_val_first) + (-x2 * sin_val_first);
-            
-            // Second half: (x2 * cos[m+half_dim]) + (x1 * sin[m+half_dim])
-            current_out[m + half_dim] = (x2 * cos_val_second) + (x1 * sin_val_second);
         }
     }
 }

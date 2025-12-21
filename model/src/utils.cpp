@@ -106,14 +106,19 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
 
         int first_token_recorded = 0;
 
-        // if (!img_true) continue;
-        // if (sample_count <= 3) continue;
+        if (!img_true) continue;
+        if (sample_count <= 3) continue;
+
+        printf("state->vision_mlp_out->owns_host_buf=%d\n", state->vision_mlp_out->owns_host_buf);
+        state->vision_mlp_out->printShape("state->vision_mlp_out");
+        fflush(stdout);
 
         if (img_true) {
             forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
         }
 
         printf("Finish forward images\n");
+        printf("max_seq_len=%d, input_count=%d\n", max_seq_len, input_count);
         fflush(stdout);
         
         // ------------------------------------------------------------

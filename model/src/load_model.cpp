@@ -37,7 +37,7 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
         fclose(file);
         return;
     }
-    config->seq_len = 1024;
+    config->seq_len = 3072;
     config->mrope_section = (int *)malloc(3 * sizeof(int));
     config->mrope_section[0] = 24;
     config->mrope_section[1] = 20;
@@ -60,28 +60,29 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     // ==================================================================================
     // 2. Derived Dimensions
     // ==================================================================================
-    int head_dim = config->hidden_size / config->num_attention_heads;
-    int vision_head_dim = config->vision_hidden_size / config->vision_num_heads;
-    int vision_qkv_dim = 3 * config->vision_num_heads * vision_head_dim;
-    int num_deepstack_mergers = 3;
+    size_t head_dim = config->hidden_size / config->num_attention_heads;
+    size_t vision_head_dim = config->vision_hidden_size / config->vision_num_heads;
+    size_t vision_qkv_dim = 3 * config->vision_num_heads * vision_head_dim;
+    size_t num_deepstack_mergers = 3;
 
-    long L  = config->num_hidden_layers;
-    long H  = config->hidden_size;
-    long I  = config->intermediate_size;
-    long QD = config->num_attention_heads * head_dim;
-    long KVAD = config->num_key_value_heads * head_dim;
+    size_t L  = config->num_hidden_layers;
+    size_t H  = config->hidden_size;
+    size_t I  = config->intermediate_size;
+    size_t QD = config->num_attention_heads * head_dim;
+    size_t KVAD = config->num_key_value_heads * head_dim;
 
-    long VH = config->vision_hidden_size;
-    long VP = config->vision_patch_size;
-    long VTP = config->vision_temporal_patch_size;
-    long VD = config->vision_depth;
-    long VI = config->vision_intermediate_size;
-    long OH = config->out_hidden_size;
-    long VC = config->vision_num_channels;
-    long VNPE = config->max_vision_embeddings;
-    long VDSD = config->vision_deep_stack_depth;
-    long QKVD = vision_qkv_dim;
-    int M = num_deepstack_mergers;
+    size_t VH = config->vision_hidden_size;
+    size_t VP = config->vision_patch_size;
+    size_t VTP = config->vision_temporal_patch_size;
+    size_t VD = config->vision_depth;
+    size_t VI = config->vision_intermediate_size;
+    size_t OH = config->out_hidden_size;
+    size_t VC = config->vision_num_channels;
+    size_t VNPE = config->max_vision_embeddings;
+    size_t VDSD = config->vision_deep_stack_depth;
+    size_t QKVD = vision_qkv_dim;
+    size_t vocab_size = config->vocab_size;
+    size_t M = num_deepstack_mergers;
 
     // ==================================================================================
     // 3. Allocate + Read + Print (Preserve fread order)
@@ -91,261 +92,263 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     // EDIT THE CODE FROM THIS TO THE END OF THE FUNCTION
 
     // --- embed_tokens.weight
-    tmp_ptr = (float*)malloc((long)config->vocab_size * H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), (long)config->vocab_size * H, file);
-    printf("Shape of token_embedding_table (embed_tokens.weight): (%d, %ld)\n", config->vocab_size, H);
-    weights->token_embedding_table = (const float *)tmp_ptr;
+    tmp_ptr = (float*)malloc(vocab_size * H * sizeof(float));
+    fread(tmp_ptr, sizeof(float), vocab_size * H, file);
+    weights->token_embedding_table = new Tensor({vocab_size, H}, tmp_ptr);
+    weights->token_embedding_table->printShape("token_embedding_table (embed_tokens.weight)");
     tmp_ptr = nullptr;
 
     // --- input_layernorm.weight
     tmp_ptr = (float*)malloc(L * H * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * H, file);
-    printf("Shape of rms_ffn_w (input_layernorm.weight): (%ld, %ld)\n", L, H);
-    weights->rms_ffn_w = (const float *)tmp_ptr;
+    weights->rms_ffn_w = new Tensor({L, H}, tmp_ptr);
+    weights->rms_ffn_w->printShape("rms_ffn_w (input_layernorm.weight)");
     tmp_ptr = nullptr;
 
     // --- mlp.down_proj.weight
     tmp_ptr = (float*)malloc(L * H * I * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * H * I, file);
-    printf("Shape of w_mlp_down (mlp.down_proj.weight): (%ld, %ld, %ld)\n", L, H, I);
-    weights->w_mlp_down = (const float *)tmp_ptr;
+    weights->w_mlp_down = new Tensor({L, H, I}, tmp_ptr);
+    weights->w_mlp_down->printShape("w_mlp_down (mlp.down_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- mlp.gate_proj.weight
     tmp_ptr = (float*)malloc(L * I * H * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * I * H, file);
-    printf("Shape of w_mlp_gate (mlp.gate_proj.weight): (%ld, %ld, %ld)\n", L, I, H);
-    weights->w_mlp_gate = (const float *)tmp_ptr;
+    weights->w_mlp_gate = new Tensor({L, I, H}, tmp_ptr);
+    weights->w_mlp_gate->printShape("w_mlp_gate (mlp.gate_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- mlp.up_proj.weight
     tmp_ptr = (float*)malloc(L * I * H * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * I * H, file);
-    printf("Shape of w_mlp_up (mlp.up_proj.weight): (%ld, %ld, %ld)\n", L, I, H);
-    weights->w_mlp_up = (const float *)tmp_ptr;
+    weights->w_mlp_up = new Tensor({L, I, H}, tmp_ptr);
+    weights->w_mlp_up->printShape("w_mlp_up (mlp.up_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- post_attention_layernorm.weight
     tmp_ptr = (float*)malloc(L * H * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * H, file);
-    printf("Shape of rms_attn_w (post_attention_layernorm.weight): (%ld, %ld)\n", L, H);
-    weights->rms_attn_w = (const float *)tmp_ptr;
+    weights->rms_attn_w = new Tensor({L, H}, tmp_ptr);
+    weights->rms_attn_w->printShape("rms_attn_w (post_attention_layernorm.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.k_norm.weight
     tmp_ptr = (float*)malloc(L * 1ll * head_dim * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * 1ll * head_dim, file);
-    printf("Shape of w_attn_k_norm (self_attn.k_norm.weight): (%ld, %d)\n", L, head_dim);
-    weights->w_attn_k_norm = (const float *)tmp_ptr;
+    weights->w_attn_k_norm = new Tensor({L, 1ll * head_dim}, tmp_ptr);
+    weights->w_attn_k_norm->printShape("w_attn_k_norm (self_attn.k_norm.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.k_proj.weight
     tmp_ptr = (float*)malloc(L * KVAD * H * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * KVAD * H, file);
-    printf("Shape of w_attn_k (self_attn.k_proj.weight): (%ld, %ld, %ld)\n", L, KVAD, H);
-    weights->w_attn_k = (const float *)tmp_ptr;
+    weights->w_attn_k = new Tensor({L, KVAD, H}, tmp_ptr);
+    weights->w_attn_k->printShape("w_attn_k (self_attn.k_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.o_proj.weight
     tmp_ptr = (float*)malloc(L * H * H * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * H * H, file);
-    printf("Shape of w_attn_o (self_attn.o_proj.weight): (%ld, %ld, %ld)\n", L, H, H);
-    weights->w_attn_o = (const float *)tmp_ptr;
+    weights->w_attn_o = new Tensor({L, H, H}, tmp_ptr);
+    weights->w_attn_o->printShape("w_attn_o (self_attn.o_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.q_norm.weight
     tmp_ptr = (float*)malloc(L * head_dim * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * head_dim, file);
-    printf("Shape of w_attn_q_norm (self_attn.q_norm.weight): (%ld, %ld)\n", L, head_dim);
-    weights->w_attn_q_norm = (const float *)tmp_ptr;
+    weights->w_attn_q_norm = new Tensor({L, head_dim}, tmp_ptr);
+    weights->w_attn_q_norm->printShape("w_attn_q_norm (self_attn.q_norm.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.q_proj.weight
     tmp_ptr = (float*)malloc(L * QD * H * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * QD * H, file);
-    printf("Shape of w_attn_q (self_attn.q_proj.weight): (%ld, %ld, %ld)\n", L, QD, H);
-    weights->w_attn_q = (const float *)tmp_ptr;
+    weights->w_attn_q = new Tensor({L, QD, H}, tmp_ptr);
+    weights->w_attn_q->printShape("w_attn_q (self_attn.q_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.v_proj.weight
     tmp_ptr = (float*)malloc(L * KVAD * H * sizeof(float));
     fread(tmp_ptr, sizeof(float), L * KVAD * H, file);
-    printf("Shape of w_attn_v (self_attn.v_proj.weight): (%ld, %ld, %ld)\n", L, KVAD, H);
-    weights->w_attn_v = (const float *)tmp_ptr;
+    weights->w_attn_v = new Tensor({L, KVAD, H}, tmp_ptr);
+    weights->w_attn_v->printShape("w_attn_v (self_attn.v_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- final layernorm.weight
     tmp_ptr = (float*)malloc(H * sizeof(float));
     fread(tmp_ptr, sizeof(float), H, file);
-    printf("Shape of rms_out_w (final_layernorm.weight): (%ld)\n", H);
-    weights->rms_out_w = (const float *)tmp_ptr;
+    weights->rms_out_w = new Tensor({H}, tmp_ptr);
+    weights->rms_out_w->printShape("rms_out_w (final_layernorm.weight)");
     tmp_ptr = nullptr;
 
     // --- Vision model general
     tmp_ptr = (float*)malloc(VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), VH, file);
-    printf("Shape of vl_patch_emb_b: (%ld)\n", VH);
-    weights->vl_patch_emb_b = (const float *)tmp_ptr;
+    weights->vl_patch_emb_b = new Tensor({VH}, tmp_ptr);
+    weights->vl_patch_emb_b->printShape("vl_patch_emb_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(VH * VC * VTP * VP * VP * sizeof(float));
     fread(tmp_ptr, sizeof(float), VH * VC * VTP * VP * VP, file);
-    printf("Shape of vl_patch_emb_w: (%ld, %ld, %ld, %ld, %ld)\n", VH, VC, VTP, VP, VP);
-    weights->vl_patch_emb_w = (const float *)tmp_ptr;
+    weights->vl_patch_emb_w = new Tensor({VH, VC, VTP, VP, VP}, tmp_ptr);
+    weights->vl_patch_emb_w->printShape("vl_patch_emb_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VNPE * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VNPE * VH, file);
-    printf("Shape of vl_pos_emb_w: (%ld, %ld)\n", VNPE, VH);
-    weights->vl_pos_emb_w = (const float *)tmp_ptr;
+    weights->vl_pos_emb_w = new Tensor({VNPE, VH}, tmp_ptr);
+    weights->vl_pos_emb_w->printShape("vl_pos_emb_w");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
-    printf("Shape of vl_attn_proj_b: (%ld, %ld)\n", VD, VH);
-    weights->vl_attn_proj_b = (const float *)tmp_ptr;
+    weights->vl_attn_proj_b = new Tensor({VD, VH}, tmp_ptr);
+    weights->vl_attn_proj_b->printShape("vl_attn_proj_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VH * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * VH * VH, file);
-    printf("Shape of vl_attn_proj_w: (%ld, %ld, %ld)\n", VD, VH, VH);
-    weights->vl_attn_proj_w = (const float *)tmp_ptr;
+    weights->vl_attn_proj_w = new Tensor({VD, VH, VH}, tmp_ptr);
+    weights->vl_attn_proj_w->printShape("vl_attn_proj_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * 3 * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * 3 * VH, file);
-    printf("Shape of vl_attn_qkv_b: (%ld, %ld)\n", VD, 3 * VH);
-    weights->vl_attn_qkv_b = (const float *)tmp_ptr;
+    weights->vl_attn_qkv_b = new Tensor({VD, 3 * VH}, tmp_ptr);
+    weights->vl_attn_qkv_b->printShape("vl_attn_qkv_b");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VD * 3 * VH * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * 3 * VH * VH, file);
-    printf("Shape of vl_attn_qkv_w: (%ld, %ld, %ld)\n", VD, 3 * VH, VH);
-    weights->vl_attn_qkv_w = (const float *)tmp_ptr;
+    weights->vl_attn_qkv_w = new Tensor({VD, 3 * VH, VH}, tmp_ptr);
+    weights->vl_attn_qkv_w->printShape("vl_attn_qkv_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * VI, file);
-    printf("Shape of vl_mlp1_b: (%ld, %ld)\n", VD, VI);
-    weights->vl_mlp1_b = (const float *)tmp_ptr;
+    weights->vl_mlp1_b = new Tensor({VD, VI}, tmp_ptr);
+    weights->vl_mlp1_b->printShape("vl_mlp1_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VI * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * VI * VH, file);
-    printf("Shape of vl_mlp1_w: (%ld, %ld, %ld)\n", VD, VI, VH);
-    weights->vl_mlp1_w = (const float *)tmp_ptr;
+    weights->vl_mlp1_w = new Tensor({VD, VI, VH}, tmp_ptr);
+    weights->vl_mlp1_w->printShape("vl_mlp1_w");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
-    printf("Shape of vl_mlp2_b: (%ld, %ld)\n", VD, VH);
-    weights->vl_mlp2_b = (const float *)tmp_ptr;
+    weights->vl_mlp2_b = new Tensor({VD, VH}, tmp_ptr);
+    weights->vl_mlp2_b->printShape("vl_mlp2_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VH * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * VH * VI, file);
-    printf("Shape of vl_mlp2_w: (%ld, %ld, %ld)\n", VD, VH, VI);
-    weights->vl_mlp2_w = (const float *)tmp_ptr;
+    weights->vl_mlp2_w = new Tensor({VD, VH, VI}, tmp_ptr);
+    weights->vl_mlp2_w->printShape("vl_mlp2_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
-    printf("Shape of vl_norm1_b: (%ld, %ld)\n", VD, VH);
-    weights->vl_norm1_b = (const float *)tmp_ptr;
+    weights->vl_norm1_b = new Tensor({VD, VH}, tmp_ptr);
+    weights->vl_norm1_b->printShape("vl_norm1_b");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
-    printf("Shape of vl_norm1_w: (%ld, %ld)\n", VD, VH);
-    weights->vl_norm1_w = (const float *)tmp_ptr;
+    weights->vl_norm1_w = new Tensor({VD, VH}, tmp_ptr);
+    weights->vl_norm1_w->printShape("vl_norm1_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
-    printf("Shape of vl_norm2_b: (%ld, %ld)\n", VD, VH);
-    weights->vl_norm2_b = (const float *)tmp_ptr;
+    weights->vl_norm2_b = new Tensor({VD, VH}, tmp_ptr);
+    weights->vl_norm2_b->printShape("vl_norm2_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
-    printf("Shape of vl_norm2_w: (%ld, %ld)\n", VD, VH);
-    weights->vl_norm2_w = (const float *)tmp_ptr;
+    weights->vl_norm2_w = new Tensor({VD, VH}, tmp_ptr);
+    weights->vl_norm2_w->printShape("vl_norm2_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
-    printf("Shape of vl_d_mlp1_b: (%ld, %ld)\n", VDSD, VI);
-    weights->vl_d_mlp1_b = (const float *)tmp_ptr;
+    weights->vl_d_mlp1_b = new Tensor({VDSD, VI}, tmp_ptr);
+    weights->vl_d_mlp1_b->printShape("vl_d_mlp1_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI * VI, file);
-    printf("Shape of vl_d_mlp1_w: (%ld, %ld, %ld)\n", VDSD, VI, VI);
-    weights->vl_d_mlp1_w = (const float *)tmp_ptr;
+    weights->vl_d_mlp1_w = new Tensor({VDSD, VI, VI}, tmp_ptr);
+    weights->vl_d_mlp1_w->printShape("vl_d_mlp1_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * OH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * OH, file);
-    printf("Shape of vl_d_mlp2_b: (%ld, %ld)\n", VDSD, OH);
-    weights->vl_d_mlp2_b = (const float *)tmp_ptr;
+    weights->vl_d_mlp2_b = new Tensor({VDSD, OH}, tmp_ptr);
+    weights->vl_d_mlp2_b->printShape("vl_d_mlp2_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * OH * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * OH * VI, file);
-    printf("Shape of vl_d_mlp2_w: (%ld, %ld, %ld)\n", VDSD, OH, VI);
-    weights->vl_d_mlp2_w = (const float *)tmp_ptr;
+    weights->vl_d_mlp2_w = new Tensor({VDSD, OH, VI}, tmp_ptr);
+    weights->vl_d_mlp2_w->printShape("vl_d_mlp2_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
-    printf("Shape of vl_d_norm_b: (%ld, %ld)\n", VDSD, VI);
-    weights->vl_d_norm_b = (const float *)tmp_ptr;
+    weights->vl_d_norm_b = new Tensor({VDSD, VI}, tmp_ptr);
+    weights->vl_d_norm_b->printShape("vl_d_norm_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
-    printf("Shape of vl_d_norm_w: (%ld, %ld)\n", VDSD, VI);
-    weights->vl_d_norm_w = (const float *)tmp_ptr;
+    weights->vl_d_norm_w = new Tensor({VDSD, VI}, tmp_ptr);
+    weights->vl_d_norm_w->printShape("vl_d_norm_w");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VI, file);
-    printf("Shape of vl_merge_mlp1_b: (%ld)\n", VI);
-    weights->vl_merge_mlp1_b = (const float *)tmp_ptr;
+    weights->vl_merge_mlp1_b = new Tensor({VI}, tmp_ptr);
+    weights->vl_merge_mlp1_b->printShape("vl_merge_mlp1_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VI * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VI * VI, file);
-    printf("Shape of vl_merge_mlp1_w: (%ld, %ld)\n", VI, VI);
-    weights->vl_merge_mlp1_w = (const float *)tmp_ptr;
+    weights->vl_merge_mlp1_w = new Tensor({VI, VI}, tmp_ptr);
+    weights->vl_merge_mlp1_w->printShape("vl_merge_mlp1_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * OH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * OH, file);
-    printf("Shape of vl_merge_mlp2_b: (%ld)\n", OH);
-    weights->vl_merge_mlp2_b = (const float *)tmp_ptr;
+    weights->vl_merge_mlp2_b = new Tensor({OH}, tmp_ptr);
+    weights->vl_merge_mlp2_b->printShape("vl_merge_mlp2_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * OH * VI * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * OH * VI, file);
-    printf("Shape of vl_merge_mlp2_w: (%ld, %ld)\n", OH, VI);
-    weights->vl_merge_mlp2_w = (const float *)tmp_ptr;
+    weights->vl_merge_mlp2_w = new Tensor({OH, VI}, tmp_ptr);
+    weights->vl_merge_mlp2_w->printShape("vl_merge_mlp2_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VH, file);
-    printf("Shape of vl_merge_norm_b: (%ld)\n", VH);
-    weights->vl_merge_norm_b = (const float *)tmp_ptr;
+    weights->vl_merge_norm_b = new Tensor({VH}, tmp_ptr);
+    weights->vl_merge_norm_b->printShape("vl_merge_norm_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VH, file);
-    printf("Shape of vl_merge_norm_w: (%ld)\n", VH);
-    weights->vl_merge_norm_w = (const float *)tmp_ptr;
+    weights->vl_merge_norm_w = new Tensor({VH}, tmp_ptr);
+    weights->vl_merge_norm_w->printShape("vl_merge_norm_w");
     tmp_ptr = nullptr;
     
     fclose(file);
     printf("Successfully loaded model from %s\n", path);
+    fflush(stdout);
+    // exit(1);
 }
 
 void free_model_config(QwenConfig *config) {
@@ -357,200 +360,170 @@ void free_model_weights(QwenWeight* weights) {
     if (!weights) return;
 
     // Language Model Standalone Weights
-    free(const_cast<float *>(weights->token_embedding_table));
-    free(const_cast<float *>(weights->rms_out_w));
+    delete weights->token_embedding_table;
+    delete weights->rms_out_w;
 
     // Language Model Layer Weights (Continuous Blocks)
-    free(const_cast<float *>(weights->rms_ffn_w));
-    free(const_cast<float *>(weights->w_mlp_down));
-    free(const_cast<float *>(weights->w_mlp_gate));
-    free(const_cast<float *>(weights->w_mlp_up));
-    free(const_cast<float *>(weights->rms_attn_w));
-    free(const_cast<float *>(weights->w_attn_k_norm));
-    free(const_cast<float *>(weights->w_attn_k));
-    free(const_cast<float *>(weights->w_attn_o));
-    free(const_cast<float *>(weights->w_attn_q_norm));
-    free(const_cast<float *>(weights->w_attn_q));
-    free(const_cast<float *>(weights->w_attn_v));
+    delete weights->rms_ffn_w;
+    delete weights->w_mlp_down;
+    delete weights->w_mlp_gate;
+    delete weights->w_mlp_up;
+    delete weights->rms_attn_w;
+    delete weights->w_attn_k_norm;
+    delete weights->w_attn_k;
+    delete weights->w_attn_o;
+    delete weights->w_attn_q_norm;
+    delete weights->w_attn_q;
+    delete weights->w_attn_v;
 
     // Vision Model Weights (General)
-    free(const_cast<float *>(weights->vl_patch_emb_b));
-    free(const_cast<float *>(weights->vl_patch_emb_w));
-    free(const_cast<float *>(weights->vl_pos_emb_w));
-
-    free(const_cast<float *>(weights->vl_attn_proj_b));
-    free(const_cast<float *>(weights->vl_attn_proj_w));
-    free(const_cast<float *>(weights->vl_attn_qkv_b));
-    free(const_cast<float *>(weights->vl_attn_qkv_w));
-    free(const_cast<float *>(weights->vl_mlp1_b));
-    free(const_cast<float *>(weights->vl_mlp1_w));
-    free(const_cast<float *>(weights->vl_mlp2_b));
-    free(const_cast<float *>(weights->vl_mlp2_w));
-    free(const_cast<float *>(weights->vl_norm1_b));
-    free(const_cast<float *>(weights->vl_norm1_w));
-    free(const_cast<float *>(weights->vl_norm2_b));
-    free(const_cast<float *>(weights->vl_norm2_w));
-
-    free(const_cast<float *>(weights->vl_d_mlp1_b));
-    free(const_cast<float *>(weights->vl_d_mlp1_w));
-    free(const_cast<float *>(weights->vl_d_mlp2_b));
-    free(const_cast<float *>(weights->vl_d_mlp2_w));
-    free(const_cast<float *>(weights->vl_d_norm_b));
-    free(const_cast<float *>(weights->vl_d_norm_w));
-
-    free(const_cast<float *>(weights->vl_merge_mlp1_b));
-    free(const_cast<float *>(weights->vl_merge_mlp1_w));
-    free(const_cast<float *>(weights->vl_merge_mlp2_b));
-    free(const_cast<float *>(weights->vl_merge_mlp2_w));
-    free(const_cast<float *>(weights->vl_merge_norm_b));
-    free(const_cast<float *>(weights->vl_merge_norm_w));
+    delete weights->vl_patch_emb_b;
+    delete weights->vl_patch_emb_w;
+    delete weights->vl_pos_emb_w;
     
-    // Set the struct memory to zero to prevent accidental double-free attempts
-    memset(weights, 0, sizeof(QwenWeight)); 
+    delete weights->vl_attn_proj_b;
+    delete weights->vl_attn_proj_w;
+    delete weights->vl_attn_qkv_b;
+    delete weights->vl_attn_qkv_w;
+    delete weights->vl_mlp1_b;
+    delete weights->vl_mlp1_w;
+    delete weights->vl_mlp2_b;
+    delete weights->vl_mlp2_w;
+    delete weights->vl_norm1_b;
+    delete weights->vl_norm1_w;
+    delete weights->vl_norm2_b;
+    delete weights->vl_norm2_w;
+    
+    delete weights->vl_d_mlp1_b;
+    delete weights->vl_d_mlp1_w;
+    delete weights->vl_d_mlp2_b;
+    delete weights->vl_d_mlp2_w;
+    delete weights->vl_d_norm_b;
+    delete weights->vl_d_norm_w;
+    
+    delete weights->vl_merge_mlp1_b;
+    delete weights->vl_merge_mlp1_w;
+    delete weights->vl_merge_mlp2_b;
+    delete weights->vl_merge_mlp2_w;
+    delete weights->vl_merge_norm_b;
+    delete weights->vl_merge_norm_w;
 }
 
 void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
-    memset(state, 0, sizeof(QwenRunState));
     state->vision_embed_tokens = 0;
 
-    int H   = config->hidden_size;
-    int I   = config->intermediate_size;
-    int V   = config->vocab_size;
-    int L   = config->num_hidden_layers;
-    int NH  = config->num_attention_heads;
-    int NKV = config->num_key_value_heads;
-    int D   = H / NH;
-    int S   = config->seq_len;
+    size_t H   = config->hidden_size;
+    size_t I   = config->intermediate_size;
+    size_t V   = config->vocab_size;
+    size_t L   = config->num_hidden_layers;
+    size_t NH  = config->num_attention_heads;
+    size_t NKV = config->num_key_value_heads;
+    size_t D   = H / NH;
+    size_t S   = config->seq_len;
 
-    int VH = config->vision_hidden_size;
-    int VNP = config->max_vision_embeddings;
-    int VD = VH / config->vision_num_heads;
-    int VI = config->vision_intermediate_size;
-
-    size_t cache_size = (size_t)L * S * NKV * D * sizeof(float);
+    size_t VH = config->vision_hidden_size;
+    size_t VNP = config->max_vision_embeddings;
+    size_t VD = VH / config->vision_num_heads;
+    size_t VI = config->vision_intermediate_size;
 
     // ---- Hidden / intermediate ----
-    state->x = (float*)malloc(H * sizeof(float));
-    CHECK_ALLOC(state->x, H * sizeof(float));
+    state->x = new Tensor({H});
 
-    state->t = (float*)malloc(H * sizeof(float));
-    CHECK_ALLOC(state->t, H * sizeof(float));
+    state->t = new Tensor({H});
 
-    state->q = (float*)malloc(NH * D * sizeof(float));
-    CHECK_ALLOC(state->q, NH * D * sizeof(float));
+    state->q = new Tensor({NH, D});
 
-    state->att = (float*)malloc(NH * S * sizeof(float));
-    CHECK_ALLOC(state->att, NH * S * sizeof(float));
+    state->att = new Tensor({NH, S});
 
-    state->qkv_out = (float*)malloc(H * sizeof(float));
-    CHECK_ALLOC(state->qkv_out, H * sizeof(float));
+    state->qkv_out = new Tensor({H});
 
-    state->gate = (float*)malloc(I * sizeof(float));
-    CHECK_ALLOC(state->gate, I * sizeof(float));
+    state->gate = new Tensor({I});
 
-    state->up = (float*)malloc(I * sizeof(float));
-    CHECK_ALLOC(state->up, I * sizeof(float));
+    state->up = new Tensor({I});
 
-    state->cos_tensor = (float*)malloc(3 * S * (D / 2) * sizeof(float));
-    CHECK_ALLOC(state->cos_tensor, 3 * S * (D / 2) * sizeof(float));
+    state->cos_tensor = new Tensor({3, S, D / 2});
+    state->sin_tensor = new Tensor({3, S, D / 2});
 
-    state->sin_tensor = (float*)malloc(3 * S * (D / 2) * sizeof(float));
-    CHECK_ALLOC(state->sin_tensor, 3 * S * (D / 2) * sizeof(float));
-
-    state->logits = (float*)malloc(V * sizeof(float));
-    CHECK_ALLOC(state->logits, V * sizeof(float));
+    state->logits = new Tensor({V});
 
     // ---- KV cache ----
-    state->key_cache = (float*)malloc(cache_size);
-    printf("Allocating key_cache of size: %d x %d x %d x %d\n", L, S, NKV, D);
-    CHECK_ALLOC(state->key_cache, cache_size);
-
-    state->value_cache = (float*)malloc(cache_size);
-    CHECK_ALLOC(state->value_cache, cache_size);
+    state->key_cache = new Tensor({L, S, NKV, D});
+    state->value_cache = new Tensor({L, S, NKV, D});
 
     // -- Vision states --
-    long long vision_x_size = 1ll * VNP * VH * sizeof(float);
-    state->vision_x = (float *)malloc(vision_x_size);
-    CHECK_ALLOC(state->vision_x, vision_x_size);
-    state->vision_t = (float *)malloc(vision_x_size);
-    CHECK_ALLOC(state->vision_t, vision_x_size);
-    state->vision_q = (float *)malloc(vision_x_size);
-    CHECK_ALLOC(state->vision_q, vision_x_size);
-    state->vision_k = (float *)malloc(vision_x_size);
-    CHECK_ALLOC(state->vision_k, vision_x_size);
+    state->vision_x = new Tensor({VNP, VH});
+    state->vision_t = new Tensor({VNP, VH});
+    state->vision_q = new Tensor({VNP, VH});
+    state->vision_k = new Tensor({VNP, VH});
 
-    long long vl_rope_size = 1ll * (long)sqrt(VNP) * (VD / 4) * sizeof(float);
-    state->vision_cos_tensor = (float *)malloc(vl_rope_size);
-    CHECK_ALLOC(state->vision_cos_tensor, vl_rope_size);
-    state->vision_sin_tensor = (float *)malloc(vl_rope_size);
-    CHECK_ALLOC(state->vision_sin_tensor, vl_rope_size);
+    state->vision_cos_tensor = new Tensor({VNP, VD / 4});
+    state->vision_sin_tensor = new Tensor({VNP, VD / 4});
 
-    long long vl_embed_size = 1ll * VNP * VD * sizeof(float);
-    state->vision_pe_cos = (float *)malloc(vl_embed_size);
-    CHECK_ALLOC(state->vision_pe_cos, vl_embed_size);
-    state->vision_pe_sin = (float *)malloc(vl_embed_size);
-    CHECK_ALLOC(state->vision_pe_sin, vl_embed_size);
+    state->vision_pe_cos = new Tensor({VNP, VD});
+    state->vision_pe_sin = new Tensor({VNP, VD});
     
-    long long vision_mlp_out_size = 1ll * VNP * VI * sizeof(float);
-    state->vision_mlp_out = (float *)malloc(vision_mlp_out_size);
-    CHECK_ALLOC(state->vision_mlp_out, vision_mlp_out_size);
+    state->vision_mlp_out = new Tensor({VNP, VI});
+    printf("state->vision_mlp_out->owns_host_buf=%d\n", state->vision_mlp_out->owns_host_buf);
 
-    long long vision_deep_stack_size = 1ll * 3 * VNP * (VH / 2) * sizeof(float);
-    state->vision_deep_stack = (float *)malloc(vision_deep_stack_size);
-    CHECK_ALLOC(state->vision_deep_stack, vision_deep_stack_size);
+    state->vision_deep_stack = new Tensor({3, VNP, VH / 2});
 
-    long long vision_attn_scores_size = 1ll * VNP * VNP * sizeof(float);
-    state->vision_attn_scores = (float *)malloc(vision_attn_scores_size);
-    CHECK_ALLOC(state->vision_attn_scores, vision_attn_scores_size);
+    state->vision_attn_scores = new Tensor({VNP, VNP});
 
-    qwen_rope_precompute(state->cos_tensor, state->sin_tensor, config);
-    qwen_vision_rope_precompute(state->vision_cos_tensor, state->vision_sin_tensor, config);
+    qwen_rope_precompute(
+        state->cos_tensor, state->sin_tensor, config
+    );
+    qwen_vision_rope_precompute(
+        state->vision_cos_tensor, state->vision_sin_tensor, config
+    );
+    printf("Finish init run state\n");
+    fflush(stdout);
 }
 
 void free_model_run_state(QwenRunState* state) {
     if (!state) return;
 
-    if (state->x) free(state->x);
-    if (state->t) free(state->t);
-    if (state->q) free(state->q);
-    if (state->att) free(state->att);
-    if (state->qkv_out) free(state->qkv_out);
-    if (state->gate) free(state->gate);
-    if (state->up) free(state->up);
-    if (state->cos_tensor) free(state->cos_tensor);
-    if (state->sin_tensor) free(state->sin_tensor);
-    if (state->logits) free(state->logits);
-    if (state->key_cache) free(state->key_cache);
-    if (state->value_cache) free(state->value_cache);
+    if (state->x) delete state->x;
+    if (state->t) delete state->t;
+    if (state->q) delete state->q;
+    if (state->att) delete state->att;
+    if (state->qkv_out) delete state->qkv_out;
+    if (state->gate) delete state->gate;
+    if (state->up) delete state->up;
+    if (state->cos_tensor) delete state->cos_tensor;
+    if (state->sin_tensor) delete state->sin_tensor;
+    if (state->logits) delete state->logits;
+    if (state->key_cache) delete state->key_cache;
+    if (state->value_cache) delete state->value_cache;
 
-    if (state->vision_cos_tensor) free(state->vision_cos_tensor);
-    if (state->vision_sin_tensor) free(state->vision_sin_tensor);
+    if (state->vision_cos_tensor) delete state->vision_cos_tensor;
+    if (state->vision_sin_tensor) delete state->vision_sin_tensor;
 
-    if (state->vision_x) free(state->vision_x);
-    if (state->vision_t) free(state->vision_t);
-    if (state->vision_pe_cos) free(state->vision_pe_cos);
-    if (state->vision_pe_sin) free(state->vision_pe_sin);
+    if (state->vision_x) delete state->vision_x;
+    if (state->vision_t) delete state->vision_t;
+    if (state->vision_pe_cos) delete state->vision_pe_cos;
+    if (state->vision_pe_sin) delete state->vision_pe_sin;
 
-    if (state->vision_q) free(state->vision_q);
-    if (state->vision_k) free(state->vision_k);
+    if (state->vision_q) delete state->vision_q;
+    if (state->vision_k) delete state->vision_k;
 
-    if (state->vision_mlp_out) free(state->vision_mlp_out);
+    if (state->vision_mlp_out) delete state->vision_mlp_out;
 
-    if (state->vision_deep_stack) free(state->vision_deep_stack);
+    if (state->vision_deep_stack) delete state->vision_deep_stack;
 
-    if (state->vision_attn_scores) free(state->vision_attn_scores);
-
-    memset(state, 0, sizeof(QwenRunState));
+    if (state->vision_attn_scores) delete state->vision_attn_scores;
 }
 
 void qwen_rope_precompute(
-    float *cos_all_out,  // (3, seq_len, head_dim/2) 
-    float *sin_all_out,  // (3, seq_len, head_dim/2)
+    Tensor *cos_all_out,  // (3, seq_len, head_dim/2) 
+    Tensor *sin_all_out,  // (3, seq_len, head_dim/2)
     const QwenConfig *config
 ) {
     // Extract parameters from config
     int seq_len = config->seq_len;  // Should be config->max_position_embeddings
     int head_dim = config->hidden_size / config->num_attention_heads;
+
+    float *cos_buf = (float *)cos_all_out->buf;
+    float *sin_buf = (float *)sin_all_out->buf;
     
     // MRoPE sections - should come from config->rope_scaling->mrope_section
     int d_half = head_dim / 2;
@@ -598,16 +571,16 @@ void qwen_rope_precompute(
             
             // Output for T dimension (after interleaving)
             int t_idx = (0 * seq_len * d_half) + (pos * d_half) + i;
-            cos_all_out[t_idx] = cosf(freq);
-            sin_all_out[t_idx] = sinf(freq);
+            cos_buf[t_idx] = cosf(freq);
+            sin_buf[t_idx] = sinf(freq);
             
             // For H and W dimensions, we use the original frequencies
             // (These might be overwritten in actual forward pass)
             for (int dim = 1; dim < config->num_dimensions; dim++) {
                 int hw_idx = (dim * seq_len * d_half) + (pos * d_half) + i;
                 float orig_freq = freqs[dim][pos * d_half + i];
-                cos_all_out[hw_idx] = cosf(orig_freq);
-                sin_all_out[hw_idx] = sinf(orig_freq);
+                cos_buf[hw_idx] = cosf(orig_freq);
+                sin_buf[hw_idx] = sinf(orig_freq);
             }
         }
     }
@@ -620,12 +593,15 @@ void qwen_rope_precompute(
 }
 
 void qwen_vision_rope_precompute(
-    float *cos_tensor, float *sin_tensor, const QwenConfig *config
+    Tensor *cos_tensor, Tensor *sin_tensor, const QwenConfig *config
 ) {
     int dim = config->vision_hidden_size / config->vision_num_heads;
     int max_seq_len = config->max_vision_embeddings;
     int half_dim = dim / 4;
     float theta = config->vision_theta;
+
+    float *cos_buf = (float *)cos_tensor->buf;
+    float *sin_buf = (float *)sin_tensor->buf;
 
     /* Allocate inv_freq (same as register_buffer in PyTorch) */
     float *inv_freq = (float *)malloc(sizeof(float) * half_dim);
@@ -640,8 +616,8 @@ void qwen_vision_rope_precompute(
     for (int s = 0; s < max_seq_len; ++s) {
         for (int i = 0; i < half_dim; ++i) {
             const float freq_val = (float)s * inv_freq[i];
-            cos_tensor[s * half_dim + i] = cosf(freq_val);
-            sin_tensor[s * half_dim + i] = sinf(freq_val);
+            cos_buf[s * half_dim + i] = cosf(freq_val);
+            sin_buf[s * half_dim + i] = sinf(freq_val);
         }
     }
 
