@@ -240,15 +240,22 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         const float *w_q = weight->w_attn_q + 1ll * l * hidden_size * hidden_size;
         const float *w_k = weight->w_attn_k + 1ll * l * hidden_size * kv_dim;
         const float *w_v = weight->w_attn_v + 1ll * l * hidden_size * kv_dim;
+
+        // Store k, v in cache - FIXED VERSION
+        long long loff_cache = loff + pos * kv_dim;  // Position offset within layer
+        float *k_cur_cache_ptr = state->key_cache + loff_cache;
+        float *v_cur_cache_ptr = state->value_cache + loff_cache;
         
         linear(
             state->t, w_q, nullptr, state->q, 1, hidden_size, hidden_size, true
         );
         linear(
-            state->t, w_k, nullptr, state->k, 1, kv_dim, hidden_size, true
+            state->t, w_k, nullptr, k_cur_cache_ptr,
+            1, kv_dim, hidden_size, true
         );
         linear(
-            state->t, w_v, nullptr, state->v, 1, kv_dim, hidden_size, true
+            state->t, w_v, nullptr, v_cur_cache_ptr,
+            1, kv_dim, hidden_size, true
         );
 
         // QK RMSNorm
@@ -261,9 +268,9 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             );
             if (h < config->num_key_value_heads) { 
                 rms_norm(
-                    state->k + h * head_dim,
+                    k_cur_cache_ptr + h * head_dim,
                     weight->w_attn_k_norm,
-                    state->k + h * head_dim,
+                    k_cur_cache_ptr + h * head_dim,
                     config->rms_norm_eps, head_dim, 1ll * l
                 );
             }
@@ -275,14 +282,9 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             config->num_attention_heads, head_dim, pos
         );
         apply_rotary(
-            state->k, state->cos_tensor, state->sin_tensor,
+            k_cur_cache_ptr, state->cos_tensor, state->sin_tensor,
             config->num_key_value_heads, head_dim, pos
         );
-
-        // Store k, v in cache - FIXED VERSION
-        long long loff_cache = loff + pos * kv_dim;  // Position offset within layer
-        memcpy(state->key_cache + loff_cache, state->k, kv_dim * sizeof(float));
-        memcpy(state->value_cache + loff_cache, state->v, kv_dim * sizeof(float));
 
         // Multi-head attention
         int kv_mul = config->num_attention_heads / config->num_key_value_heads;  // integer multiplier for GQA
@@ -363,5 +365,6 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         config->vocab_size, hidden_size
     );
 
+    // exit(1);
     return state->logits;
 }

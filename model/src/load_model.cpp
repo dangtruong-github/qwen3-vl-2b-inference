@@ -439,12 +439,6 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->q = (float*)malloc(NH * D * sizeof(float));
     CHECK_ALLOC(state->q, NH * D * sizeof(float));
 
-    state->k = (float*)malloc(NKV * D * sizeof(float));
-    CHECK_ALLOC(state->k, NKV * D * sizeof(float));
-
-    state->v = (float*)malloc(NKV * D * sizeof(float));
-    CHECK_ALLOC(state->v, NKV * D * sizeof(float));
-
     state->att = (float*)malloc(NH * S * sizeof(float));
     CHECK_ALLOC(state->att, NH * S * sizeof(float));
 
@@ -519,8 +513,6 @@ void free_model_run_state(QwenRunState* state) {
     if (state->x) free(state->x);
     if (state->t) free(state->t);
     if (state->q) free(state->q);
-    if (state->k) free(state->k);
-    if (state->v) free(state->v);
     if (state->att) free(state->att);
     if (state->qkv_out) free(state->qkv_out);
     if (state->gate) free(state->gate);

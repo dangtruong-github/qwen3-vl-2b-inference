@@ -1,8 +1,11 @@
 #pragma once
+
 #include <stdio.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include "matmul_cpu.hpp"
+#include "../../utils/module.hpp"
 
 // #define DEBUG
 #define max(a, b) ((a) > (b) ? (a) : (b))
@@ -22,10 +25,6 @@ void embedding_lookup(
 void rms_norm(
     const float *x /*[hidden]*/, const float *scale /*[hidden]*/,
     float *out /*[hidden]*/, float eps, size_t hidden_size, size_t layer_offset
-);
-void linear(
-    const float *mat_A, const float *mat_B, const float *mat_bias,
-    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 );
 void classifier_gemm(
     const float *embedding /*[vocab, hidden]*/,
