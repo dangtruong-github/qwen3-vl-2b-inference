@@ -24,14 +24,20 @@ void embedding_lookup(
 );
 void rms_norm(
     const float *x /*[hidden]*/, const Tensor *scale /*[hidden]*/,
-    float *out /*[hidden]*/, float eps, size_t hidden_size, size_t layer_offset
+    float *out /*[hidden]*/, float eps,
+    size_t batches, size_t hidden_size, size_t layer_offset
+);
+void rms_norm(
+    const Tensor *x /*[hidden]*/, const Tensor *scale /*[layers, hidden]*/,
+    Tensor *out /*[hidden]*/, float eps, size_t batch_size, size_t layer_offset
 );
 void classifier_gemm(
     const Tensor *embedding /*[vocab, hidden]*/,
     const Tensor *hid_states /*[hidden]*/, Tensor *logits /*[vocab]*/,
     size_t vocab_size, size_t hidden_size
 );
-void add_vector(Tensor *add_to, const Tensor *add_from, size_t size_vec);
+void add_vector(Tensor *add_to, const Tensor *add_from, size_t size_vec = 0);
+void add_vector(Tensor *add_to, const float *add_from, size_t size_vec = 0);
 void swiglu(
     Tensor *gate /*[d]*/, const Tensor *up /*[d]*/, size_t size_vec
 );
@@ -61,12 +67,12 @@ void vision_rot_pos_emb(
     int grid_h, int grid_w, int merge_size, int head_dim
 );
 void layer_norm(
-    const float *x,           /* [hidden] */
+    const Tensor *x,           /* [batches, hidden] */
     const Tensor *scale,       /* [layers, hidden] */
     const Tensor *bias,        /* [layers, hidden] */
-    float *out,               /* [hidden] */
+    Tensor *out,               /* [batches, hidden] */
     float eps, 
-    size_t hidden_size, 
+    size_t batches, 
     size_t layer_offset
 );
 void vision_apply_rotary_inplace(
@@ -83,4 +89,4 @@ void vision_att(
     const float *q, const float *k, const float *v, float *attn_scores,
     float *out, int num_heads, int total_tokens, int head_dim, float scale
 );
-void gelu_tanh(float *x, size_t x_size);
+void gelu_tanh(Tensor *x, size_t x_size);

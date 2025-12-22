@@ -425,30 +425,31 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     size_t VNP = config->max_vision_embeddings;
     size_t VD = VH / config->vision_num_heads;
     size_t VI = config->vision_intermediate_size;
+    size_t VDS = config->vision_deep_stack_depth;
 
     // ---- Hidden / intermediate ----
-    state->x = new Tensor({H});
+    state->x = new Tensor({BATCH_SIZE, H});
 
-    state->t = new Tensor({H});
+    state->t = new Tensor({BATCH_SIZE, H});
 
-    state->q = new Tensor({NH, D});
+    state->q = new Tensor({BATCH_SIZE, NH, D});
 
-    state->att = new Tensor({NH, S});
+    state->att = new Tensor({BATCH_SIZE, NH, S});
 
-    state->qkv_out = new Tensor({H});
+    state->qkv_out = new Tensor({BATCH_SIZE, H});
 
-    state->gate = new Tensor({I});
+    state->gate = new Tensor({BATCH_SIZE, I});
 
-    state->up = new Tensor({I});
+    state->up = new Tensor({BATCH_SIZE, I});
 
     state->cos_tensor = new Tensor({3, S, D / 2});
     state->sin_tensor = new Tensor({3, S, D / 2});
 
-    state->logits = new Tensor({V});
+    state->logits = new Tensor({BATCH_SIZE, V});
 
     // ---- KV cache ----
-    state->key_cache = new Tensor({L, S, NKV, D});
-    state->value_cache = new Tensor({L, S, NKV, D});
+    state->key_cache = new Tensor({BATCH_SIZE, L, S, NKV, D});
+    state->value_cache = new Tensor({BATCH_SIZE, L, S, NKV, D});
 
     // -- Vision states --
     state->vision_x = new Tensor({VNP, VH});
@@ -465,7 +466,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->vision_mlp_out = new Tensor({VNP, VI});
     printf("state->vision_mlp_out->owns_host_buf=%d\n", state->vision_mlp_out->owns_host_buf);
 
-    state->vision_deep_stack = new Tensor({3, VNP, VH / 2});
+    state->vision_deep_stack = new Tensor({VDS, VNP / 4, H});
 
     state->vision_attn_scores = new Tensor({VNP, VNP});
 
@@ -595,9 +596,9 @@ void qwen_rope_precompute(
 void qwen_vision_rope_precompute(
     Tensor *cos_tensor, Tensor *sin_tensor, const QwenConfig *config
 ) {
-    int dim = config->vision_hidden_size / config->vision_num_heads;
+    int dim = (config->vision_hidden_size / config->vision_num_heads) / 2;
     int max_seq_len = config->max_vision_embeddings;
-    int half_dim = dim / 4;
+    int half_dim = dim / 2;
     float theta = config->vision_theta;
 
     float *cos_buf = (float *)cos_tensor->buf;

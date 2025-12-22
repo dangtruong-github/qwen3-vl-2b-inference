@@ -75,3 +75,50 @@ void Tensor::printShape(const std::string &descr) const {
         fflush(stdout);
     }
 }
+
+void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
+    #pragma omp critical
+    {
+        size_t elem = num_elem();
+        size_t batches = elem / shape[ndim - 1];
+
+        if (!full_tensor) {
+            elem = std::min((size_t)5, elem);
+        } else {
+            elem = shape[ndim - 1];
+        }
+
+        printf("Print debug %s: ", descr.c_str());
+        if (dtype == DType::FP32) {
+            float *fp32_buf = (float *)buf;
+            if (full_tensor) {
+                for (size_t i = 0; i < batches; i++) {
+                    for (size_t j = 0; j < elem; j++) {
+                        printf("%.2f ", fp32_buf[i * elem + j]);
+                    }
+                    printf("\n");
+                }
+            } else {
+                for (size_t i = 0; i < elem; i++) {
+                    printf("%.2f ", fp32_buf[i]);
+                }
+            }
+        } else if (dtype == DType::INT32) {
+            int *int32_buf = (int *)buf;
+            if (full_tensor) {
+                for (size_t i = 0; i < batches; i++) {
+                    for (size_t j = 0; j < elem; j++) {
+                        printf("%d ", int32_buf[i * elem + j]);
+                    }
+                    printf("\n");
+                }
+            } else {
+                for (size_t i = 0; i < elem; i++) {
+                    printf("%d ", int32_buf[i]);
+                }
+            }
+        }
+        printf("\n");
+        fflush(stdout);
+    }
+}

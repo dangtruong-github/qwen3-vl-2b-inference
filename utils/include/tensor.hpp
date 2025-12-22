@@ -38,4 +38,5 @@ struct Tensor {
     size_t get_dtype_size() const;  // Add this declaration
     void reshape(const vector<int> &shape_);
     void printShape(const std::string &descr) const;
+    void printDebug(const std::string &descr, bool full_tensor = false) const;
 };

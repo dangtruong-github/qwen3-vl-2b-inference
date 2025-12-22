@@ -12,28 +12,65 @@ void embedding_lookup(
 }
 
 void rms_norm(
-    const float *x /*[hidden]*/, const Tensor *scale /*[layers, hidden]*/,
-    float *out /*[hidden]*/, float eps, size_t hidden_size, size_t layer_offset
+    const float *x /*[hidden]*/, const Tensor *scale /*[hidden]*/,
+    float *out /*[hidden]*/, float eps,
+    size_t batches, size_t hidden_size, size_t layer_offset
 ) {
     const float *scale_buf = (const float *)scale->buf + 1ll * layer_offset * hidden_size;
-    const float *x_buf = (const float *)x;
-    float *out_buf = (float *)out;
-    // calculate sum of squares
-    double ss = 0.0;
-    for (size_t j = 0; j < hidden_size; j++) {
-        ss += x_buf[j] * x_buf[j];
+    float *x_buf = (float *)x;
+
+    for (size_t i = 0; i < batches; i++) {
+        // calculate sum of squares
+        double ss = 0.0;
+        for (size_t j = 0; j < hidden_size; j++) {
+            ss += x_buf[j] * x_buf[j];
+        }
+        ss /= hidden_size;
+        ss += eps;
+        ss = 1.0 / sqrt(ss);
+        // normalize and scale
+        for (size_t j = 0; j < hidden_size; j++) {
+            out[j] = scale_buf[j] * (ss * x_buf[j]);
+        }
+        
+        x_buf += hidden_size;
+        out += hidden_size;
     }
-    // printf("Finish get ss\n");
-    // fflush(stdout);
-    ss /= hidden_size;
-    ss += eps;
-    ss = 1.0 / sqrt(ss);
-    // normalize and scale
-    for (size_t j = 0; j < hidden_size; j++) {
-        out_buf[j] = scale_buf[j] * (ss * x_buf[j]);
+}
+
+void rms_norm(
+    const Tensor *x /*[batches, hidden]*/,
+    const Tensor *scale /*[layers, hidden]*/,
+    Tensor *out /*[batches, hidden]*/,
+    float eps, size_t batch_size, size_t layer_offset
+) {
+    const size_t hidden_size = x->shape[x->ndim - 1];
+    size_t batches = batch_size;
+    for (int i = 1; i < x->ndim - 1; i++) {
+        batches *= x->shape[i];
     }
-    // printf("Finish out\n");
-    // fflush(stdout);
+
+    const float *scale_buf = (const float *)scale->buf + 1ll * layer_offset * hidden_size;
+    float *x_buf = (float *)x->buf;
+    float *out_buf = (float *)out->buf;
+
+    for (size_t i = 0; i < batches; i++) {
+        // calculate sum of squares
+        double ss = 0.0;
+        for (size_t j = 0; j < hidden_size; j++) {
+            ss += x_buf[j] * x_buf[j];
+        }
+        ss /= hidden_size;
+        ss += eps;
+        ss = 1.0 / sqrt(ss);
+        // normalize and scale
+        for (size_t j = 0; j < hidden_size; j++) {
+            out_buf[j] = scale_buf[j] * (ss * x_buf[j]);
+        }
+        
+        x_buf += hidden_size;
+        out_buf += hidden_size;
+    }
 }
 
 void classifier_gemm(
@@ -48,10 +85,23 @@ void classifier_gemm(
 }
 
 void add_vector(Tensor *add_to, const Tensor *add_from, size_t size_vec) {
+    if (size_vec == 0) {
+        size_vec = add_to->num_elem();
+    }
     float *add_to_buf = (float *)add_to->buf;
     const float *add_from_buf = (const float *)add_from->buf;
     for (size_t i = 0; i < size_vec; i++) {
         add_to_buf[i] += add_from_buf[i];
+    }
+}
+
+void add_vector(Tensor *add_to, const float *add_from, size_t size_vec) {
+    if (size_vec == 0) {
+        size_vec = add_to->num_elem();
+    }
+    float *add_to_buf = (float *)add_to->buf;
+    for (size_t i = 0; i < size_vec; i++) {
+        add_to_buf[i] += add_from[i];
     }
 }
 
@@ -496,48 +546,51 @@ void vision_rot_pos_emb(
 }
 
 void layer_norm(
-    const float *x,           /* [hidden] */
+    const Tensor *x,           /* [batches, hidden] */
     const Tensor *scale,       /* [layers, hidden] */
     const Tensor *bias,        /* [layers, hidden] */
-    float *out,               /* [hidden] */
+    Tensor *out,               /* [batches, hidden] */
     float eps, 
-    size_t hidden_size, 
+    size_t batches, 
     size_t layer_offset
 ) {
     // 1. Pointers to current layer's weights
+    const size_t hidden_size = scale->shape[scale->ndim - 1];
+
     const size_t offset = 1ll * layer_offset * hidden_size;
     const float *scale_buf = (const float *)scale->buf + offset;
-    const float *bias_buf = (bias != NULL) ? ((const float *)bias->buf + offset) : NULL;
+    const float *bias_buf = (const float *)bias->buf + offset;
+    float *x_buf = (float *)x->buf;
+    float *out_buf = (float *)out->buf;
 
-    // 2. Calculate Mean
-    float mean = 0.0f;
-    for (size_t j = 0; j < hidden_size; j++) {
-        mean += x[j];
-    }
-    mean /= hidden_size;
+    for (size_t i = 0; i < batches; i++) {
+        // 2. Calculate Mean
+        float mean = 0.0f;
+        for (size_t j = 0; j < hidden_size; j++) {
+            mean += x_buf[j];
+        }
+        mean /= hidden_size;
 
-    // 3. Calculate Variance (Sum of Squared Differences)
-    float variance = 0.0f;
-    for (size_t j = 0; j < hidden_size; j++) {
-        float diff = x[j] - mean;
-        variance += diff * diff;
-    }
-    variance /= hidden_size;
+        // 3. Calculate Variance (Sum of Squared Differences)
+        float variance = 0.0f;
+        for (size_t j = 0; j < hidden_size; j++) {
+            float diff = x_buf[j] - mean;
+            variance += diff * diff;
+        }
+        variance /= hidden_size;
 
-    // 4. Calculate Inverse Standard Deviation
-    // nn.LayerNorm uses sqrt(variance + eps)
-    float inv_std = 1.0f / sqrt(variance + eps);
+        // 4. Calculate Inverse Standard Deviation
+        // nn.LayerNorm uses sqrt(variance + eps)
+        float inv_std = 1.0f / sqrt(variance + eps);
 
-    // 5. Normalize and Apply Affine Transform
-    if (bias_buf != NULL) {
+        // 5. Normalize and Apply Affine Transform
         for (size_t j = 0; j < hidden_size; j++) {
             // (x - mean) * inv_std * gamma + beta
-            out[j] = (x[j] - mean) * inv_std * scale_buf[j] + bias_buf[j];
+            out_buf[j] = (x_buf[j] - mean) * inv_std * scale_buf[j] + bias_buf[j];
         }
-    } else {
-        for (size_t j = 0; j < hidden_size; j++) {
-            out[j] = (x[j] - mean) * inv_std * scale_buf[j];
-        }
+
+        x_buf += hidden_size;
+        out_buf += hidden_size;
     }
 }
 
@@ -730,15 +783,17 @@ void vision_att(
     }
 }
 
-void gelu_tanh(float *x, size_t x_size) {
+void gelu_tanh(Tensor *x, size_t x_size) {
     const float sqrt_2_over_pi = 0.7978845608028654f;  // sqrt(2/pi)
     const float coeff = 0.044715f;
 
+    float *x_buf = (float *)x->buf;
+
     for (size_t i = 0; i < x_size; ++i) {
-        float xi = x[i];
+        float xi = x_buf[i];
         float xi3 = xi * xi * xi;
         float inner = sqrt_2_over_pi * (xi + coeff * xi3);
         float tanh_inner = tanhf(inner);
-        x[i] = 0.5f * xi * (1.0f + tanh_inner);
+        x_buf[i] = 0.5f * xi * (1.0f + tanh_inner);
     }
 }

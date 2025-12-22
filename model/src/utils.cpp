@@ -106,12 +106,8 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
 
         int first_token_recorded = 0;
 
-        if (!img_true) continue;
-        if (sample_count <= 3) continue;
-
-        printf("state->vision_mlp_out->owns_host_buf=%d\n", state->vision_mlp_out->owns_host_buf);
-        state->vision_mlp_out->printShape("state->vision_mlp_out");
-        fflush(stdout);
+        // if (!img_true) continue;
+        // if (sample_count <= 3) continue;
 
         if (img_true) {
             forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
@@ -162,18 +158,18 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                 generated_tokens[total_generated_count++] = next;
             }
 
-            /*
-            printf("%d %s", generated_tokens[pos], tokenizer->vocab[generated_tokens[pos]]);
-            printf("\nLogits: ");
-            for (int i = 0; i < 5; i++) {
-                printf("%.6f ", logits[i]);
-            }
-            printf("\n");
-            */
-
-            if (generated_tokens[pos] != 151655) {   
-                printf("%s ", tokenizer->vocab[generated_tokens[pos]]);
-            }
+            #ifdef PRINT_LOGITS
+                printf("%d %s", generated_tokens[pos], tokenizer->vocab[generated_tokens[pos]]);
+                printf("\nLogits: ");
+                for (int i = 0; i < 5; i++) {
+                    printf("%.6f ", logits[i]);
+                }
+                printf("\n");
+            #else
+                if (generated_tokens[pos] != 151655) {   
+                    printf("%s ", tokenizer->vocab[generated_tokens[pos]]);
+                }
+            #endif
 
             // Data-dependent terminating condition - match your EOS tokens
             // Using the same condition as original forward_validate
