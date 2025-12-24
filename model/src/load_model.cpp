@@ -215,13 +215,13 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
 
     tmp_ptr = (float*)malloc(1ll * VD * 3 * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * 3 * VH, file);
-    weights->vl_attn_qkv_b = new Tensor({VD, 3 * VH}, tmp_ptr);
+    weights->vl_attn_qkv_b = new Tensor({VD, 3, VH}, tmp_ptr);
     weights->vl_attn_qkv_b->printShape("vl_attn_qkv_b");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VD * 3 * VH * VH * sizeof(float));
     fread(tmp_ptr, sizeof(float), 1ll * VD * 3 * VH * VH, file);
-    weights->vl_attn_qkv_w = new Tensor({VD, 3 * VH, VH}, tmp_ptr);
+    weights->vl_attn_qkv_w = new Tensor({VD, 3, VH, VH}, tmp_ptr);
     weights->vl_attn_qkv_w->printShape("vl_attn_qkv_w");
     tmp_ptr = nullptr;
 
@@ -464,7 +464,6 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->vision_pe_sin = new Tensor({VNP, VD});
     
     state->vision_mlp_out = new Tensor({VNP, VI});
-    printf("state->vision_mlp_out->owns_host_buf=%d\n", state->vision_mlp_out->owns_host_buf);
 
     state->vision_deep_stack = new Tensor({VDS, VNP / 4, H});
 
@@ -523,8 +522,8 @@ void qwen_rope_precompute(
     int seq_len = config->seq_len;  // Should be config->max_position_embeddings
     int head_dim = config->hidden_size / config->num_attention_heads;
 
-    float *cos_buf = (float *)cos_all_out->buf;
-    float *sin_buf = (float *)sin_all_out->buf;
+    float *cos_buf = (float *)cos_all_out->ptr();
+    float *sin_buf = (float *)sin_all_out->ptr();
     
     // MRoPE sections - should come from config->rope_scaling->mrope_section
     int d_half = head_dim / 2;
@@ -601,8 +600,8 @@ void qwen_vision_rope_precompute(
     int half_dim = dim / 2;
     float theta = config->vision_theta;
 
-    float *cos_buf = (float *)cos_tensor->buf;
-    float *sin_buf = (float *)sin_tensor->buf;
+    float *cos_buf = (float *)cos_tensor->ptr();
+    float *sin_buf = (float *)sin_tensor->ptr();
 
     /* Allocate inv_freq (same as register_buffer in PyTorch) */
     float *inv_freq = (float *)malloc(sizeof(float) * half_dim);

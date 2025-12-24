@@ -37,6 +37,36 @@ Tensor::~Tensor() {
     }
 }
 
+void* Tensor::ptr(const std::vector<size_t>& strides_) const {
+    if (strides_.empty()) {
+        return buf;
+    }
+
+    if (strides_.size() > ndim) {
+        fprintf(stderr, "Error in shape: stride=%d ndim=%d", strides_.size(), ndim);
+        exit(1);
+    }
+
+    size_t stride_buf = num_elem();
+    if (dtype == DType::FP32) {
+        const float *cur_buf = (const float *)buf;
+        for (int i = 0; i < strides_.size(); i++) {
+            stride_buf /= shape[i];
+            cur_buf += strides_[i] * stride_buf;
+        }
+        return const_cast<float*>(cur_buf);
+    } else if (dtype == DType::INT32) {
+        const int *cur_buf = (const int *)buf;
+        for (int i = 0; i < strides_.size(); i++) {
+            stride_buf /= shape[i];
+            cur_buf += strides_[i] * stride_buf;
+        }
+        return const_cast<int*>(cur_buf);
+    }
+
+    return nullptr;
+}
+
 size_t Tensor::num_elem() const {
     size_t size = 1;
     for (size_t i = 0; i < ndim; i++) {

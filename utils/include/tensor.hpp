@@ -21,22 +21,23 @@ struct DType {
 const char* dtypeToStr(DType::Type dtype);
 
 struct Tensor {
+    void* buf = nullptr;
     size_t ndim = 0;
-    vector<size_t> shape;
-    void *buf = nullptr;
+    std::vector<size_t> shape;
     DType::Type dtype;
-    bool owns_host_buf;
-
-    Tensor(const vector<size_t> &shape_, DType::Type dtype = DType::FP32);
-    Tensor(
-        const vector<size_t> &shape_, void *buf_,
-        DType::Type dtype = DType::FP32
-    );
+    bool owns_host_buf = false;
+    
+    // Constructors & Destructor
+    Tensor(const std::vector<size_t> &shape_, DType::Type dtype = DType::FP32);
+    Tensor(const std::vector<size_t> &shape_, void *buf_, DType::Type dtype = DType::FP32);
     ~Tensor();
 
+    // Public API
     size_t num_elem() const;
-    size_t get_dtype_size() const;  // Add this declaration
-    void reshape(const vector<int> &shape_);
+    size_t get_dtype_size() const;
+    void* ptr(const std::vector<size_t> &strides_ = {}) const;
+    void reshape(const std::vector<int> &shape_);
     void printShape(const std::string &descr) const;
     void printDebug(const std::string &descr, bool full_tensor = false) const;
 };
+

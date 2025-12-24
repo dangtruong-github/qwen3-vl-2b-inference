@@ -1,12 +1,11 @@
 #include "../include/layer.hpp"
 
 void embedding_lookup(
-    const Tensor *embedding /*[vocab, hidden]*/,
-    int token_id, Tensor *out /*[hidden]*/,
-    size_t vocab_size, size_t hidden_size
+    const Tensor *embedding /*[vocab, hidden]*/, size_t token_id,
+    Tensor *out /*[hidden]*/, size_t hidden_size
 ) {
     memcpy(
-        out->buf, (const float *)embedding->buf + token_id * hidden_size,
+        out->ptr(), embedding->ptr({token_id}),
         hidden_size * sizeof(float)
     );
 }
@@ -14,62 +13,27 @@ void embedding_lookup(
 void rms_norm(
     const float *x /*[hidden]*/, const Tensor *scale /*[hidden]*/,
     float *out /*[hidden]*/, float eps,
-    size_t batches, size_t hidden_size, size_t layer_offset
+    size_t batches, size_t layer_offset
 ) {
-    const float *scale_buf = (const float *)scale->buf + 1ll * layer_offset * hidden_size;
-    float *x_buf = (float *)x;
+    const size_t hidden_size = scale->shape[scale->ndim - 1];
+    const float *scale_buf = (const float *)scale->ptr({layer_offset});
 
     for (size_t i = 0; i < batches; i++) {
         // calculate sum of squares
         double ss = 0.0;
         for (size_t j = 0; j < hidden_size; j++) {
-            ss += x_buf[j] * x_buf[j];
+            ss += x[j] * x[j];
         }
         ss /= hidden_size;
         ss += eps;
         ss = 1.0 / sqrt(ss);
         // normalize and scale
         for (size_t j = 0; j < hidden_size; j++) {
-            out[j] = scale_buf[j] * (ss * x_buf[j]);
+            out[j] = scale_buf[j] * (ss * x[j]);
         }
         
-        x_buf += hidden_size;
+        x += hidden_size;
         out += hidden_size;
-    }
-}
-
-void rms_norm(
-    const Tensor *x /*[batches, hidden]*/,
-    const Tensor *scale /*[layers, hidden]*/,
-    Tensor *out /*[batches, hidden]*/,
-    float eps, size_t batch_size, size_t layer_offset
-) {
-    const size_t hidden_size = x->shape[x->ndim - 1];
-    size_t batches = batch_size;
-    for (int i = 1; i < x->ndim - 1; i++) {
-        batches *= x->shape[i];
-    }
-
-    const float *scale_buf = (const float *)scale->buf + 1ll * layer_offset * hidden_size;
-    float *x_buf = (float *)x->buf;
-    float *out_buf = (float *)out->buf;
-
-    for (size_t i = 0; i < batches; i++) {
-        // calculate sum of squares
-        double ss = 0.0;
-        for (size_t j = 0; j < hidden_size; j++) {
-            ss += x_buf[j] * x_buf[j];
-        }
-        ss /= hidden_size;
-        ss += eps;
-        ss = 1.0 / sqrt(ss);
-        // normalize and scale
-        for (size_t j = 0; j < hidden_size; j++) {
-            out_buf[j] = scale_buf[j] * (ss * x_buf[j]);
-        }
-        
-        x_buf += hidden_size;
-        out_buf += hidden_size;
     }
 }
 
@@ -79,8 +43,8 @@ void classifier_gemm(
     size_t vocab_size, size_t hidden_size
 ) {
     linear(
-        (const float *)hid_states->buf, (const float *)embedding->buf, nullptr, 
-        (float *)logits->buf, 1, vocab_size, hidden_size, true
+        (const float *)hid_states->ptr(), (const float *)embedding->ptr(), nullptr, 
+        (float *)logits->ptr(), 1, vocab_size, hidden_size, true
     );
 }
 
@@ -88,8 +52,8 @@ void add_vector(Tensor *add_to, const Tensor *add_from, size_t size_vec) {
     if (size_vec == 0) {
         size_vec = add_to->num_elem();
     }
-    float *add_to_buf = (float *)add_to->buf;
-    const float *add_from_buf = (const float *)add_from->buf;
+    float *add_to_buf = (float *)add_to->ptr();
+    const float *add_from_buf = (const float *)add_from->ptr();
     for (size_t i = 0; i < size_vec; i++) {
         add_to_buf[i] += add_from_buf[i];
     }
@@ -99,7 +63,7 @@ void add_vector(Tensor *add_to, const float *add_from, size_t size_vec) {
     if (size_vec == 0) {
         size_vec = add_to->num_elem();
     }
-    float *add_to_buf = (float *)add_to->buf;
+    float *add_to_buf = (float *)add_to->ptr();
     for (size_t i = 0; i < size_vec; i++) {
         add_to_buf[i] += add_from[i];
     }
@@ -110,8 +74,8 @@ void swiglu(
     const Tensor *up,    // [d]
     size_t size_vec
 ) {
-    float *gate_buf = (float *)gate->buf;
-    const float *up_buf = (const float *)up->buf;
+    float *gate_buf = (float *)gate->ptr();
+    const float *up_buf = (const float *)up->ptr();
     for (size_t i = 0; i < size_vec; i++) {
         float x = gate_buf[i];
         float silu = x / (1.0f + expf(-x));  // SiLU(x) = x * sigmoid(x)
@@ -151,18 +115,17 @@ void attn_scores_all_heads(
     int kv_dim, int seq_len, int pos
 ) {
     // Calculate the start of the current layer in the cache
-    long long layer_cache_start = 1ll * layer_offset * seq_len * kv_dim;
-    const float *key_cache_layer = (const float *)key_cache->buf + 1ll * layer_cache_start;
+    const float *key_cache_ptr = (const float *)key_cache->ptr({0, layer_offset});
 
-    for (int h = 0; h < attn_heads; h++) {
-        const float *q_head = (const float *)q->buf + h * head_dim;
-        float *att_head = (float *)att->buf + h * seq_len;
+    for (size_t h = 0; h < attn_heads; h++) {
+        const float *q_head = (const float *)q->ptr({0, h});
+        float *att_head = (float *)att->ptr({0, h});
         int kv_head_idx = h / kv_mul;
 
         // Compute attention scores
         for (int t = 0; t <= pos; t++) {
             // Get the key for this timestep
-            const float *k_head = key_cache_layer + 1ll * t * kv_dim + 1ll * kv_head_idx * head_dim;
+            const float *k_head = key_cache_ptr + 1ll * t * kv_dim + 1ll * kv_head_idx * head_dim;
             
             double score = 0.0;
             for (int i = 0; i < head_dim; i++) {
@@ -183,26 +146,30 @@ void attn_scores_all_heads(
 // corresponds to the layer_cache_start.
 void attn_weighted_sum_all_heads(
     const Tensor *value_cache, const Tensor *att, Tensor *tb,
-    size_t loff, int attn_heads, int kv_mul, int head_dim, int kv_dim,
+    size_t layer_offset, int attn_heads, int kv_mul, int head_dim, int kv_dim,
     int seq_len, int pos
 ) {
     // Initialize output to zero
-    memset(tb->buf, 0, 1ll * attn_heads * head_dim * sizeof(float));
+    memset(tb->ptr(), 0, 1ll * attn_heads * head_dim * sizeof(float));
+    float *tb_head = (float *)tb->ptr();
+    const float *v_cache_ptr = (const float *)value_cache->ptr({0, layer_offset});
 
-    for (int h = 0; h < attn_heads; h++) {
-        const float *att_head = (const float *)att->buf + h * seq_len;
+    for (size_t h = 0; h < attn_heads; h++) {
+        const float *att_head = (const float *)att->ptr({0, h});
         int kv_head_idx = h / kv_mul;
-        float *tb_head = (float *)tb->buf + h * head_dim;
+        const float *v = v_cache_ptr + kv_head_idx * head_dim;
 
         for (int t = 0; t <= pos; t++) {
-            // FIX: Correct value cache indexing
-            const float *v = (const float *)value_cache->buf + loff + t * kv_dim + kv_head_idx * head_dim;
-
             float a = att_head[t];
+
             for (int i = 0; i < head_dim; i++) {
                 tb_head[i] += a * v[i];
             }
+
+            v += kv_dim;
         }
+
+        tb_head += head_dim;
     }
 }
 
@@ -212,8 +179,8 @@ void apply_rotary(
     int pos
 ) {
     int half = head_dim / 2;
-    const float *cos_buf = (const float *)cos_table->buf;
-    const float *sin_buf = (const float *)sin_table->buf;
+    const float *cos_buf = (const float *)cos_table->ptr();
+    const float *sin_buf = (const float *)sin_table->ptr();
     float *x_buf = (float *)x;
 
     for (int h = 0; h < n_heads; h++) {
@@ -253,7 +220,7 @@ void conv_3d(
     // Total size of the VC * VTP * VP * VP feature block
     const long FEATURE_BLOCK_SIZE = VC * PLANE_SIZE;
 
-    const float *conv_b_buf = (const float *)conv_b->buf;
+    const float *conv_b_buf = (const float *)conv_b->ptr();
 
     // --- Outer loop: Iterate over the 'batch' dimension (img_h) ---
     for (long i = 0; i < img_h; ++i) {
@@ -261,11 +228,11 @@ void conv_3d(
         const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
 
         // --- Second loop: Iterate over the output channels (VH) ---
-        for (long h = 0; h < VH; ++h) {
+        for (size_t h = 0; h < VH; ++h) {
             float accumulator = 0.0f;
 
             // Pointer to the current kernel slice (VC * VTP * VP * VP) for this output channel
-            const float *kernel_slice_ptr = (const float *)conv_w->buf + h * FEATURE_BLOCK_SIZE;
+            const float *kernel_slice_ptr = (const float *)conv_w->ptr({h});
 
             // --- Innermost loop: Perform the dot product (contraction) ---
             // This loop iterates over the flattened feature block (VC * VTP * VP * VP)
@@ -405,7 +372,7 @@ void vision_pos_embed(const Tensor *pos_embed_w, float *x_embed, int grid_h, int
         for (int k = 0; k < 4; ++k) {
 
             long source_index = idx_list_mem[k][i];
-            const float *pos_embed_w_idx_start = (const float *)pos_embed_w->buf + (source_index * VH);
+            const float *pos_embed_w_idx_start = (const float *)pos_embed_w->ptr({(size_t)source_index});
 
             float weight = weight_list_mem[k][i];
 
@@ -557,11 +524,10 @@ void layer_norm(
     // 1. Pointers to current layer's weights
     const size_t hidden_size = scale->shape[scale->ndim - 1];
 
-    const size_t offset = 1ll * layer_offset * hidden_size;
-    const float *scale_buf = (const float *)scale->buf + offset;
-    const float *bias_buf = (const float *)bias->buf + offset;
-    float *x_buf = (float *)x->buf;
-    float *out_buf = (float *)out->buf;
+    const float *scale_buf = (const float *)scale->ptr({layer_offset});
+    const float *bias_buf = (const float *)bias->ptr({layer_offset});
+    const float *x_buf = (float *)x->ptr();
+    float *out_buf = (float *)out->ptr();
 
     for (size_t i = 0; i < batches; i++) {
         // 2. Calculate Mean
@@ -682,47 +648,6 @@ void tensor_transpose(const float *in, float *out, int dim_0, int dim_1, int dim
     }
 }
 
-void tensor_transpose_inplace(float *data, int D0, int D1, int D2) {
-    const int N = D0 * D1;
-    const int block_size = D2 * sizeof(float);
-
-    bool *visited = (bool *)calloc(N, sizeof(bool));
-    float *tmp_source = (float *)malloc(block_size);
-    float *tmp_dest = (float *)malloc(block_size);
-
-    if (!visited || !tmp_source || !tmp_dest) { /* Handle error */ return; }
-
-    for (int start = 0; start < N; ++start) {
-        if (visited[start]) continue;
-
-        int cur = start;
-        // Keep track of the block we are currently moving
-        memcpy(tmp_source, data + cur * D2, block_size);
-
-        while (!visited[cur]) {
-            visited[cur] = true;
-            
-            // Where does the element at 'cur' belong?
-            int i = cur / D1;
-            int j = cur % D1;
-            int next = j * D0 + i;
-
-            // Save what's at the destination so we don't lose it
-            memcpy(tmp_dest, data + next * D2, block_size);
-            // Put our current block in its home
-            memcpy(data + next * D2, tmp_source, block_size);
-            
-            // The destination block is now our next source
-            memcpy(tmp_source, tmp_dest, block_size);
-            cur = next;
-        }
-    }
-
-    free(tmp_source);
-    free(tmp_dest);
-    free(visited);
-}
-
 void vision_att(
     const float *q, const float *k, const float *v, float *attn_scores,
     float *out, int num_heads, int total_tokens, int head_dim, float scale
@@ -787,7 +712,7 @@ void gelu_tanh(Tensor *x, size_t x_size) {
     const float sqrt_2_over_pi = 0.7978845608028654f;  // sqrt(2/pi)
     const float coeff = 0.044715f;
 
-    float *x_buf = (float *)x->buf;
+    float *x_buf = (float *)x->ptr();
 
     for (size_t i = 0; i < x_size; ++i) {
         float xi = x_buf[i];

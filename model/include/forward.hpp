@@ -15,4 +15,4 @@
 // Forward Functions
 // ================================================================
 void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, float *img_data, int img_h, int img_w, int grid_h, int grid_w);
-float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token, int pos);
+float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token, size_t pos);

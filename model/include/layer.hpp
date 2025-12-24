@@ -18,18 +18,13 @@ int argmax(const float* array, int size);
 
 // ------------------------ Helper functions ------------------------
 void embedding_lookup(
-    const Tensor *embedding /*[vocab, hidden]*/,
-    int token_id, Tensor *out /*[hidden]*/,
-    size_t vocab_size, size_t hidden
+    const Tensor *embedding /*[vocab, hidden]*/, size_t token_id,
+    Tensor *out /*[hidden]*/, size_t hidden_size
 );
 void rms_norm(
     const float *x /*[hidden]*/, const Tensor *scale /*[hidden]*/,
     float *out /*[hidden]*/, float eps,
-    size_t batches, size_t hidden_size, size_t layer_offset
-);
-void rms_norm(
-    const Tensor *x /*[hidden]*/, const Tensor *scale /*[layers, hidden]*/,
-    Tensor *out /*[hidden]*/, float eps, size_t batch_size, size_t layer_offset
+    size_t batches, size_t layer_offset
 );
 void classifier_gemm(
     const Tensor *embedding /*[vocab, hidden]*/,
@@ -48,7 +43,7 @@ void attn_scores_all_heads(
 );
 void attn_weighted_sum_all_heads(
     const Tensor *value_cache, const Tensor *att, Tensor *tb,
-    size_t loff, int attn_heads, int kv_mul, int head_dim, int kv_dim,
+    size_t layer_offset, int attn_heads, int kv_mul, int head_dim, int kv_dim,
     int seq_len, int pos
 );
 void apply_rotary(
@@ -84,7 +79,6 @@ void vision_apply_rotary_inplace(
     int head_dim
 );
 void tensor_transpose(const float *in, float *out, int dim_0, int dim_1, int dim_2);
-void tensor_transpose_inplace(float *data, int D0, int D1, int D2);
 void vision_att(
     const float *q, const float *k, const float *v, float *attn_scores,
     float *out, int num_heads, int total_tokens, int head_dim, float scale
