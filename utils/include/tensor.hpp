@@ -36,8 +36,9 @@ struct Tensor {
     size_t num_elem() const;
     size_t get_dtype_size() const;
     void* ptr(const std::vector<size_t> &strides_ = {}) const;
-    void reshape(const std::vector<int> &shape_);
+    void reshape(const std::vector<size_t> &shape_);
     void printShape(const std::string &descr) const;
     void printDebug(const std::string &descr, bool full_tensor = false) const;
+    void permute(const std::vector<size_t> &order);
 };
 

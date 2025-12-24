@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     // ----------------------------------------------------
     // CALL THE VALIDATION FUNCTION HERE
     // ----------------------------------------------------
-    int validation_result = forward_validate("data/input_tokens.txt", "data/image_path.txt", "data/output_tokens_full.txt", tokenizer, config, weights, state);
+    int validation_result = forward_validate("data/input_tokens_null.txt", "data/image_path_null.txt", "data/output_tokens_full_null.txt", tokenizer, config, weights, state);
     // image_processor_validate("data/image_path.txt",tokenizer, config, weights, state);
     
     if (validation_result == 0) {

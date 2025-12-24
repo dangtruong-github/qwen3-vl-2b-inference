@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdio.h>
+#include <omp.h>
 #include "../../utils/module.hpp"
 
 void linear(

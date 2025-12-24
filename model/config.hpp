@@ -5,6 +5,7 @@
 
 #define BATCH_SIZE 1
 // #define PRINT_LOGITS
+// #define TIME_CPU
 
 typedef struct {
     int seq_len;

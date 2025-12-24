@@ -500,6 +500,10 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     if (img_token_true) {
         state->cur_img_token_id += 1;
     }
-    // exit(1); ->ptr()
+
+    #ifdef CPU_TIME
+        exit(1);
+    #endif
+    
     return (float *)state->logits->ptr();
 }

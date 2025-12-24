@@ -54,6 +54,8 @@ void add_vector(Tensor *add_to, const Tensor *add_from, size_t size_vec) {
     }
     float *add_to_buf = (float *)add_to->ptr();
     const float *add_from_buf = (const float *)add_from->ptr();
+
+    #pragma omp parallel for simd
     for (size_t i = 0; i < size_vec; i++) {
         add_to_buf[i] += add_from_buf[i];
     }
@@ -64,6 +66,8 @@ void add_vector(Tensor *add_to, const float *add_from, size_t size_vec) {
         size_vec = add_to->num_elem();
     }
     float *add_to_buf = (float *)add_to->ptr();
+    
+    #pragma omp parallel for simd
     for (size_t i = 0; i < size_vec; i++) {
         add_to_buf[i] += add_from[i];
     }

@@ -1,8 +1,8 @@
 # === Compiler setup ===
 NVCC := nvcc
 GPP  := g++
-CXXFLAGS := -std=c++17 -O2 -fopenmp
-NVCCFLAGS := -std=c++17 -O2 -Xcompiler -fopenmp
+CXXFLAGS := -std=c++17 -O3 -fopenmp
+NVCCFLAGS := -std=c++17 -O3 -Xcompiler -fopenmp
 
 # === Path to your conda environment ===
 CONDA_PATH := /your/conda/path
