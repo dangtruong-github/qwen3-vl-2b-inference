@@ -2,7 +2,11 @@
 
 #include <stdio.h>
 #include <omp.h>
+#include <immintrin.h>
 #include "../../utils/module.hpp"
+#include "../config.hpp"
+
+#define NUM_THREADS_MAT_MUL 256
 
 void linear(
     const float *mat_A, const float *mat_B, const float *mat_bias,

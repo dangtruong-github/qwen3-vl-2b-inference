@@ -106,8 +106,8 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
 
         int first_token_recorded = 0;
 
-        // if (!img_true) continue;
-        // if (sample_count <= 3) continue;
+        if (!img_true) continue;
+        if (sample_count <= 3) continue;
 
         if (img_true) {
             forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);

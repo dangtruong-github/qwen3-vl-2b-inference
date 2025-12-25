@@ -8,6 +8,6 @@ Install
 conda install -c conda-forge opencv gxx_linux-64 cmake pkg-config -y
 ```
 
-Baseline (no images):
-- Average TTFT: 30.928463 (s)
-- Average generated tokens per second: 0.613309 (toks/s)
+CPU (no images):
+- Average TTFT: 10.026040 (s)
+- Average generated tokens per second: 57.974060 (toks/s)

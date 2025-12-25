@@ -423,6 +423,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
 
     size_t VH = config->vision_hidden_size;
     size_t VNP = config->max_vision_embeddings;
+    size_t VNP_max = VNP * (config->vision_spatial_merge_size * config->vision_spatial_merge_size);
     size_t VD = VH / config->vision_num_heads;
     size_t VI = config->vision_intermediate_size;
     size_t VDS = config->vision_deep_stack_depth;
@@ -452,22 +453,22 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->value_cache = new Tensor({BATCH_SIZE, L, S, NKV, D});
 
     // -- Vision states --
-    state->vision_x = new Tensor({VNP, VH});
-    state->vision_t = new Tensor({VNP, VH});
-    state->vision_q = new Tensor({VNP, VH});
-    state->vision_k = new Tensor({VNP, VH});
+    state->vision_x = new Tensor({VNP_max, VH});
+    state->vision_t = new Tensor({VNP_max, VH});
+    state->vision_q = new Tensor({VNP_max, VH});
+    state->vision_k = new Tensor({VNP_max, VH});
 
-    state->vision_cos_tensor = new Tensor({VNP, VD / 4});
-    state->vision_sin_tensor = new Tensor({VNP, VD / 4});
+    state->vision_cos_tensor = new Tensor({VNP_max, VD / 4});
+    state->vision_sin_tensor = new Tensor({VNP_max, VD / 4});
 
-    state->vision_pe_cos = new Tensor({VNP, VD});
-    state->vision_pe_sin = new Tensor({VNP, VD});
+    state->vision_pe_cos = new Tensor({VNP_max, VD});
+    state->vision_pe_sin = new Tensor({VNP_max, VD});
     
-    state->vision_mlp_out = new Tensor({VNP, VI});
+    state->vision_mlp_out = new Tensor({VNP_max, VI});
 
-    state->vision_deep_stack = new Tensor({VDS, VNP / 4, H});
+    state->vision_deep_stack = new Tensor({VDS, VNP, H});
 
-    state->vision_attn_scores = new Tensor({VNP, VNP});
+    state->vision_attn_scores = new Tensor({VNP_max, VNP_max});
 
     qwen_rope_precompute(
         state->cos_tensor, state->sin_tensor, config
