@@ -16,7 +16,7 @@ static inline float add_reduce_mm_256(__m256 vec) {
     return _mm_cvtss_f32(sum128);
 }
 
-void large_N_K_matmul_transpose(
+void lg_N_K_transpose(
     const float *mat_A, const float *mat_B,
     float *mat_C, size_t M, size_t N, size_t K
 ) {
@@ -72,7 +72,7 @@ void large_N_K_matmul_transpose(
                                     _mm256_add_ps(c2, c3))
                     );
 
-                    // Handle leftover elements (< 8)
+                    // Handle leftover elements (< 32)
                     #pragma omp simd reduction(+:sum)
                     for (size_t k_t = k; k_t < K; ++k_t) {
                         sum += mat_A_ptr[k_t] * mat_B_ptr[k_t];
@@ -85,33 +85,43 @@ void large_N_K_matmul_transpose(
     }
 }
 
-void large_M_K_linear(
-    const float *mat_A, const float *mat_B, const float *mat_bias,
-    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
+void sm_N_lg_K(
+    const float *mat_A, const float *mat_B,
+    float *mat_C, size_t M, size_t N, size_t K
 ) {
-    
+    printf("HERE\n");
+    exit(1);
+    constexpr size_t TM = 32;
+    constexpr size_t TN = 64;
+    constexpr size_t TK = 64;
+
+    memset(mat_C, 0, M * N * sizeof(float));
+
+    // B is K x N. B[k][j] = mat_B[k * N + j]
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (size_t i = 0; i < M; ++i) {        // Row of A and C
+        for (size_t j = 0; j < N; ++j) {    // Column of B and C
+            // The current value of mat_C[i * N + j] is mat_bias[j] (or 0)
+            float sum = 0.0f;
+            for (size_t k = 0; k < K; ++k) { // Inner dimension
+                // C[i][j] += A[i][k] * B[k][j]
+                sum += mat_A[i * K + k] * mat_B[k * N + j];
+            }
+            mat_C[i * N + j] = sum;
+        }
+    }
 }
 
-void large_K_linear(
+void lg_K_linear(
     const float *mat_A, const float *mat_B, const float *mat_bias,
     float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 ) { 
     if (!mat_B_transpose) {
-        // B is K x N. B[k][j] = mat_B[k * N + j]
-        for (size_t i = 0; i < M; ++i) {        // Row of A and C
-            for (size_t j = 0; j < N; ++j) {    // Column of B and C
-                // The current value of mat_C[i * N + j] is mat_bias[j] (or 0)
-                float sum = 0.0f;
-                for (size_t k = 0; k < K; ++k) { // Inner dimension
-                    // C[i][j] += A[i][k] * B[k][j]
-                    sum += mat_A[i * K + k] * mat_B[k * N + j];
-                }
-                mat_C[i * N + j] = sum;
-            }
-        }
+        
     }
     else {
-        large_N_K_matmul_transpose(mat_A, mat_B, mat_C, M, N, K);
+        // N >= 128
+        lg_N_K_transpose(mat_A, mat_B, mat_C, M, N, K);
     }
 
     if (mat_bias != nullptr) {
@@ -131,23 +141,29 @@ void linear(
 ) {
     #ifdef CPU_TIME
         CPUTimer timer("linear");
-        printf("Shape of matmul: M=%zu, N=%zu, K=%zu\n", M, N, K);
+        printf("Shape of matmul: M=%zu, N=%zu, K=%zu, B transpose=%d\n", M, N, K, mat_B_transpose);
     #endif
 
     if (K >= 1024) {
-        large_K_linear(
+        lg_K_linear(
             mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose
         );
         return;
+    } else {
+
     }
     
     if (mat_bias != nullptr) {
+        #pragma omp parallel for
         for (size_t i = 0; i < M; ++i) {
+
+            #pragma omp simd
             for (size_t j = 0; j < N; ++j) {
                 mat_C[i * N + j] = mat_bias[j];
             }
         }
     } else {
+        #pragma omp parallel for collapse(2)
         for (size_t i = 0; i < M; ++i) {
             for (size_t j = 0; j < N; ++j) {
                 mat_C[i * N + j] = 0.0f;
@@ -157,6 +173,7 @@ void linear(
 
     if (!mat_B_transpose) {
         // B is K x N. B[k][j] = mat_B[k * N + j]
+        #pragma omp parallel for collapse(2) schedule(static)
         for (size_t i = 0; i < M; ++i) {        // Row of A and C
             for (size_t j = 0; j < N; ++j) {    // Column of B and C
                 // The current value of mat_C[i * N + j] is mat_bias[j] (or 0)
