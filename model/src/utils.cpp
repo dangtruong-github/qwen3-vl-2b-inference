@@ -85,6 +85,8 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         int expected_count = 0;
         get_expected_tokens(out_line, &expected_tokens, &expected_count);
 
+        if (input_count >= max_seq_len) continue;
+
         // ------------------------------------------------------------
         // 3. Reset state and run initial forward pass
         // ------------------------------------------------------------
@@ -107,7 +109,8 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         int first_token_recorded = 0;
 
         if (!img_true) continue;
-        if (sample_count <= 3) continue;
+        // if (sample_count <= 3) continue;
+        // if (sample_count >= 5) continue;
 
         if (img_true) {
             forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
@@ -159,12 +162,18 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
             }
 
             #ifdef PRINT_LOGITS
-                printf("%d %s", generated_tokens[pos], tokenizer->vocab[generated_tokens[pos]]);
-                printf("\nLogits: ");
-                for (int i = 0; i < 5; i++) {
-                    printf("%.6f ", logits[i]);
+                if (pos >= input_count) {
+                    printf("%d %s", generated_tokens[pos], tokenizer->vocab[generated_tokens[pos]]);
+                    printf("\nLogits: ");
+                    for (int i = 0; i < 5; i++) {
+                        printf("%.6f ", logits[i]);
+                    }
+                    printf("\n");
+                } else {
+                    if (generated_tokens[pos] != 151655) {   
+                        printf("%s ", tokenizer->vocab[generated_tokens[pos]]);
+                    }
                 }
-                printf("\n");
             #else
                 if (generated_tokens[pos] != 151655) {   
                     printf("%s ", tokenizer->vocab[generated_tokens[pos]]);
@@ -182,8 +191,8 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                 }
             }
 
-            // Also check for other termination conditions
             if (total_generated_count >= expected_count) {
+                printf("\nExpected token count reached, break\n");
                 break;
             }
 

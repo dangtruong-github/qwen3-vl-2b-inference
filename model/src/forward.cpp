@@ -364,6 +364,18 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         memcpy(state->x->ptr(), src, 1ll * hidden_size * sizeof(float));
     }
 
+    if (pos < 100) {
+        const float *print_ptr = (const float *)state->x->ptr();
+        printf("pos = %d\n", pos);
+        for (int i = 0; i < config->hidden_size; i++) {
+            printf("%.2f ", print_ptr[i]);
+        }
+        printf("\n");
+        fflush(stdout);
+    } else {
+        exit(1);
+    }
+
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         // Pre-attention RMSNorm
         rms_norm(
@@ -481,6 +493,21 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         if (l < config->vision_deep_stack_depth && img_token_true) {
             const float *deep_ptr = (const float *)state->vision_deep_stack->ptr({l, (size_t)state->cur_img_token_id});
             add_vector(state->x, deep_ptr, 1ll * BATCH_SIZE * hidden_size);
+        }
+        if (pos < 50) {
+            /*
+            if (l == 0) {
+                const float *print_ptr = (const float *)state->x->ptr();
+                printf("pos = %d\n", pos);
+                for (int i = 0; i < config->hidden_size; i++) {
+                    printf("%.2f ", print_ptr[i]);
+                }
+                printf("\n");
+                fflush(stdout);
+            }
+            */
+        } else {
+            // exit(1);
         }
     }
 

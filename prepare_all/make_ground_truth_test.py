@@ -57,6 +57,9 @@ def main():
     for i, (image_path, text) in enumerate(samples, start=1):
         print(f"[{i}/{len(samples)}] Processing {'(text-only)' if image_path is None else os.path.basename(image_path or '')}")
 
+        # if i <= 3:
+        #     continue
+
         # Construct prompt and inputs
         if image_path and os.path.exists(image_path):
             image = Image.open(image_path).convert("RGB")

@@ -104,7 +104,7 @@ int get_num_img_pad(const char *img_path, int patch_size, int merge_size, long l
     return num_image_tokens;
 }
 
-void normalize_inplace(cv::Mat &img, const double *mean, const double *std, int C) {
+void normalize_inplace_old(cv::Mat &img, const double *mean, const double *std, int C) {
 
     // Convert image to float inplace if needed
     if (img.type() != CV_32FC3) {
@@ -119,6 +119,22 @@ void normalize_inplace(cv::Mat &img, const double *mean, const double *std, int 
         for (int x = 0; x < W; x++) {
             for (int c = 0; c < C; c++) {
                 row[x][c] = (row[x][c] - mean[c]) / std[c];
+            }
+        }
+    }
+}
+
+void normalize_inplace(
+    float *img, const double *mean, const double *std,
+    size_t C, size_t H, size_t W
+) {
+    for (size_t c = 0; c < C; c++) {
+        float cur_mean = mean[c];
+        float cur_std = std[c];
+        for (size_t y = 0; y < H; y++) {
+            size_t stride = c * H * W + y * W;
+            for (size_t x = 0; x < W; x++) {
+                img[stride + x] = (img[stride + x] - cur_mean) / cur_std;
             }
         }
     }
@@ -163,7 +179,7 @@ void permute_8d(
     }
 }
 
-void duplicate_to_batch(const cv::Mat& img, float* batch, int B, int C, int H, int W) {
+void duplicate_to_batch_old(const cv::Mat& img, float* batch, int B, int C, int H, int W) {
     if (img.rows != H || img.cols != W || img.channels() != C) {
         printf("Error: input image dimensions do not match HWC parameters\n");
         return;
@@ -182,7 +198,26 @@ void duplicate_to_batch(const cv::Mat& img, float* batch, int B, int C, int H, i
     }
 }
 
+void duplicate_to_batch(
+    const float* img,   // CHW, size = C * H * W
+    float* batch,       // NCHW, size = B * C * H * W
+    int B, int C, int H, int W
+) {
+    const size_t HW = (size_t)H * W;
+    const size_t CHW = (size_t)C * HW;
 
+    for (int b = 0; b < B; ++b) {
+        float* batch_b = batch + (size_t)b * CHW;
+
+        // CHW → CHW (just copy)
+        for (int c = 0; c < C; ++c) {
+            const float* src_c = img + (size_t)c * HW;
+            float* dst_c = batch_b + (size_t)c * HW;
+
+            memcpy(dst_c, src_c, HW * sizeof(float));
+        }
+    }
+}
 
 bool str_none(const char *str_to_check) {
     // Skip if "none"
@@ -197,8 +232,73 @@ bool str_none(const char *str_to_check) {
 }
 
 void resize_bicubic(const cv::Mat img, cv::Mat &resized_img, int new_height, int new_width) {
+    if (img.empty()) {
+        throw std::runtime_error("Input image is empty");
+    }
+
+    if (img.type() != CV_8UC1 &&
+        img.type() != CV_8UC3 &&
+        img.type() != CV_8UC4) {
+        throw std::runtime_error("Only CV_8UC1 / CV_8UC3 / CV_8UC4 supported");
+    }
+
+    if (new_height <= 0 || new_width <= 0) {
+        throw std::runtime_error("Invalid target size");
+    }
+
     // Bicubic interpolation
     cv::resize(img, resized_img, cv::Size(new_width, new_height), 0, 0, cv::INTER_CUBIC);
+}
+
+void print_cv_img(const cv::Mat *img) {
+    if (!img || img->empty()) {
+        printf("Invalid or empty image\n");
+        return;
+    }
+
+    CV_Assert(img->isContinuous());
+    CV_Assert(img->type() == CV_32FC3);
+
+    const int H = img->rows;
+    const int W = img->cols;
+    const int C = img->channels();  // should be 3
+
+    const float* data = (const float*)img->data;
+
+    // OpenCV layout: HWC
+    // index = (h * W + w) * C + c
+
+    for (int c = 0; c < C; ++c) {
+        for (int h = 0; h < H; ++h) {
+            for (int w = 0; w < W; ++w) {
+                size_t idx = ((size_t)h * W + w) * C + c;
+                printf("%.2f ", data[idx]);
+            }
+            printf("\n");
+        }
+    }
+}
+
+void hwc_to_chw(const cv::Mat& hwc_img,  float* chw_out) {
+    CV_Assert(hwc_img.type() == CV_32FC3);
+    CV_Assert(hwc_img.isContinuous());
+
+    const int H = hwc_img.rows;
+    const int W = hwc_img.cols;
+    const int C = 3;
+
+    const float* hwc = (const float*)hwc_img.data;
+
+    // HWC index: (h * W + w) * C + c
+    // CHW index: c * H * W + h * W + w
+    for (int c = 0; c < C; ++c) {
+        for (int h = 0; h < H; ++h) {
+            for (int w = 0; w < W; ++w) {
+                chw_out[c * H * W + h * W + w] =
+                    hwc[(h * W + w) * C + c];
+            }
+        }
+    }
 }
 
 bool image_processor(
@@ -218,11 +318,28 @@ bool image_processor(
     smart_resize_qwen3(orig_height, orig_width, &h_bar, &w_bar, factor, min_pixels, max_pixels);
 
     cv::Mat img = cv::imread(img_path, cv::IMREAD_COLOR);
-    cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
     cv::Mat resized_img;
 
-    resize_bicubic(img, resized_img, h_bar, w_bar);
-    img.convertTo(img, CV_32FC3);
+    // 🔴 IMPORTANT
+    if (!resized_img.isContinuous()) {
+        resized_img = resized_img.clone();
+    }
+    if (!img.isContinuous()) {
+        img = img.clone();
+    }
+
+    resize_bicubic_kernel(img, resized_img, h_bar, w_bar);
+
+    cv::cvtColor(resized_img, resized_img, cv::COLOR_BGR2RGB);
+    resized_img.convertTo(resized_img, CV_32FC3);
+
+    if (!resized_img.isContinuous()) {
+        resized_img = resized_img.clone();
+    }
+
+    // print_cv_img(&resized_img);
+    // fflush(stdout);
+    // exit(1);
 
     // Normalization parameters
     const double mean[3] = {127.5000, 127.5000, 127.5000};
@@ -231,11 +348,14 @@ bool image_processor(
     int temporal_patch_size = 2;
     int channels = 3;
 
-    normalize_inplace(resized_img, mean, std, channels);
+    float *resized_img_ptr = (float *)malloc(sizeof(float) * 1ll * channels * h_bar * w_bar);
+    hwc_to_chw(resized_img, resized_img_ptr);
+
+    normalize_inplace(resized_img_ptr, mean, std, channels, h_bar, w_bar);
 
     float *batch_img = (float *)malloc(sizeof(float) * 1ll * temporal_patch_size * channels * h_bar * w_bar);
 
-    duplicate_to_batch(resized_img, batch_img, temporal_patch_size, channels, h_bar, w_bar);
+    duplicate_to_batch(resized_img_ptr, batch_img, temporal_patch_size, channels, h_bar, w_bar);
 
     int grid_h = h_bar / patch_size;
     int grid_w = w_bar / patch_size;
