@@ -22,6 +22,8 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     float vision_scale = config->vision_scale;
     long d_tokens = total_tokens / (VSP * VSP);
 
+    printf("grid_h=%zu, grid_w=%zu, total_tokens=%zu\n", grid_h, grid_w, total_tokens);
+
     conv_3d(
         weight->vl_patch_emb_w, weight->vl_patch_emb_b, img_data,
         (float *)state->vision_x->ptr(), img_h, VC, VTP, VP, VH
@@ -340,6 +342,19 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     #ifdef PRINT_LOGITS
         state->vision_x->printDebug("vision_x");
     #endif
+
+    /*
+    const float *print_ptr = (const float *)state->vision_x->ptr();
+    printf("Shape print: (%zu, %zu)\n", d_tokens, OH);
+    for (size_t i = 0; i < d_tokens; ++i) {
+        for (size_t j = 0; j < OH; ++j) {
+            printf("%.2f ", print_ptr[i * OH + j]);
+        }
+        printf("\n");
+    }
+    fflush(stdout);
+    exit(1);
+    */
     
     state->vision_embed_tokens = d_tokens;
     state->cur_img_token_id = 0;
@@ -364,6 +379,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         memcpy(state->x->ptr(), src, 1ll * hidden_size * sizeof(float));
     }
 
+    /*
     if (pos < 100) {
         const float *print_ptr = (const float *)state->x->ptr();
         printf("pos = %d\n", pos);
@@ -375,7 +391,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     } else {
         exit(1);
     }
-
+    */
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         // Pre-attention RMSNorm
         rms_norm(
@@ -529,7 +545,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     }
 
     #ifdef CPU_TIME
-        exit(1);
+        if (pos > 100) exit(1);
     #endif
     
     return (float *)state->logits->ptr();

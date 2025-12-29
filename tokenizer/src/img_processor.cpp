@@ -312,10 +312,12 @@ bool image_processor(
 
     int orig_height, orig_width, h_bar, w_bar;
 
+    printf("img_path=%s\n", img_path);
     read_img_size(img_path, &orig_height, &orig_width);
 
     const int factor = patch_size * merge_size;  // 32
     smart_resize_qwen3(orig_height, orig_width, &h_bar, &w_bar, factor, min_pixels, max_pixels);
+    printf("orig_height=%d, orig_width=%d, h_bar=%d, w_bar=%d\n", orig_height, orig_width, h_bar, w_bar);
 
     cv::Mat img = cv::imread(img_path, cv::IMREAD_COLOR);
     cv::Mat resized_img;

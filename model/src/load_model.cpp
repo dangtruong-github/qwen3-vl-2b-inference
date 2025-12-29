@@ -45,7 +45,7 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     config->num_dimensions = 3;
 
     config->min_pixels = 256ll * 256ll;
-    config->max_pixels = 1024ll * 1024ll;
+    config->max_pixels = 4096ll * 4096ll;
     config->vision_theta = 10000.0f;
     config->vision_scale = 0.125;
     config->max_vision_embeddings = 2304;

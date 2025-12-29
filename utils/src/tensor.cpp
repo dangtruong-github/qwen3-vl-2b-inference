@@ -17,7 +17,6 @@ Tensor::Tensor(
     if (dtype == DType::FP32) {
         buf = calloc(N_, sizeof(float));
         CHECK_ALLOC(buf, N_ * sizeof(float));
-        printShape("success type 1");
     } else {
         fprintf(stderr, "Dtype not implemented %s\n", dtypeToStr(dtype));
         exit(1);
