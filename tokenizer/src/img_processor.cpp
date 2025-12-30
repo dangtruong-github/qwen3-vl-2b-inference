@@ -104,26 +104,6 @@ int get_num_img_pad(const char *img_path, int patch_size, int merge_size, long l
     return num_image_tokens;
 }
 
-void normalize_inplace_old(cv::Mat &img, const double *mean, const double *std, int C) {
-
-    // Convert image to float inplace if needed
-    if (img.type() != CV_32FC3) {
-        img.convertTo(img, CV_32FC3);
-    }
-
-    int H = img.rows;
-    int W = img.cols;
-
-    for (int y = 0; y < H; y++) {
-        cv::Vec3f* row = img.ptr<cv::Vec3f>(y);
-        for (int x = 0; x < W; x++) {
-            for (int c = 0; c < C; c++) {
-                row[x][c] = (row[x][c] - mean[c]) / std[c];
-            }
-        }
-    }
-}
-
 void normalize_inplace(
     float *img, const double *mean, const double *std,
     size_t C, size_t H, size_t W
@@ -131,6 +111,8 @@ void normalize_inplace(
     for (size_t c = 0; c < C; c++) {
         float cur_mean = mean[c];
         float cur_std = std[c];
+
+        #pragma omp parallel for collapse(2)
         for (size_t y = 0; y < H; y++) {
             size_t stride = c * H * W + y * W;
             for (size_t x = 0; x < W; x++) {
@@ -161,6 +143,7 @@ void permute_8d(
 
     long total = 1L*D0*D1*D2*D3*D4*D5*D6*D7;
 
+    #pragma omp parallel for
     for (long idx=0; idx<total; idx++) {
         int tmp = idx, coord[8]={0};
 
@@ -179,25 +162,6 @@ void permute_8d(
     }
 }
 
-void duplicate_to_batch_old(const cv::Mat& img, float* batch, int B, int C, int H, int W) {
-    if (img.rows != H || img.cols != W || img.channels() != C) {
-        printf("Error: input image dimensions do not match HWC parameters\n");
-        return;
-    }
-
-    for (int b = 0; b < B; b++) {
-        for (int c = 0; c < C; c++) {
-            for (int i = 0; i < H; i++) {
-                const cv::Vec3f* row_ptr = img.ptr<cv::Vec3f>(i);
-                float* dst = batch + b * C * H * W + c * H * W + i * W;
-                for (int j = 0; j < W; j++) {
-                    dst[j] = row_ptr[j][c];
-                }
-            }
-        }
-    }
-}
-
 void duplicate_to_batch(
     const float* img,   // CHW, size = C * H * W
     float* batch,       // NCHW, size = B * C * H * W
@@ -206,6 +170,7 @@ void duplicate_to_batch(
     const size_t HW = (size_t)H * W;
     const size_t CHW = (size_t)C * HW;
 
+    #pragma omp parallel for collapse(2)
     for (int b = 0; b < B; ++b) {
         float* batch_b = batch + (size_t)b * CHW;
 
