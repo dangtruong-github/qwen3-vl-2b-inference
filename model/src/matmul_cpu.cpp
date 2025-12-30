@@ -39,14 +39,20 @@ void lg_M_N_K_transpose(
                 size_t j = jj;
 
                 // ---- vectorized j loop (4 columns at once) ----
-                for (; j + 2 <= j_end; j += 2) {
+                for (; j + 4 <= j_end; j += 4) {
                     const float *b0_ptr = mat_B + (j + 0) * K;
                     const float *b1_ptr = mat_B + (j + 1) * K;
+                    const float *b2_ptr = mat_B + (j + 2) * K;
+                    const float *b3_ptr = mat_B + (j + 3) * K;
 
                     __m256 c00 = _mm256_setzero_ps();
                     __m256 c01 = _mm256_setzero_ps();
+                    __m256 c02 = _mm256_setzero_ps();
+                    __m256 c03 = _mm256_setzero_ps();
                     __m256 c10 = _mm256_setzero_ps();
                     __m256 c11 = _mm256_setzero_ps();
+                    __m256 c12 = _mm256_setzero_ps();
+                    __m256 c13 = _mm256_setzero_ps();
 
                     size_t k = 0;
 
@@ -55,31 +61,33 @@ void lg_M_N_K_transpose(
                         // Load 8 blocks of 8 floats from A row
                         __m256 a00_vec = _mm256_loadu_ps(a0_ptr + k);
                         __m256 a10_vec = _mm256_loadu_ps(a1_ptr + k);
-                        __m256 b00_vec = _mm256_loadu_ps(b0_ptr + k);
-                        __m256 b10_vec = _mm256_loadu_ps(b1_ptr + k);
-                        
-                        // __m256 a01_vec = _mm256_loadu_ps(a0_ptr + k + 8);
-                        // __m256 a11_vec = _mm256_loadu_ps(a1_ptr + k + 8);
-                        // __m256 b01_vec = _mm256_loadu_ps(b0_ptr + k + 8);
-                        // __m256 b11_vec = _mm256_loadu_ps(b1_ptr + k + 8);
+                        __m256 b020_vec = _mm256_loadu_ps(b0_ptr + k);
+                        __m256 b130_vec = _mm256_loadu_ps(b1_ptr + k);
 
                         // ---- block 0 (k..k+7) ----
-                        c00 = _mm256_fmadd_ps(a00_vec, b00_vec, c00);
-                        c01 = _mm256_fmadd_ps(a00_vec, b10_vec, c01);
-                        c10 = _mm256_fmadd_ps(a10_vec, b00_vec, c10);
-                        c11 = _mm256_fmadd_ps(a10_vec, b10_vec, c11);
+                        c00 = _mm256_fmadd_ps(a00_vec, b020_vec, c00);
+                        c01 = _mm256_fmadd_ps(a00_vec, b130_vec, c01);
+                        c10 = _mm256_fmadd_ps(a10_vec, b020_vec, c10);
+                        c11 = _mm256_fmadd_ps(a10_vec, b130_vec, c11);
+
+                        b020_vec = _mm256_loadu_ps(b2_ptr + k);
+                        b130_vec = _mm256_loadu_ps(b3_ptr + k);
                         
-                        // c00 = _mm256_fmadd_ps(a01_vec, b01_vec, c00);
-                        // c01 = _mm256_fmadd_ps(a01_vec, b11_vec, c01);
-                        // c10 = _mm256_fmadd_ps(a11_vec, b01_vec, c10);
-                        // c11 = _mm256_fmadd_ps(a11_vec, b11_vec, c11);
+                        c02 = _mm256_fmadd_ps(a00_vec, b020_vec, c02);
+                        c03 = _mm256_fmadd_ps(a00_vec, b130_vec, c03);
+                        c12 = _mm256_fmadd_ps(a10_vec, b020_vec, c12);
+                        c13 = _mm256_fmadd_ps(a10_vec, b130_vec, c13);
                     }
 
                     // reduce SIMD accumulators
                     float sum00 = add_reduce_mm_256(c00);
                     float sum01 = add_reduce_mm_256(c01);
+                    float sum02 = add_reduce_mm_256(c02);
+                    float sum03 = add_reduce_mm_256(c03);
                     float sum10 = add_reduce_mm_256(c10);
                     float sum11 = add_reduce_mm_256(c11);
+                    float sum12 = add_reduce_mm_256(c12);
+                    float sum13 = add_reduce_mm_256(c13);
 
                     // ---- scalar k cleanup ----
                     for (; k < K; ++k) {
@@ -87,16 +95,26 @@ void lg_M_N_K_transpose(
                         float a1 = a1_ptr[k];
                         float b0 = b0_ptr[k];
                         float b1 = b1_ptr[k];
+                        float b2 = b2_ptr[k];
+                        float b3 = b3_ptr[k];
                         sum00 += a0 * b0;
                         sum01 += a0 * b1;
+                        sum02 += a0 * b2;
+                        sum03 += a0 * b3;
                         sum10 += a1 * b0;
                         sum11 += a1 * b1;
+                        sum12 += a1 * b2;
+                        sum13 += a1 * b3;
                     }
 
                     mat_C[i * N + j + 0] = sum00;
                     mat_C[i * N + j + 1] = sum01;
+                    mat_C[i * N + j + 2] = sum02;
+                    mat_C[i * N + j + 3] = sum03;
                     mat_C[(i+1) * N + j + 0] = sum10;
                     mat_C[(i+1) * N + j + 1] = sum11;
+                    mat_C[(i+1) * N + j + 2] = sum12;
+                    mat_C[(i+1) * N + j + 3] = sum13;
                 }
 
                 // ---- scalar j cleanup ----
