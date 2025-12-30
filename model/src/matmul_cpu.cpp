@@ -292,7 +292,7 @@ void linear(
         return;
     }
 
-    if (K >= 1024) {
+    if (K >= 1024 || N >= 1024) {
         lg_K_linear_transpose(
             mat_A, mat_B, mat_bias, mat_C, M, N, K
         );

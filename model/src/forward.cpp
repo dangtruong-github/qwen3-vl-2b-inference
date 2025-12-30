@@ -82,6 +82,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_t->printDebug("vision_t");
         #endif
 
+        #ifdef PRINT_LOGITS_2
+            state->vision_t->printDebug("vision_t");
+        #endif
+
         const float *w_q = (const float *)weight->vl_attn_qkv_w->ptr({l});
         const float *w_k = (const float *)weight->vl_attn_qkv_w->ptr({l, 1});
         const float *w_v = (const float *)weight->vl_attn_qkv_w->ptr({l, 2});
@@ -100,6 +104,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
+        #ifdef PRINT_LOGITS_2
+            state->vision_mlp_out->printDebug("vision_mlp_out");
+        #endif
+
         vision_apply_rotary_inplace(
             (const float *)state->vision_pe_cos->ptr(),
             (const float *)state->vision_pe_sin->ptr(),
@@ -110,12 +118,20 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
+        #ifdef PRINT_LOGITS_2
+            state->vision_mlp_out->printDebug("vision_mlp_out");
+        #endif
+
         tensor_transpose(
             (const float *)state->vision_mlp_out->ptr(),
             (float *)state->vision_q->ptr(), total_tokens, VNH, VHD
         );
 
         #ifdef PRINT_LOGITS
+            state->vision_q->printDebug("vision_q");
+        #endif
+
+        #ifdef PRINT_LOGITS_2
             state->vision_q->printDebug("vision_q");
         #endif
 
@@ -130,6 +146,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
+        #ifdef PRINT_LOGITS_2
+            state->vision_mlp_out->printDebug("vision_mlp_out");
+        #endif
+
         vision_apply_rotary_inplace(
             (const float *)state->vision_pe_cos->ptr(),
             (const float *)state->vision_pe_sin->ptr(),
@@ -140,12 +160,20 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
+        #ifdef PRINT_LOGITS_2
+            state->vision_mlp_out->printDebug("vision_mlp_out");
+        #endif
+
         tensor_transpose(
             (const float *)state->vision_mlp_out->ptr(),
             (float *)state->vision_k->ptr(), total_tokens, VNH, VHD
         );
 
         #ifdef PRINT_LOGITS
+            state->vision_k->printDebug("vision_k");
+        #endif
+
+        #ifdef PRINT_LOGITS_2
             state->vision_k->printDebug("vision_k");
         #endif
 
@@ -160,12 +188,20 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
+        #ifdef PRINT_LOGITS_2
+            state->vision_mlp_out->printDebug("vision_mlp_out");
+        #endif
+
         tensor_transpose(
             (const float *)state->vision_mlp_out->ptr(),
             (float *)state->vision_t->ptr(), total_tokens, VNH, VHD
         );
 
         #ifdef PRINT_LOGITS
+            state->vision_t->printDebug("vision_t");
+        #endif
+
+        #ifdef PRINT_LOGITS_2
             state->vision_t->printDebug("vision_t");
         #endif
         
@@ -181,6 +217,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         #ifdef PRINT_LOGITS
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
+
+        #ifdef PRINT_LOGITS_2
+            state->vision_mlp_out->printDebug("vision_mlp_out");
+        #endif
         
         // swap back vision_t and vl_v
         tensor_transpose(
@@ -189,6 +229,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
+            state->vision_t->printDebug("vision_t");
+        #endif
+
+        #ifdef PRINT_LOGITS_2
             state->vision_t->printDebug("vision_t");
         #endif
 
@@ -206,9 +250,17 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_q->printDebug("vision_q");
         #endif
 
+        #ifdef PRINT_LOGITS_2
+            state->vision_q->printDebug("vision_q");
+        #endif
+
         add_vector(state->vision_x, state->vision_q, 1ll * total_tokens * VH);
 
         #ifdef PRINT_LOGITS
+            state->vision_x->printDebug("vision_x");
+        #endif
+
+        #ifdef PRINT_LOGITS_2
             state->vision_x->printDebug("vision_x");
         #endif
 
@@ -219,6 +271,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
+            state->vision_t->printDebug("vision_t");
+        #endif
+
+        #ifdef PRINT_LOGITS_2
             state->vision_t->printDebug("vision_t");
         #endif
         
@@ -234,9 +290,17 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
+        #ifdef PRINT_LOGITS_2
+            state->vision_mlp_out->printDebug("vision_mlp_out");
+        #endif
+
         gelu_tanh(state->vision_mlp_out, 1ll * total_tokens * VI);
 
         #ifdef PRINT_LOGITS
+            state->vision_mlp_out->printDebug("vision_mlp_out");
+        #endif
+        
+        #ifdef PRINT_LOGITS_2
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
         
@@ -252,9 +316,17 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_t->printDebug("vision_t");
         #endif
 
+        #ifdef PRINT_LOGITS_2
+            state->vision_t->printDebug("vision_t");
+        #endif
+
         add_vector(state->vision_x, state->vision_t, 1ll * total_tokens * VH);
 
         #ifdef PRINT_LOGITS
+            state->vision_x->printDebug("vision_x");
+        #endif
+
+        #ifdef PRINT_LOGITS_2
             state->vision_x->printDebug("vision_x");
         #endif
 
@@ -270,6 +342,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
                 state->vision_t->printDebug("vision_t");
             #endif
 
+            #ifdef PRINT_LOGITS_2
+                state->vision_t->printDebug("vision_t");
+            #endif
+
             const float *w_mlp1_d_ptr = (const float *)weight->vl_d_mlp1_w->ptr({d_stride});
             const float *b_mlp1_d_ptr = (const float *)weight->vl_d_mlp1_b->ptr({d_stride});
             linear(
@@ -280,10 +356,18 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             #ifdef PRINT_LOGITS
                 state->vision_mlp_out->printDebug("vision_mlp_out");
             #endif
+
+            #ifdef PRINT_LOGITS_2
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+            #endif
         
             gelu_tanh(state->vision_mlp_out, 1ll * d_tokens * VI);
 
             #ifdef PRINT_LOGITS
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+            #endif
+
+            #ifdef PRINT_LOGITS_2
                 state->vision_mlp_out->printDebug("vision_mlp_out");
             #endif
 
@@ -297,6 +381,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             );
 
             #ifdef PRINT_LOGITS
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+            #endif
+
+            #ifdef PRINT_LOGITS_2
                 state->vision_mlp_out->printDebug("vision_mlp_out");
             #endif
         }
