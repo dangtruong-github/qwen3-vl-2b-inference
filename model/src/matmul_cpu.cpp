@@ -22,9 +22,10 @@ void lg_M_N_K_transpose(
 ) {
     constexpr size_t TM = 32;   // tile size for rows of A / C
     constexpr size_t TN = 64;   // tile size for columns of C / rows of B
+    constexpr size_t threads_each = 32;
 
     // B is N x K, stored as B^T row-major: mat_B[j * K + k]
-    #pragma omp parallel for collapse(2) schedule(static)
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads_each)
     for (size_t ii = 0; ii < M; ii += TM) {
         size_t i_end = std::min(ii + TM, M);
 
@@ -323,81 +324,208 @@ void lg_M_N_sm_K_transpose(
         for (size_t jj = 0; jj < N; jj += TN) {
             size_t j_end = std::min(jj + TN, N);
 
-            for (size_t i = ii; i < i_end; ++i) {
+            size_t i = ii;
+            for (; i + 2 <= i_end; i += 2) {
+                const float *a0_ptr = mat_A + i * K;
+                const float *a1_ptr = mat_A + (i+1) * K;
+
+                size_t j = jj;
+
+                // ---- vectorized j loop (4 columns at once) ----
+                for (; j + 4 <= j_end; j += 4) {
+                    const float *b0_ptr = mat_B + (j + 0) * K;
+                    const float *b1_ptr = mat_B + (j + 1) * K;
+                    const float *b2_ptr = mat_B + (j + 2) * K;
+                    const float *b3_ptr = mat_B + (j + 3) * K;
+
+                    __m256 c00 = _mm256_setzero_ps();
+                    __m256 c01 = _mm256_setzero_ps();
+                    __m256 c02 = _mm256_setzero_ps();
+                    __m256 c03 = _mm256_setzero_ps();
+                    __m256 c10 = _mm256_setzero_ps();
+                    __m256 c11 = _mm256_setzero_ps();
+                    __m256 c12 = _mm256_setzero_ps();
+                    __m256 c13 = _mm256_setzero_ps();
+
+                    size_t k = 0;
+
+                    // ---- vectorized k loop ----
+                    for (; k + 8 <= K; k += 8) {
+                        // Load 8 blocks of 8 floats from A row
+                        __m256 a00_vec = _mm256_loadu_ps(a0_ptr + k);
+                        __m256 a10_vec = _mm256_loadu_ps(a1_ptr + k);
+                        __m256 b020_vec = _mm256_loadu_ps(b0_ptr + k);
+                        __m256 b130_vec = _mm256_loadu_ps(b1_ptr + k);
+
+                        // ---- block 0 (k..k+7) ----
+                        c00 = _mm256_fmadd_ps(a00_vec, b020_vec, c00);
+                        c01 = _mm256_fmadd_ps(a00_vec, b130_vec, c01);
+                        c10 = _mm256_fmadd_ps(a10_vec, b020_vec, c10);
+                        c11 = _mm256_fmadd_ps(a10_vec, b130_vec, c11);
+
+                        b020_vec = _mm256_loadu_ps(b2_ptr + k);
+                        b130_vec = _mm256_loadu_ps(b3_ptr + k);
+                        
+                        c02 = _mm256_fmadd_ps(a00_vec, b020_vec, c02);
+                        c03 = _mm256_fmadd_ps(a00_vec, b130_vec, c03);
+                        c12 = _mm256_fmadd_ps(a10_vec, b020_vec, c12);
+                        c13 = _mm256_fmadd_ps(a10_vec, b130_vec, c13);
+                    }
+
+                    // reduce SIMD accumulators
+                    float sum00 = add_reduce_mm_256(c00);
+                    float sum01 = add_reduce_mm_256(c01);
+                    float sum02 = add_reduce_mm_256(c02);
+                    float sum03 = add_reduce_mm_256(c03);
+                    float sum10 = add_reduce_mm_256(c10);
+                    float sum11 = add_reduce_mm_256(c11);
+                    float sum12 = add_reduce_mm_256(c12);
+                    float sum13 = add_reduce_mm_256(c13);
+
+                    // ---- scalar k cleanup ----
+                    for (; k < K; ++k) {
+                        float a0 = a0_ptr[k];
+                        float a1 = a1_ptr[k];
+                        float b0 = b0_ptr[k];
+                        float b1 = b1_ptr[k];
+                        float b2 = b2_ptr[k];
+                        float b3 = b3_ptr[k];
+                        sum00 += a0 * b0;
+                        sum01 += a0 * b1;
+                        sum02 += a0 * b2;
+                        sum03 += a0 * b3;
+                        sum10 += a1 * b0;
+                        sum11 += a1 * b1;
+                        sum12 += a1 * b2;
+                        sum13 += a1 * b3;
+                    }
+
+                    mat_C[i * N + j + 0] = sum00;
+                    mat_C[i * N + j + 1] = sum01;
+                    mat_C[i * N + j + 2] = sum02;
+                    mat_C[i * N + j + 3] = sum03;
+                    mat_C[(i+1) * N + j + 0] = sum10;
+                    mat_C[(i+1) * N + j + 1] = sum11;
+                    mat_C[(i+1) * N + j + 2] = sum12;
+                    mat_C[(i+1) * N + j + 3] = sum13;
+                }
+
+                // ---- scalar j cleanup ----
+                for (; j < j_end; ++j) {
+                    const float *mat_B_ptr = mat_B + j * K;
+
+                    // Initialize accumulators
+                    __m256 c00 = _mm256_setzero_ps();
+                    __m256 c10 = _mm256_setzero_ps();
+
+                    size_t k = 0;
+                    for (; k + 8 <= K; k += 8) {
+                        // Load 8 blocks of 8 floats from A row
+                        __m256 a0_vec = _mm256_loadu_ps(a0_ptr + k);
+                        __m256 a1_vec = _mm256_loadu_ps(a1_ptr + k);
+                        __m256 b_vec = _mm256_loadu_ps(mat_B_ptr + k);
+
+                        // ---- block 0 (k..k+7) ----
+                        c00 = _mm256_fmadd_ps(a0_vec, b_vec, c00);
+                        c10 = _mm256_fmadd_ps(a1_vec, b_vec, c10);
+                    }
+
+                    float sum00 = add_reduce_mm_256(c00);
+                    float sum10 = add_reduce_mm_256(c10);
+
+                    // Handle leftover elements (< 32)
+                    for (; k < K; ++k) {
+                        float a0 = a0_ptr[k];
+                        float a1 = a1_ptr[k];
+                        float b0 = mat_B_ptr[k];
+                        sum00 += a0 * b0;
+                        sum10 += a1 * b0;
+                    }
+
+                    mat_C[i * N + j] = sum00;
+                    mat_C[(i+1) * N + j] = sum10;
+                }
+            }
+        
+            for (; i < i_end; ++i) {
 
                 const float *mat_A_ptr = mat_A + i * K;
 
                 size_t j = jj;
 
                 // ---- vectorized j loop (4 columns at once) ----
-                for (; j + 8 <= j_end; j += 8) {
+                for (; j + 4 <= j_end; j += 4) {
                     const float *b0_ptr = mat_B + (j + 0) * K;
                     const float *b1_ptr = mat_B + (j + 1) * K;
                     const float *b2_ptr = mat_B + (j + 2) * K;
                     const float *b3_ptr = mat_B + (j + 3) * K;
-                    const float *b4_ptr = mat_B + (j + 4) * K;
-                    const float *b5_ptr = mat_B + (j + 5) * K;
-                    const float *b6_ptr = mat_B + (j + 6) * K;
-                    const float *b7_ptr = mat_B + (j + 7) * K;
 
                     __m256 c0 = _mm256_setzero_ps();
                     __m256 c1 = _mm256_setzero_ps();
                     __m256 c2 = _mm256_setzero_ps();
                     __m256 c3 = _mm256_setzero_ps();
-                    __m256 c4 = _mm256_setzero_ps();
-                    __m256 c5 = _mm256_setzero_ps();
-                    __m256 c6 = _mm256_setzero_ps();
-                    __m256 c7 = _mm256_setzero_ps();
 
                     size_t k = 0;
 
                     // ---- vectorized k loop ----
-                    for (; k + 32 <= K; k += 32) {
-                        // Load 4 blocks of 8 floats from A row
+                    for (; k + 64 <= K; k += 64) {
+                        // Load 8 blocks of 8 floats from A row
                         __m256 a0_vec = _mm256_loadu_ps(mat_A_ptr + k);
                         __m256 a1_vec = _mm256_loadu_ps(mat_A_ptr + k + 8);
                         __m256 a2_vec = _mm256_loadu_ps(mat_A_ptr + k + 16);
                         __m256 a3_vec = _mm256_loadu_ps(mat_A_ptr + k + 24);
+                        __m256 a4_vec = _mm256_loadu_ps(mat_A_ptr + k + 32);
+                        __m256 a5_vec = _mm256_loadu_ps(mat_A_ptr + k + 40);
+                        __m256 a6_vec = _mm256_loadu_ps(mat_A_ptr + k + 48);
+                        __m256 a7_vec = _mm256_loadu_ps(mat_A_ptr + k + 56);
 
                         // ---- block 0 (k..k+7) ----
                         c0 = _mm256_fmadd_ps(a0_vec, _mm256_loadu_ps(b0_ptr + k), c0);
                         c1 = _mm256_fmadd_ps(a0_vec, _mm256_loadu_ps(b1_ptr + k), c1);
                         c2 = _mm256_fmadd_ps(a0_vec, _mm256_loadu_ps(b2_ptr + k), c2);
                         c3 = _mm256_fmadd_ps(a0_vec, _mm256_loadu_ps(b3_ptr + k), c3);
-                        c4 = _mm256_fmadd_ps(a0_vec, _mm256_loadu_ps(b4_ptr + k), c4);
-                        c5 = _mm256_fmadd_ps(a0_vec, _mm256_loadu_ps(b5_ptr + k), c5);
-                        c6 = _mm256_fmadd_ps(a0_vec, _mm256_loadu_ps(b6_ptr + k), c6);
-                        c7 = _mm256_fmadd_ps(a0_vec, _mm256_loadu_ps(b7_ptr + k), c7);
 
                         // ---- block 1 (k+8..k+15) ----
                         c0 = _mm256_fmadd_ps(a1_vec, _mm256_loadu_ps(b0_ptr + k + 8), c0);
                         c1 = _mm256_fmadd_ps(a1_vec, _mm256_loadu_ps(b1_ptr + k + 8), c1);
                         c2 = _mm256_fmadd_ps(a1_vec, _mm256_loadu_ps(b2_ptr + k + 8), c2);
                         c3 = _mm256_fmadd_ps(a1_vec, _mm256_loadu_ps(b3_ptr + k + 8), c3);
-                        c4 = _mm256_fmadd_ps(a1_vec, _mm256_loadu_ps(b4_ptr + k + 8), c4);
-                        c5 = _mm256_fmadd_ps(a1_vec, _mm256_loadu_ps(b5_ptr + k + 8), c5);
-                        c6 = _mm256_fmadd_ps(a1_vec, _mm256_loadu_ps(b6_ptr + k + 8), c6);
-                        c7 = _mm256_fmadd_ps(a1_vec, _mm256_loadu_ps(b7_ptr + k + 8), c7);
 
                         // ---- block 2 (k+16..k+23) ----
                         c0 = _mm256_fmadd_ps(a2_vec, _mm256_loadu_ps(b0_ptr + k + 16), c0);
                         c1 = _mm256_fmadd_ps(a2_vec, _mm256_loadu_ps(b1_ptr + k + 16), c1);
                         c2 = _mm256_fmadd_ps(a2_vec, _mm256_loadu_ps(b2_ptr + k + 16), c2);
                         c3 = _mm256_fmadd_ps(a2_vec, _mm256_loadu_ps(b3_ptr + k + 16), c3);
-                        c4 = _mm256_fmadd_ps(a2_vec, _mm256_loadu_ps(b4_ptr + k + 16), c4);
-                        c5 = _mm256_fmadd_ps(a2_vec, _mm256_loadu_ps(b5_ptr + k + 16), c5);
-                        c6 = _mm256_fmadd_ps(a2_vec, _mm256_loadu_ps(b6_ptr + k + 16), c6);
-                        c7 = _mm256_fmadd_ps(a2_vec, _mm256_loadu_ps(b7_ptr + k + 16), c7);
 
                         // ---- block 3 (k+24..k+31) ----
                         c0 = _mm256_fmadd_ps(a3_vec, _mm256_loadu_ps(b0_ptr + k + 24), c0);
                         c1 = _mm256_fmadd_ps(a3_vec, _mm256_loadu_ps(b1_ptr + k + 24), c1);
                         c2 = _mm256_fmadd_ps(a3_vec, _mm256_loadu_ps(b2_ptr + k + 24), c2);
                         c3 = _mm256_fmadd_ps(a3_vec, _mm256_loadu_ps(b3_ptr + k + 24), c3);
-                        c4 = _mm256_fmadd_ps(a3_vec, _mm256_loadu_ps(b4_ptr + k + 24), c4);
-                        c5 = _mm256_fmadd_ps(a3_vec, _mm256_loadu_ps(b5_ptr + k + 24), c5);
-                        c6 = _mm256_fmadd_ps(a3_vec, _mm256_loadu_ps(b6_ptr + k + 24), c6);
-                        c7 = _mm256_fmadd_ps(a3_vec, _mm256_loadu_ps(b7_ptr + k + 24), c7);
+
+                        // ---- block 4 (k+32..k+39) ----
+                        c0 = _mm256_fmadd_ps(a4_vec, _mm256_loadu_ps(b0_ptr + k + 32), c0);
+                        c1 = _mm256_fmadd_ps(a4_vec, _mm256_loadu_ps(b1_ptr + k + 32), c1);
+                        c2 = _mm256_fmadd_ps(a4_vec, _mm256_loadu_ps(b2_ptr + k + 32), c2);
+                        c3 = _mm256_fmadd_ps(a4_vec, _mm256_loadu_ps(b3_ptr + k + 32), c3);
+
+                        // ---- block 5 (k+40..k+47) ----
+                        c0 = _mm256_fmadd_ps(a5_vec, _mm256_loadu_ps(b0_ptr + k + 40), c0);
+                        c1 = _mm256_fmadd_ps(a5_vec, _mm256_loadu_ps(b1_ptr + k + 40), c1);
+                        c2 = _mm256_fmadd_ps(a5_vec, _mm256_loadu_ps(b2_ptr + k + 40), c2);
+                        c3 = _mm256_fmadd_ps(a5_vec, _mm256_loadu_ps(b3_ptr + k + 40), c3);
+
+                        // ---- block 6 (k+48..k+55) ----
+                        c0 = _mm256_fmadd_ps(a6_vec, _mm256_loadu_ps(b0_ptr + k + 48), c0);
+                        c1 = _mm256_fmadd_ps(a6_vec, _mm256_loadu_ps(b1_ptr + k + 48), c1);
+                        c2 = _mm256_fmadd_ps(a6_vec, _mm256_loadu_ps(b2_ptr + k + 48), c2);
+                        c3 = _mm256_fmadd_ps(a6_vec, _mm256_loadu_ps(b3_ptr + k + 48), c3);
+
+                        // ---- block 7 (k+56..k+63) ----
+                        c0 = _mm256_fmadd_ps(a7_vec, _mm256_loadu_ps(b0_ptr + k + 56), c0);
+                        c1 = _mm256_fmadd_ps(a7_vec, _mm256_loadu_ps(b1_ptr + k + 56), c1);
+                        c2 = _mm256_fmadd_ps(a7_vec, _mm256_loadu_ps(b2_ptr + k + 56), c2);
+                        c3 = _mm256_fmadd_ps(a7_vec, _mm256_loadu_ps(b3_ptr + k + 56), c3);
                     }
 
                     // reduce SIMD accumulators
@@ -405,10 +533,6 @@ void lg_M_N_sm_K_transpose(
                     float sum1 = add_reduce_mm_256(c1);
                     float sum2 = add_reduce_mm_256(c2);
                     float sum3 = add_reduce_mm_256(c3);
-                    float sum4 = add_reduce_mm_256(c4);
-                    float sum5 = add_reduce_mm_256(c5);
-                    float sum6 = add_reduce_mm_256(c6);
-                    float sum7 = add_reduce_mm_256(c7);
 
                     // ---- scalar k cleanup ----
                     for (; k < K; ++k) {
@@ -417,20 +541,12 @@ void lg_M_N_sm_K_transpose(
                         sum1 += a * b1_ptr[k];
                         sum2 += a * b2_ptr[k];
                         sum3 += a * b3_ptr[k];
-                        sum4 += a * b4_ptr[k];
-                        sum5 += a * b5_ptr[k];
-                        sum6 += a * b6_ptr[k];
-                        sum7 += a * b7_ptr[k];
                     }
 
                     mat_C[i * N + j + 0] = sum0;
                     mat_C[i * N + j + 1] = sum1;
                     mat_C[i * N + j + 2] = sum2;
                     mat_C[i * N + j + 3] = sum3;
-                    mat_C[i * N + j + 4] = sum4;
-                    mat_C[i * N + j + 5] = sum5;
-                    mat_C[i * N + j + 6] = sum6;
-                    mat_C[i * N + j + 7] = sum7;
                 }
 
                 // ---- scalar j cleanup ----
@@ -489,63 +605,151 @@ void sm_M_lg_N_K_transpose(
     const float *mat_A, const float *mat_B,
     float *mat_C, size_t M, size_t N, size_t K
 ) {
-    constexpr size_t TN = 64;   // tile size for rows of A / C
-
-    memset(mat_C, 0, M * N * sizeof(float));
+    const size_t j_end_stride = N / 4 * 4;
 
     // B is N x K, stored as B^T row-major: mat_B[j * K + k]
     for (size_t i = 0; i < M; ++i) {
         const float *mat_A_ptr = mat_A + i * K;
 
         #pragma omp parallel for schedule(static)
-        for (size_t jj = 0; jj < N; jj += TN) {
-            size_t j_end = std::min(jj + TN, N);
+        for (size_t j = 0; j < j_end_stride; j += 4) {
+            const float *b0_ptr = mat_B + j * K;
+            const float *b1_ptr = mat_B + (j+1) * K;
+            const float *b2_ptr = mat_B + (j+2) * K;
+            const float *b3_ptr = mat_B + (j+3) * K;
 
-            for (size_t j = jj; j < j_end; ++j) {
-                const float *mat_B_ptr = mat_B + j * K;
+            // Initialize accumulators
+            __m256 c0 = _mm256_setzero_ps();
+            __m256 c1 = _mm256_setzero_ps();
+            __m256 c2 = _mm256_setzero_ps();
+            __m256 c3 = _mm256_setzero_ps();
 
-                // Initialize accumulators
-                __m256 c0 = _mm256_setzero_ps();
-                __m256 c1 = _mm256_setzero_ps();
-                __m256 c2 = _mm256_setzero_ps();
-                __m256 c3 = _mm256_setzero_ps();
+            size_t k = 0;
+            for (; k + 64 <= K; k += 64) {
+                // Load 8 blocks of 8 floats from A
+                __m256 a_vec0 = _mm256_loadu_ps(mat_A_ptr + k);
+                __m256 a_vec1 = _mm256_loadu_ps(mat_A_ptr + k + 8);
+                __m256 a_vec2 = _mm256_loadu_ps(mat_A_ptr + k + 16);
+                __m256 a_vec3 = _mm256_loadu_ps(mat_A_ptr + k + 24);
+                __m256 a_vec4 = _mm256_loadu_ps(mat_A_ptr + k + 32);
+                __m256 a_vec5 = _mm256_loadu_ps(mat_A_ptr + k + 40);
+                __m256 a_vec6 = _mm256_loadu_ps(mat_A_ptr + k + 48);
+                __m256 a_vec7 = _mm256_loadu_ps(mat_A_ptr + k + 56);
 
-                size_t k = 0;
-                for (; k + 32 <= K; k += 32) {
-                    // First block
-                    __m256 a0 = _mm256_loadu_ps(mat_A_ptr + k);
-                    __m256 b0 = _mm256_loadu_ps(mat_B_ptr + k);
-                    c0 = _mm256_fmadd_ps(a0, b0, c0);
+                // Accumulate using a_vec0
+                c0 = _mm256_fmadd_ps(a_vec0, _mm256_loadu_ps(b0_ptr + k), c0);
+                c1 = _mm256_fmadd_ps(a_vec0, _mm256_loadu_ps(b1_ptr + k), c1);
+                c2 = _mm256_fmadd_ps(a_vec0, _mm256_loadu_ps(b2_ptr + k), c2);
+                c3 = _mm256_fmadd_ps(a_vec0, _mm256_loadu_ps(b3_ptr + k), c3);
 
-                    // Second block
-                    __m256 a1 = _mm256_loadu_ps(mat_A_ptr + k + 8);
-                    __m256 b1 = _mm256_loadu_ps(mat_B_ptr + k + 8);
-                    c1 = _mm256_fmadd_ps(a1, b1, c1);
+                // Accumulate using a_vec1
+                c0 = _mm256_fmadd_ps(a_vec1, _mm256_loadu_ps(b0_ptr + k + 8), c0);
+                c1 = _mm256_fmadd_ps(a_vec1, _mm256_loadu_ps(b1_ptr + k + 8), c1);
+                c2 = _mm256_fmadd_ps(a_vec1, _mm256_loadu_ps(b2_ptr + k + 8), c2);
+                c3 = _mm256_fmadd_ps(a_vec1, _mm256_loadu_ps(b3_ptr + k + 8), c3);
 
-                    // Third block
-                    __m256 a2 = _mm256_loadu_ps(mat_A_ptr + k + 16);
-                    __m256 b2 = _mm256_loadu_ps(mat_B_ptr + k + 16);
-                    c2 = _mm256_fmadd_ps(a2, b2, c2);
+                // Accumulate using a_vec2
+                c0 = _mm256_fmadd_ps(a_vec2, _mm256_loadu_ps(b0_ptr + k + 16), c0);
+                c1 = _mm256_fmadd_ps(a_vec2, _mm256_loadu_ps(b1_ptr + k + 16), c1);
+                c2 = _mm256_fmadd_ps(a_vec2, _mm256_loadu_ps(b2_ptr + k + 16), c2);
+                c3 = _mm256_fmadd_ps(a_vec2, _mm256_loadu_ps(b3_ptr + k + 16), c3);
 
-                    // Fourth block
-                    __m256 a3 = _mm256_loadu_ps(mat_A_ptr + k + 24);
-                    __m256 b3 = _mm256_loadu_ps(mat_B_ptr + k + 24);
-                    c3 = _mm256_fmadd_ps(a3, b3, c3);
-                }
+                // Accumulate using a_vec3
+                c0 = _mm256_fmadd_ps(a_vec3, _mm256_loadu_ps(b0_ptr + k + 24), c0);
+                c1 = _mm256_fmadd_ps(a_vec3, _mm256_loadu_ps(b1_ptr + k + 24), c1);
+                c2 = _mm256_fmadd_ps(a_vec3, _mm256_loadu_ps(b2_ptr + k + 24), c2);
+                c3 = _mm256_fmadd_ps(a_vec3, _mm256_loadu_ps(b3_ptr + k + 24), c3);
 
-                float sum = add_reduce_mm_256(
-                    _mm256_add_ps(_mm256_add_ps(c0, c1),
-                                _mm256_add_ps(c2, c3))
-                );
+                // Accumulate using a_vec4
+                c0 = _mm256_fmadd_ps(a_vec4, _mm256_loadu_ps(b0_ptr + k + 32), c0);
+                c1 = _mm256_fmadd_ps(a_vec4, _mm256_loadu_ps(b1_ptr + k + 32), c1);
+                c2 = _mm256_fmadd_ps(a_vec4, _mm256_loadu_ps(b2_ptr + k + 32), c2);
+                c3 = _mm256_fmadd_ps(a_vec4, _mm256_loadu_ps(b3_ptr + k + 32), c3);
 
-                // Handle leftover elements (< 32)
-                #pragma omp simd reduction(+:sum)
-                for (size_t k_t = k; k_t < K; ++k_t) {
-                    sum += mat_A_ptr[k_t] * mat_B_ptr[k_t];
-                }
+                // Accumulate using a_vec5
+                c0 = _mm256_fmadd_ps(a_vec5, _mm256_loadu_ps(b0_ptr + k + 40), c0);
+                c1 = _mm256_fmadd_ps(a_vec5, _mm256_loadu_ps(b1_ptr + k + 40), c1);
+                c2 = _mm256_fmadd_ps(a_vec5, _mm256_loadu_ps(b2_ptr + k + 40), c2);
+                c3 = _mm256_fmadd_ps(a_vec5, _mm256_loadu_ps(b3_ptr + k + 40), c3);
 
-                mat_C[i * N + j] += sum;
+                // Accumulate using a_vec6
+                c0 = _mm256_fmadd_ps(a_vec6, _mm256_loadu_ps(b0_ptr + k + 48), c0);
+                c1 = _mm256_fmadd_ps(a_vec6, _mm256_loadu_ps(b1_ptr + k + 48), c1);
+                c2 = _mm256_fmadd_ps(a_vec6, _mm256_loadu_ps(b2_ptr + k + 48), c2);
+                c3 = _mm256_fmadd_ps(a_vec6, _mm256_loadu_ps(b3_ptr + k + 48), c3);
+
+                // Accumulate using a_vec7
+                c0 = _mm256_fmadd_ps(a_vec7, _mm256_loadu_ps(b0_ptr + k + 56), c0);
+                c1 = _mm256_fmadd_ps(a_vec7, _mm256_loadu_ps(b1_ptr + k + 56), c1);
+                c2 = _mm256_fmadd_ps(a_vec7, _mm256_loadu_ps(b2_ptr + k + 56), c2);
+                c3 = _mm256_fmadd_ps(a_vec7, _mm256_loadu_ps(b3_ptr + k + 56), c3);
             }
+
+            float sum0 = add_reduce_mm_256(c0);
+            float sum1 = add_reduce_mm_256(c1);
+            float sum2 = add_reduce_mm_256(c2);
+            float sum3 = add_reduce_mm_256(c3);
+
+            // Handle leftover elements (< 32)
+            for (; k < K; ++K) {
+                const float a = mat_A_ptr[k];
+                sum0 += a * b0_ptr[k];
+                sum1 += a * b1_ptr[k];
+                sum2 += a * b2_ptr[k];
+                sum3 += a * b3_ptr[k];
+            }
+
+            mat_C[i * N + j] = sum0;
+            mat_C[i * N + j + 1] = sum1;
+            mat_C[i * N + j + 2] = sum2;
+            mat_C[i * N + j + 3] = sum3;
+        }
+    
+        #pragma omp parallel for
+        for (size_t j = j_end_stride; j < N; ++j) {
+            const float *mat_B_ptr = mat_B + j * K;
+
+            // Initialize accumulators
+            __m256 c0 = _mm256_setzero_ps();
+            __m256 c1 = _mm256_setzero_ps();
+            __m256 c2 = _mm256_setzero_ps();
+            __m256 c3 = _mm256_setzero_ps();
+
+            size_t k = 0;
+            for (; k + 32 <= K; k += 32) {
+                // First block
+                __m256 a0 = _mm256_loadu_ps(mat_A_ptr + k);
+                __m256 b0 = _mm256_loadu_ps(mat_B_ptr + k);
+                c0 = _mm256_fmadd_ps(a0, b0, c0);
+
+                // Second block
+                __m256 a1 = _mm256_loadu_ps(mat_A_ptr + k + 8);
+                __m256 b1 = _mm256_loadu_ps(mat_B_ptr + k + 8);
+                c1 = _mm256_fmadd_ps(a1, b1, c1);
+
+                // Third block
+                __m256 a2 = _mm256_loadu_ps(mat_A_ptr + k + 16);
+                __m256 b2 = _mm256_loadu_ps(mat_B_ptr + k + 16);
+                c2 = _mm256_fmadd_ps(a2, b2, c2);
+
+                // Fourth block
+                __m256 a3 = _mm256_loadu_ps(mat_A_ptr + k + 24);
+                __m256 b3 = _mm256_loadu_ps(mat_B_ptr + k + 24);
+                c3 = _mm256_fmadd_ps(a3, b3, c3);
+            }
+
+            float sum = add_reduce_mm_256(
+                _mm256_add_ps(_mm256_add_ps(c0, c1),
+                            _mm256_add_ps(c2, c3))
+            );
+
+            // Handle leftover elements (< 32)
+            #pragma omp simd reduction(+:sum)
+            for (size_t k_t = k; k_t < K; ++k_t) {
+                sum += mat_A_ptr[k_t] * mat_B_ptr[k_t];
+            }
+
+            mat_C[i * N + j] = sum;
         }
     }
 }
