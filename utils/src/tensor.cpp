@@ -121,6 +121,7 @@ void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
         if (dtype == DType::FP32) {
             float *fp32_buf = (float *)buf;
             if (full_tensor) {
+                printf("\n");
                 for (size_t i = 0; i < batches; i++) {
                     for (size_t j = 0; j < elem; j++) {
                         printf("%.2f ", fp32_buf[i * elem + j]);
@@ -135,6 +136,7 @@ void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
         } else if (dtype == DType::INT32) {
             int *int32_buf = (int *)buf;
             if (full_tensor) {
+                printf("\n");
                 for (size_t i = 0; i < batches; i++) {
                     for (size_t j = 0; j < elem; j++) {
                         printf("%d ", int32_buf[i * elem + j]);

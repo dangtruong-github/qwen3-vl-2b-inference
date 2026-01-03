@@ -423,7 +423,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
 
     size_t VH = config->vision_hidden_size;
     size_t VNP = config->max_vision_embeddings;
-    size_t VNP_max = VNP * (config->vision_spatial_merge_size * config->vision_spatial_merge_size);
+    size_t VNP_max = std::min(S, VNP * 10);
     size_t VD = VH / config->vision_num_heads;
     size_t VI = config->vision_intermediate_size;
     size_t VDS = config->vision_deep_stack_depth;

@@ -679,9 +679,8 @@ void vision_att(
         // Result:  [total_tokens, total_tokens]
         // M = total_tokens, N = total_tokens, K = head_dim
         // ---------------------------------------------------------
-        linear(curr_q, curr_k, NULL, attn_scores, total_tokens, total_tokens, head_dim, true);
-        
-        
+
+        linear(curr_q, curr_k, nullptr, attn_scores, total_tokens, total_tokens, head_dim, true);
 
         // ---------------------------------------------------------
         // Step 2: Scale Factor and Bias

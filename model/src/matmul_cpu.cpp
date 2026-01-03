@@ -851,139 +851,130 @@ void lg_M_N_K(
 
     memset(mat_C, 0, M * N * sizeof(float));
 
-    #pragma omp parallel num_threads(NUM_THREADS_MAT_MUL)
-    {
-        int tid = omp_get_thread_num();
-        cpu_set_t cpuset;
-        CPU_ZERO(&cpuset);
-        CPU_SET(2 * tid, &cpuset);
-        sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
+    for (size_t kk = 0; kk < K; kk += TK) {
+        size_t k_end = std::min(kk + TK, K);
 
-        for (size_t kk = 0; kk < K; kk += TK) {
-            size_t k_end = std::min(kk + TK, K);
+        #pragma omp parallel for collapse(2) schedule(static)
+        for (size_t ii = 0; ii < M; ii += TM) {
+            for (size_t jj = 0; jj < N; jj += TN) {
+                size_t i_end = std::min(ii + TM, M);
+                size_t j_end = std::min(jj + TN, N);
+                
+                size_t i = ii; 
+                for (; i + 8 <= i_end; i += 8) {
+                    const float *a0_ptr = mat_A + i * K;
+                    const float *a1_ptr = mat_A + (i+1) * K;
+                    const float *a2_ptr = mat_A + (i+2) * K;
+                    const float *a3_ptr = mat_A + (i+3) * K;
+                    const float *a4_ptr = mat_A + (i+4) * K;
+                    const float *a5_ptr = mat_A + (i+5) * K;
+                    const float *a6_ptr = mat_A + (i+6) * K;
+                    const float *a7_ptr = mat_A + (i+7) * K;
 
-            #pragma omp parallel for collapse(2) schedule(static)
-            for (size_t ii = 0; ii < M; ii += TM) {
-                for (size_t jj = 0; jj < N; jj += TN) {
-                    size_t i_end = std::min(ii + TM, M);
-                    size_t j_end = std::min(jj + TN, N);
-                    
-                    size_t i = ii; 
-                    for (; i + 8 <= i_end; i += 8) {
-                        const float *a0_ptr = mat_A + i * K;
-                        const float *a1_ptr = mat_A + (i+1) * K;
-                        const float *a2_ptr = mat_A + (i+2) * K;
-                        const float *a3_ptr = mat_A + (i+3) * K;
-                        const float *a4_ptr = mat_A + (i+4) * K;
-                        const float *a5_ptr = mat_A + (i+5) * K;
-                        const float *a6_ptr = mat_A + (i+6) * K;
-                        const float *a7_ptr = mat_A + (i+7) * K;
+                    size_t j = jj; 
+                    for (; j + 8 <= j_end; j += 8) {
 
-                        size_t j = jj; 
-                        for (; j + 8 <= j_end; j += 8) {
+                        __m256 c0, c1, c2, c3, c4, c5, c6, c7;
+                        __m256 a04, a15, a26, a37;
+                        __m256 b_vec;
 
-                            __m256 c0, c1, c2, c3, c4, c5, c6, c7;
-                            __m256 a04, a15, a26, a37;
-                            __m256 b_vec;
+                        const float *b_ptr = mat_B + j;
+                        
+                        c0 = _mm256_loadu_ps(mat_C + i * N + j);
+                        c1 = _mm256_loadu_ps(mat_C + (i+1) * N + j);
+                        c2 = _mm256_loadu_ps(mat_C + (i+2) * N + j);
+                        c3 = _mm256_loadu_ps(mat_C + (i+3) * N + j);
+                        c4 = _mm256_loadu_ps(mat_C + (i+4) * N + j);
+                        c5 = _mm256_loadu_ps(mat_C + (i+5) * N + j);
+                        c6 = _mm256_loadu_ps(mat_C + (i+6) * N + j);
+                        c7 = _mm256_loadu_ps(mat_C + (i+7) * N + j);
 
-                            const float *b_ptr = mat_B + j;
-                            
-                            c0 = _mm256_loadu_ps(mat_C + i * N + j);
-                            c1 = _mm256_loadu_ps(mat_C + (i+1) * N + j);
-                            c2 = _mm256_loadu_ps(mat_C + (i+2) * N + j);
-                            c3 = _mm256_loadu_ps(mat_C + (i+3) * N + j);
-                            c4 = _mm256_loadu_ps(mat_C + (i+4) * N + j);
-                            c5 = _mm256_loadu_ps(mat_C + (i+5) * N + j);
-                            c6 = _mm256_loadu_ps(mat_C + (i+6) * N + j);
-                            c7 = _mm256_loadu_ps(mat_C + (i+7) * N + j);
+                        for (size_t k = kk; k < k_end; ++k) {
+                            b_vec = _mm256_loadu_ps(b_ptr + k * N);
 
-                            for (size_t k = kk; k < k_end; ++k) {
-                                b_vec = _mm256_loadu_ps(b_ptr + k * N);
+                            a04 = _mm256_set1_ps(a0_ptr[k]);
+                            c0 = _mm256_fmadd_ps(a04, b_vec, c0);
 
-                                a04 = _mm256_set1_ps(a0_ptr[k]);
-                                c0 = _mm256_fmadd_ps(a04, b_vec, c0);
+                            a15 = _mm256_set1_ps(a1_ptr[k]);
+                            c1 = _mm256_fmadd_ps(a15, b_vec, c1);
 
-                                a15 = _mm256_set1_ps(a1_ptr[k]);
-                                c1 = _mm256_fmadd_ps(a15, b_vec, c1);
+                            a26 = _mm256_set1_ps(a2_ptr[k]);
+                            c2 = _mm256_fmadd_ps(a26, b_vec, c2);
 
-                                a26 = _mm256_set1_ps(a2_ptr[k]);
-                                c2 = _mm256_fmadd_ps(a26, b_vec, c2);
+                            a37 = _mm256_set1_ps(a3_ptr[k]);
+                            c3 = _mm256_fmadd_ps(a37, b_vec, c3);
 
-                                a37 = _mm256_set1_ps(a3_ptr[k]);
-                                c3 = _mm256_fmadd_ps(a37, b_vec, c3);
+                            a04 = _mm256_set1_ps(a4_ptr[k]);
+                            c4 = _mm256_fmadd_ps(a04, b_vec, c4);
 
-                                a04 = _mm256_set1_ps(a4_ptr[k]);
-                                c4 = _mm256_fmadd_ps(a04, b_vec, c4);
+                            a15 = _mm256_set1_ps(a5_ptr[k]);
+                            c5 = _mm256_fmadd_ps(a15, b_vec, c5);
 
-                                a15 = _mm256_set1_ps(a5_ptr[k]);
-                                c5 = _mm256_fmadd_ps(a15, b_vec, c5);
+                            a26 = _mm256_set1_ps(a6_ptr[k]);
+                            c6 = _mm256_fmadd_ps(a26, b_vec, c6);
 
-                                a26 = _mm256_set1_ps(a6_ptr[k]);
-                                c6 = _mm256_fmadd_ps(a26, b_vec, c6);
-
-                                a37 = _mm256_set1_ps(a7_ptr[k]);
-                                c7 = _mm256_fmadd_ps(a37, b_vec, c7);
-                            }
-
-                            _mm256_storeu_ps(mat_C + i * N + j, c0);
-                            _mm256_storeu_ps(mat_C + (i+1) * N + j, c1);
-                            _mm256_storeu_ps(mat_C + (i+2) * N + j, c2);
-                            _mm256_storeu_ps(mat_C + (i+3) * N + j, c3);
-                            _mm256_storeu_ps(mat_C + (i+4) * N + j, c4);
-                            _mm256_storeu_ps(mat_C + (i+5) * N + j, c5);
-                            _mm256_storeu_ps(mat_C + (i+6) * N + j, c6);
-                            _mm256_storeu_ps(mat_C + (i+7) * N + j, c7);
-                        }
-                    
-                        // cleanup loop
-
-                        // cleanup columns for 8-row block
-                        for (; j < j_end; ++j) {
-                            float c0s = mat_C[(i+0) * N + j];
-                            float c1s = mat_C[(i+1) * N + j];
-                            float c2s = mat_C[(i+2) * N + j];
-                            float c3s = mat_C[(i+3) * N + j];
-                            float c4s = mat_C[(i+4) * N + j];
-                            float c5s = mat_C[(i+5) * N + j];
-                            float c6s = mat_C[(i+6) * N + j];
-                            float c7s = mat_C[(i+7) * N + j];
-
-                            for (size_t k = kk; k < k_end; ++k) {
-                                float b = mat_B[k * N + j];
-                                c0s += a0_ptr[k] * b;
-                                c1s += a1_ptr[k] * b;
-                                c2s += a2_ptr[k] * b;
-                                c3s += a3_ptr[k] * b;
-                                c4s += a4_ptr[k] * b;
-                                c5s += a5_ptr[k] * b;
-                                c6s += a6_ptr[k] * b;
-                                c7s += a7_ptr[k] * b;
-                            }
-
-                            mat_C[(i+0) * N + j] = c0s;
-                            mat_C[(i+1) * N + j] = c1s;
-                            mat_C[(i+2) * N + j] = c2s;
-                            mat_C[(i+3) * N + j] = c3s;
-                            mat_C[(i+4) * N + j] = c4s;
-                            mat_C[(i+5) * N + j] = c5s;
-                            mat_C[(i+6) * N + j] = c6s;
-                            mat_C[(i+7) * N + j] = c7s;
+                            a37 = _mm256_set1_ps(a7_ptr[k]);
+                            c7 = _mm256_fmadd_ps(a37, b_vec, c7);
                         }
 
+                        _mm256_storeu_ps(mat_C + i * N + j, c0);
+                        _mm256_storeu_ps(mat_C + (i+1) * N + j, c1);
+                        _mm256_storeu_ps(mat_C + (i+2) * N + j, c2);
+                        _mm256_storeu_ps(mat_C + (i+3) * N + j, c3);
+                        _mm256_storeu_ps(mat_C + (i+4) * N + j, c4);
+                        _mm256_storeu_ps(mat_C + (i+5) * N + j, c5);
+                        _mm256_storeu_ps(mat_C + (i+6) * N + j, c6);
+                        _mm256_storeu_ps(mat_C + (i+7) * N + j, c7);
+                    }
+                
+                    // cleanup loop
+
+                    // cleanup columns for 8-row block
+                    for (; j < j_end; ++j) {
+                        float c0s = mat_C[(i+0) * N + j];
+                        float c1s = mat_C[(i+1) * N + j];
+                        float c2s = mat_C[(i+2) * N + j];
+                        float c3s = mat_C[(i+3) * N + j];
+                        float c4s = mat_C[(i+4) * N + j];
+                        float c5s = mat_C[(i+5) * N + j];
+                        float c6s = mat_C[(i+6) * N + j];
+                        float c7s = mat_C[(i+7) * N + j];
+
+                        for (size_t k = kk; k < k_end; ++k) {
+                            float b = mat_B[k * N + j];
+                            c0s += a0_ptr[k] * b;
+                            c1s += a1_ptr[k] * b;
+                            c2s += a2_ptr[k] * b;
+                            c3s += a3_ptr[k] * b;
+                            c4s += a4_ptr[k] * b;
+                            c5s += a5_ptr[k] * b;
+                            c6s += a6_ptr[k] * b;
+                            c7s += a7_ptr[k] * b;
+                        }
+
+                        mat_C[(i+0) * N + j] = c0s;
+                        mat_C[(i+1) * N + j] = c1s;
+                        mat_C[(i+2) * N + j] = c2s;
+                        mat_C[(i+3) * N + j] = c3s;
+                        mat_C[(i+4) * N + j] = c4s;
+                        mat_C[(i+5) * N + j] = c5s;
+                        mat_C[(i+6) * N + j] = c6s;
+                        mat_C[(i+7) * N + j] = c7s;
                     }
 
-                    for (; i < i_end; ++i) {
-                        const float *a_ptr = mat_A + i * K;
+                }
 
-                        for (size_t j = jj; j < j_end; ++j) {
-                            float c = mat_C[i * N + j];
+                for (; i < i_end; ++i) {
+                    const float *a_ptr = mat_A + i * K;
 
-                            for (size_t k = kk; k < k_end; ++k) {
-                                c += a_ptr[k] * mat_B[k * N + j];
-                            }
+                    for (size_t j = jj; j < j_end; ++j) {
+                        float c = mat_C[i * N + j];
 
-                            mat_C[i * N + j] = c;
+                        for (size_t k = kk; k < k_end; ++k) {
+                            c += a_ptr[k] * mat_B[k * N + j];
                         }
+
+                        mat_C[i * N + j] = c;
                     }
                 }
             }
