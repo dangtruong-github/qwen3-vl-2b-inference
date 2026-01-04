@@ -407,8 +407,82 @@ void encode(
     free(str_buffer);
 }
 
-static inline int starts_with_utf8(const char *s, const char *utf8_char) {
+int starts_with_utf8(const char *s, const char *utf8_char) {
     return (strncmp(s, utf8_char, strlen(utf8_char)) == 0);
+}
+
+int ends_with_utf8(const char *s, const char *utf8_char) {
+    size_t s_len = strlen(s);
+    size_t u_len = strlen(utf8_char);
+
+    if (u_len > s_len) return 0;
+
+    return (memcmp(s + s_len - u_len, utf8_char, u_len) == 0);
+}
+
+void print_normalized_utf8(const char *word) {
+    const char *utf8_space = "Ġ";
+    const char *utf8_newline = "Ċ";
+    size_t len = strlen(word);
+    size_t nl_len = strlen(utf8_newline);
+    size_t sp_len = strlen(utf8_space);
+
+    size_t start = 0;
+    size_t end = len;
+
+    int had_nl_leading = 0;
+    int had_sp_leading = 0;
+
+    /* ---- strip leading ---- */
+    for (;;) {
+        if (nl_len && start + nl_len <= end &&
+            memcmp(word + start, utf8_newline, nl_len) == 0) {
+            start += nl_len;
+            had_nl_leading = 1;
+        } else if (sp_len && start + sp_len <= end &&
+                   memcmp(word + start, utf8_space, sp_len) == 0) {
+            start += sp_len;
+            had_sp_leading = 1;
+        } else {
+            break;
+        }
+    }
+
+    int had_nl_trailing = 0;
+    int had_sp_trailing = 0;
+
+    /* ---- strip trailing ---- */
+    for (;;) {
+        if (nl_len && end >= nl_len &&
+            memcmp(word + end - nl_len, utf8_newline, nl_len) == 0) {
+            end -= nl_len;
+            had_nl_trailing = 1;
+        } else if (sp_len && end >= sp_len &&
+                   memcmp(word + end - sp_len, utf8_space, sp_len) == 0) {
+            end -= sp_len;
+            had_sp_trailing = 1;
+        } else {
+            break;
+        }
+    }
+
+    /* ---- emit normalized leading ---- */
+    if (had_nl_leading) {
+        putchar('\n');
+    } else if (had_sp_leading) {
+        putchar(' ');
+    }
+
+    /* ---- emit core word ---- */
+    if (end > start) {
+        printf("%.*s", (int)(end - start), word + start);
+    }
+
+    if (had_nl_trailing) {
+        putchar('\n');
+    } else if (had_nl_trailing) {
+        putchar(' ');
+    }
 }
 
 void decode(

@@ -24,6 +24,12 @@ void print_config(QwenConfig *config) {
     printf("video_token_id: %d\n", config->video_token_id);
 }
 
+void print_token(TokenizerStruct *tokenizer, int token_id) {
+    if (token_id != 151655) {
+        print_normalized_utf8(tokenizer->vocab[token_id]);
+    }
+}
+
 int forward_validate(const char *in_token_file, const char *in_img_path, const char *out_token_file, TokenizerStruct *tokenizer, QwenConfig *config, QwenWeight *weight, QwenRunState *state) {
     FILE* in_file = fopen(in_token_file, "r");
     FILE* in_img_file = fopen(in_img_path, "r");
@@ -87,7 +93,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
 
         if (input_count >= max_seq_len) continue;
         
-        if (sample_count <= 3) continue;
+        // if (sample_count <= 3) continue;
         // if (sample_count >= 5) continue;
 
         // ------------------------------------------------------------
@@ -166,14 +172,10 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                     }
                     printf("\n");
                 } else {
-                    if (next != 151655) {   
-                        printf("%s ", tokenizer->vocab[next]);
-                    }
+                    print_token(tokenizer, next);
                 }
             #else
-                if (next != 151655) {   
-                    printf("%s ", tokenizer->vocab[next]);
-                }
+                print_token(tokenizer, next);
             #endif
 
             // Data-dependent terminating condition - match your EOS tokens

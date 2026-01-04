@@ -16,3 +16,6 @@ void encode(
 void decode(
     TokenizerStruct *t, char *text, size_t text_size, int *tokens, int n_tokens
 );
+int starts_with_utf8(const char *s, const char *utf8_char);
+int ends_with_utf8(const char *s, const char *utf8_char);
+void print_normalized_utf8(const char *word);
