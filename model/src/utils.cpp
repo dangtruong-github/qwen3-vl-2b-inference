@@ -111,7 +111,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
 
         int first_token_recorded = 0;
 
-        if (!img_true) continue;
+        // if (!img_true) continue;
 
         if (img_true) {
             forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
@@ -126,11 +126,6 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         // ------------------------------------------------------------
         int *generated_tokens = (int*)malloc(max_seq_len * sizeof(int));
         int total_generated_count = 0;
-        
-        // Copy initial input tokens
-        for (int i = 0; i < input_count; i++) {
-            generated_tokens[total_generated_count++] = input_tokens[i];
-        }
 
         // Start the main loop - similar to generate() in run.cpp
         int next; // will store the next token in the sequence
@@ -164,20 +159,20 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
 
             #ifdef PRINT_LOGITS
                 if (pos >= input_count) {
-                    printf("%d %s", generated_tokens[pos], tokenizer->vocab[generated_tokens[pos]]);
+                    printf("%d %s", next, tokenizer->vocab[next]);
                     printf("\nLogits: ");
                     for (int i = 0; i < 5; i++) {
                         printf("%.6f ", logits[i]);
                     }
                     printf("\n");
                 } else {
-                    if (generated_tokens[pos] != 151655) {   
-                        printf("%s ", tokenizer->vocab[generated_tokens[pos]]);
+                    if (next != 151655) {   
+                        printf("%s ", tokenizer->vocab[next]);
                     }
                 }
             #else
-                if (generated_tokens[pos] != 151655) {   
-                    printf("%s ", tokenizer->vocab[generated_tokens[pos]]);
+                if (next != 151655) {   
+                    printf("%s ", tokenizer->vocab[next]);
                 }
             #endif
 
@@ -304,6 +299,221 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
     printf("Average generated tokens per second: %lf (toks/s)\n", avg_tps);
     
     return (validation_failures > 0) ? 1 : 0;
+}
+
+void forward_generate(const char *in_token_file, const char *in_img_path, const char *out_token_file, TokenizerStruct *tokenizer, QwenConfig *config, QwenWeight *weight, QwenRunState *state) {
+    FILE* in_file = fopen(in_token_file, "r");
+    FILE* in_img_file = fopen(in_img_path, "r");
+    FILE* out_file = fopen(out_token_file, "w");
+
+    if (!in_file) {
+        fprintf(stderr, "Error: Could not open input token file: %s\n", in_token_file);
+        return;
+    }
+    if (!in_img_file) {
+        fprintf(stderr, "Error: Could not open input image path file: %s\n", in_img_file);
+        fclose(in_file);
+        return;
+    }
+    if (!out_file) {
+        fprintf(stderr, "Error: Could not open output token file: %s\n", out_token_file);
+        fclose(in_file);
+        fclose(in_img_file);
+        return;
+    }
+
+    printf("\nStarting Forward Validation...\n");
+    setbuf(stdout, NULL);
+
+    int sample_count = 0;
+
+    double first_tok_gen_time_total = 0.0;
+    double gen_time_total = 0.0;
+    int new_tokens_gen_num = 0;
+
+    int max_seq_len = config->seq_len;
+
+    while (1) {
+        char* in_line = read_full_line(in_file);
+        char* in_img_line = read_full_line(in_img_file);
+
+        if (!in_line || !in_img_line) {
+            free(in_line);
+            free(in_img_line);
+            break;
+        }
+
+        size_t len = strlen(in_img_line);
+        if (len > 0 && in_img_line[len - 1] == '\n') {
+            in_img_line[len - 1] = '\0';
+        }
+
+        sample_count++;
+        printf("Starting new forward cycle %d...\n", sample_count);
+
+        int *input_tokens = NULL;
+        int input_count = 0;
+        get_expected_tokens(in_line, &input_tokens, &input_count);
+
+        if (input_count >= max_seq_len) {
+            fprintf(out_file, "None\n");
+            fflush(out_file);
+            continue;
+        }
+
+        // ------------------------------------------------------------
+        // 3. Reset state and run initial forward pass
+        // ------------------------------------------------------------
+        float *img_processed_output;
+        int img_processed_h = 0, img_processed_w = 0;
+        int img_grid_h = 0, img_grid_w = 0;
+        bool img_true = image_processor(
+            in_img_line, config->vision_patch_size, config->vision_spatial_merge_size, config->min_pixels,
+            config->max_pixels, &img_processed_output, &img_processed_h,
+            &img_processed_w, &img_grid_h, &img_grid_w
+        );
+
+        printf("Finish processing images\n");
+        fflush(stdout);
+
+        double t_gen_start = now_sec();
+        double t_first_token = 0.0;
+        double t_gen_end = 0.0;
+
+        int first_token_recorded = 0;
+
+        if (img_true) {
+            forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
+        }
+
+        printf("Finish forward images\n");
+        printf("max_seq_len=%d, input_count=%d\n", max_seq_len, input_count);
+        fflush(stdout);
+        
+        // ------------------------------------------------------------
+        // 4. Generation loop - matching the structure from run.cpp
+        // ------------------------------------------------------------
+        int *generated_tokens = (int*)malloc(max_seq_len * sizeof(int));
+        int total_generated_count = 0;
+
+        // Start the main loop - similar to generate() in run.cpp
+        int next; // will store the next token in the sequence
+        int token = input_tokens[0]; // kick off with the first token in the prompt
+        int pos = 0; // position in the sequence
+        int im_end_count = 0;
+
+        while (pos < max_seq_len) { // max steps
+            // Forward the transformer to get logits for the next token
+            // Using your existing forward functions
+            float *logits = forward_text(config, state, weight, token, pos);
+
+            // Advance the state machine - similar to run.cpp
+            if (pos < input_count - 1) {
+                // If we are still processing the input prompt, force the next prompt token
+                next = input_tokens[pos + 1];
+            } else {
+                // Otherwise use greedy decoding (temperature=0 equivalent)
+                next = greedy_decode(logits, config->vocab_size);
+                if (!first_token_recorded) {
+                    t_first_token = now_sec();
+                    first_token_recorded = 1;
+                }
+            }
+            pos++;
+
+            // Add generated token to sequence (only after processing prompt)
+            if (pos >= input_count) {
+                generated_tokens[total_generated_count++] = next;
+            }
+
+            #ifdef PRINT_LOGITS
+                if (pos >= input_count) {
+                    printf("%d %s", next, tokenizer->vocab[next]);
+                    printf("\nLogits: ");
+                    for (int i = 0; i < 5; i++) {
+                        printf("%.6f ", logits[i]);
+                    }
+                    printf("\n");
+                } else {
+                    if (next != 151655) {   
+                        printf("%s ", tokenizer->vocab[next]);
+                    }
+                }
+            #else
+                if (next != 151655) {   
+                    printf("%s ", tokenizer->vocab[next]);
+                }
+            #endif
+
+            // Data-dependent terminating condition - match your EOS tokens
+            // Using the same condition as original forward_validate
+            if (next == 151645) { // <im_end> token
+                // Count consecutive im_end tokens like original
+                im_end_count++;
+                if (im_end_count >= 2) {
+                    printf("\nStopping generation: <im_end> token encountered twice\n");
+                    break;
+                }
+            }
+
+            token = next; // Update token for next iteration
+        }
+        
+        t_gen_end = now_sec();
+
+        for (int i = 0; i < total_generated_count; i++) {
+            fprintf(out_file, "%d ", generated_tokens[i]);
+        }
+        fprintf(out_file, "\n");
+        fflush(out_file);
+
+        printf("  Generated %d total tokens (%d new tokens)\n", total_generated_count, total_generated_count - input_count);
+
+        new_tokens_gen_num += (total_generated_count - input_count);
+        first_tok_gen_time_total += (t_first_token - t_gen_start);
+        gen_time_total += (t_gen_end - t_gen_start);
+
+        // ------------------------------------------------------------
+        // 5. Compare generated sequence with expected sequence
+        // ------------------------------------------------------------
+        
+        // ------------------------------------------------------------
+        // 6. Cleanup
+        // ------------------------------------------------------------
+        printf("Start freeing data\n");
+        fflush(stdout);
+        free(in_line);
+        printf("Freeing in_line successfully\n");
+        fflush(stdout);
+        free(in_img_line);
+        printf("Freeing in_img_line successfully\n");
+        fflush(stdout);
+        // if (img_true) free(img_processed_output);
+        printf("Freeing img_processed_output successfully\n");
+        fflush(stdout);
+        free(input_tokens);
+        printf("Freeing input_tokens successfully\n");
+        fflush(stdout);
+        free(generated_tokens);
+        printf("Freeing generated_tokens successfully\n");
+        fflush(stdout);
+
+        printf("End of forward cycle %d\n", sample_count);
+        fflush(stdout);
+    }
+
+    double avg_ttft = first_tok_gen_time_total / sample_count;
+    double avg_tps = new_tokens_gen_num * sample_count / gen_time_total;
+
+    fclose(in_file);
+    fclose(in_img_file);
+    fclose(out_file);
+
+    printf("\n--- Forward Validation Summary ---\n");
+    printf("Total Samples Processed: %d\n", sample_count);
+    printf("Average TTFT: %lf (s)\n", avg_ttft);
+    printf("Average generated tokens per second: %lf (toks/s)\n", avg_tps);
+    
 }
 
 int image_processor_validate(const char *in_img_path,
