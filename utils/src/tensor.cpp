@@ -42,7 +42,7 @@ void* Tensor::ptr(const std::vector<size_t>& strides_) const {
     }
 
     if (strides_.size() > ndim) {
-        fprintf(stderr, "Error in shape: stride=%d ndim=%d", strides_.size(), ndim);
+        fprintf(stderr, "Error in shape: stride=%ld ndim=%ld", strides_.size(), ndim);
         exit(1);
     }
 

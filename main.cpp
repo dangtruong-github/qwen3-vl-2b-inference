@@ -93,15 +93,18 @@ int main(int argc, char** argv) {
     // ----------------------------------------------------
     // CALL THE VALIDATION FUNCTION HERE
     // ----------------------------------------------------
+    /*
     int validation_result = forward_validate("data/input_tokens.txt", "data/image_path.txt", "data/output_tokens.txt", tokenizer, config, weights, state);
-    // forward_generate("data/input_tokens.txt", "data/image_path.txt", "data/output_tokens_gen.txt", tokenizer, config, weights, state);
-    // image_processor_validate("data/image_path.txt",tokenizer, config, weights, state);
-    
     if (validation_result == 0) {
         printf("\n✅ ALL FORWARD VALIDATION SAMPLES PASSED!\n");
     } else {
         fprintf(stderr, "\n❌ FORWARD VALIDATION FAILED on one or more samples.\n");
     }
+    */
+    forward_generate("data/input_tokens.txt", "data/image_path.txt", "data/output_tokens_gen.txt", tokenizer, config, weights, state);
+    // image_processor_validate("data/image_path.txt",tokenizer, config, weights, state);
+    
+    
     // ----------------------------------------------------
     
     // Original example code removed for clarity, but you can put it back.

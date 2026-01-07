@@ -114,8 +114,8 @@ void normalize_inplace(
 
         #pragma omp parallel for collapse(2)
         for (size_t y = 0; y < H; y++) {
-            size_t stride = c * H * W + y * W;
             for (size_t x = 0; x < W; x++) {
+                size_t stride = c * H * W + y * W;
                 img[stride + x] = (img[stride + x] - cur_mean) / cur_std;
             }
         }
@@ -172,10 +172,10 @@ void duplicate_to_batch(
 
     #pragma omp parallel for collapse(2)
     for (int b = 0; b < B; ++b) {
-        float* batch_b = batch + (size_t)b * CHW;
 
         // CHW → CHW (just copy)
         for (int c = 0; c < C; ++c) {
+            float* batch_b = batch + (size_t)b * CHW;
             const float* src_c = img + (size_t)c * HW;
             float* dst_c = batch_b + (size_t)c * HW;
 

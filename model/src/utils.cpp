@@ -40,7 +40,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         return 1;
     }
     if (!in_img_file) {
-        fprintf(stderr, "Error: Could not open input image path file: %s\n", in_img_file);
+        fprintf(stderr, "Error: Could not open input image path file: %s\n", in_img_path);
         fclose(in_file);
         return 1;
     }

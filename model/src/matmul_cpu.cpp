@@ -27,9 +27,8 @@ void lg_M_N_K_transpose(
     // B is N x K, stored as B^T row-major: mat_B[j * K + k]
     #pragma omp parallel for collapse(2) schedule(static) num_threads(threads_each)
     for (size_t ii = 0; ii < M; ii += TM) {
-        size_t i_end = std::min(ii + TM, M);
-
         for (size_t jj = 0; jj < N; jj += TN) {
+            size_t i_end = std::min(ii + TM, M);
             size_t j_end = std::min(jj + TN, N);
 
             size_t i = ii;
@@ -319,9 +318,8 @@ void lg_M_N_sm_K_transpose(
     // B is N x K, stored as B^T row-major: mat_B[j * K + k]
     #pragma omp parallel for collapse(2) schedule(static)
     for (size_t ii = 0; ii < M; ii += TM) {
-        size_t i_end = std::min(ii + TM, M);
-
         for (size_t jj = 0; jj < N; jj += TN) {
+            size_t i_end = std::min(ii + TM, M);
             size_t j_end = std::min(jj + TN, N);
 
             size_t i = ii;

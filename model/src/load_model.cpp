@@ -90,257 +90,268 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     float *tmp_ptr = nullptr;
 
     // EDIT THE CODE FROM THIS TO THE END OF THE FUNCTION
+    size_t check_val;
 
     // --- embed_tokens.weight
     tmp_ptr = (float*)malloc(vocab_size * H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), vocab_size * H, file);
+    check_val = fread(tmp_ptr, sizeof(float), vocab_size * H, file);
     weights->token_embedding_table = new Tensor({vocab_size, H}, tmp_ptr);
     weights->token_embedding_table->printShape("token_embedding_table (embed_tokens.weight)");
     tmp_ptr = nullptr;
 
     // --- input_layernorm.weight
+    size_t expected = L * H;
     tmp_ptr = (float*)malloc(L * H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * H, file);
+    check_val = fread(tmp_ptr, sizeof(float), expected, file);
+    if (check_val != expected) {
+        if (feof(file)) {
+            fprintf(stderr, "Reached end of file, only read %zu elements\n", check_val);
+        } else if (ferror(file)) {
+            perror("Error reading file");
+        } else {
+            fprintf(stderr, "Unexpected short read: %zu elements\n", check_val);
+        }
+    }
     weights->rms_ffn_w = new Tensor({L, H}, tmp_ptr);
     weights->rms_ffn_w->printShape("rms_ffn_w (input_layernorm.weight)");
     tmp_ptr = nullptr;
 
     // --- mlp.down_proj.weight
     tmp_ptr = (float*)malloc(L * H * I * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * H * I, file);
+    check_val = fread(tmp_ptr, sizeof(float), L * H * I, file);
     weights->w_mlp_down = new Tensor({L, H, I}, tmp_ptr);
     weights->w_mlp_down->printShape("w_mlp_down (mlp.down_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- mlp.gate_proj.weight
     tmp_ptr = (float*)malloc(L * I * H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * I * H, file);
+    check_val = fread(tmp_ptr, sizeof(float), L * I * H, file);
     weights->w_mlp_gate = new Tensor({L, I, H}, tmp_ptr);
     weights->w_mlp_gate->printShape("w_mlp_gate (mlp.gate_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- mlp.up_proj.weight
     tmp_ptr = (float*)malloc(L * I * H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * I * H, file);
+    check_val = fread(tmp_ptr, sizeof(float), L * I * H, file);
     weights->w_mlp_up = new Tensor({L, I, H}, tmp_ptr);
     weights->w_mlp_up->printShape("w_mlp_up (mlp.up_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- post_attention_layernorm.weight
     tmp_ptr = (float*)malloc(L * H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * H, file);
+    check_val = fread(tmp_ptr, sizeof(float), L * H, file);
     weights->rms_attn_w = new Tensor({L, H}, tmp_ptr);
     weights->rms_attn_w->printShape("rms_attn_w (post_attention_layernorm.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.k_norm.weight
     tmp_ptr = (float*)malloc(L * 1ll * head_dim * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * 1ll * head_dim, file);
+    check_val = fread(tmp_ptr, sizeof(float), L * 1ll * head_dim, file);
     weights->w_attn_k_norm = new Tensor({L, 1ll * head_dim}, tmp_ptr);
     weights->w_attn_k_norm->printShape("w_attn_k_norm (self_attn.k_norm.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.k_proj.weight
     tmp_ptr = (float*)malloc(L * KVAD * H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * KVAD * H, file);
+    check_val = fread(tmp_ptr, sizeof(float), L * KVAD * H, file);
     weights->w_attn_k = new Tensor({L, KVAD, H}, tmp_ptr);
     weights->w_attn_k->printShape("w_attn_k (self_attn.k_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.o_proj.weight
     tmp_ptr = (float*)malloc(L * H * H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * H * H, file);
+    check_val = fread(tmp_ptr, sizeof(float), L * H * H, file);
     weights->w_attn_o = new Tensor({L, H, H}, tmp_ptr);
     weights->w_attn_o->printShape("w_attn_o (self_attn.o_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.q_norm.weight
     tmp_ptr = (float*)malloc(L * head_dim * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * head_dim, file);
+    check_val = fread(tmp_ptr, sizeof(float), L * head_dim, file);
     weights->w_attn_q_norm = new Tensor({L, head_dim}, tmp_ptr);
     weights->w_attn_q_norm->printShape("w_attn_q_norm (self_attn.q_norm.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.q_proj.weight
     tmp_ptr = (float*)malloc(L * QD * H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * QD * H, file);
+    check_val = fread(tmp_ptr, sizeof(float), L * QD * H, file);
     weights->w_attn_q = new Tensor({L, QD, H}, tmp_ptr);
     weights->w_attn_q->printShape("w_attn_q (self_attn.q_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- self_attn.v_proj.weight
     tmp_ptr = (float*)malloc(L * KVAD * H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), L * KVAD * H, file);
+    check_val = fread(tmp_ptr, sizeof(float), L * KVAD * H, file);
     weights->w_attn_v = new Tensor({L, KVAD, H}, tmp_ptr);
     weights->w_attn_v->printShape("w_attn_v (self_attn.v_proj.weight)");
     tmp_ptr = nullptr;
 
     // --- final layernorm.weight
     tmp_ptr = (float*)malloc(H * sizeof(float));
-    fread(tmp_ptr, sizeof(float), H, file);
+    check_val = fread(tmp_ptr, sizeof(float), H, file);
     weights->rms_out_w = new Tensor({H}, tmp_ptr);
     weights->rms_out_w->printShape("rms_out_w (final_layernorm.weight)");
     tmp_ptr = nullptr;
 
     // --- Vision model general
     tmp_ptr = (float*)malloc(VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), VH, file);
     weights->vl_patch_emb_b = new Tensor({VH}, tmp_ptr);
     weights->vl_patch_emb_b->printShape("vl_patch_emb_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(VH * VC * VTP * VP * VP * sizeof(float));
-    fread(tmp_ptr, sizeof(float), VH * VC * VTP * VP * VP, file);
+    check_val = fread(tmp_ptr, sizeof(float), VH * VC * VTP * VP * VP, file);
     weights->vl_patch_emb_w = new Tensor({VH, VC, VTP, VP, VP}, tmp_ptr);
     weights->vl_patch_emb_w->printShape("vl_patch_emb_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VNPE * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VNPE * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VNPE * VH, file);
     weights->vl_pos_emb_w = new Tensor({VNPE, VH}, tmp_ptr);
     weights->vl_pos_emb_w->printShape("vl_pos_emb_w");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
     weights->vl_attn_proj_b = new Tensor({VD, VH}, tmp_ptr);
     weights->vl_attn_proj_b->printShape("vl_attn_proj_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VH * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * VH * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * VH * VH, file);
     weights->vl_attn_proj_w = new Tensor({VD, VH, VH}, tmp_ptr);
     weights->vl_attn_proj_w->printShape("vl_attn_proj_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * 3 * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * 3 * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * 3 * VH, file);
     weights->vl_attn_qkv_b = new Tensor({VD, 3, VH}, tmp_ptr);
     weights->vl_attn_qkv_b->printShape("vl_attn_qkv_b");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VD * 3 * VH * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * 3 * VH * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * 3 * VH * VH, file);
     weights->vl_attn_qkv_w = new Tensor({VD, 3, VH, VH}, tmp_ptr);
     weights->vl_attn_qkv_w->printShape("vl_attn_qkv_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VI * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * VI, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * VI, file);
     weights->vl_mlp1_b = new Tensor({VD, VI}, tmp_ptr);
     weights->vl_mlp1_b->printShape("vl_mlp1_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VI * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * VI * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * VI * VH, file);
     weights->vl_mlp1_w = new Tensor({VD, VI, VH}, tmp_ptr);
     weights->vl_mlp1_w->printShape("vl_mlp1_w");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
     weights->vl_mlp2_b = new Tensor({VD, VH}, tmp_ptr);
     weights->vl_mlp2_b->printShape("vl_mlp2_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VH * VI * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * VH * VI, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * VH * VI, file);
     weights->vl_mlp2_w = new Tensor({VD, VH, VI}, tmp_ptr);
     weights->vl_mlp2_w->printShape("vl_mlp2_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
     weights->vl_norm1_b = new Tensor({VD, VH}, tmp_ptr);
     weights->vl_norm1_b->printShape("vl_norm1_b");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
     weights->vl_norm1_w = new Tensor({VD, VH}, tmp_ptr);
     weights->vl_norm1_w->printShape("vl_norm1_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
     weights->vl_norm2_b = new Tensor({VD, VH}, tmp_ptr);
     weights->vl_norm2_b->printShape("vl_norm2_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VD * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VD * VH, file);
     weights->vl_norm2_w = new Tensor({VD, VH}, tmp_ptr);
     weights->vl_norm2_w->printShape("vl_norm2_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
     weights->vl_d_mlp1_b = new Tensor({VDSD, VI}, tmp_ptr);
     weights->vl_d_mlp1_b->printShape("vl_d_mlp1_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * VI * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI * VI, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI * VI, file);
     weights->vl_d_mlp1_w = new Tensor({VDSD, VI, VI}, tmp_ptr);
     weights->vl_d_mlp1_w->printShape("vl_d_mlp1_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * OH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VDSD * OH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VDSD * OH, file);
     weights->vl_d_mlp2_b = new Tensor({VDSD, OH}, tmp_ptr);
     weights->vl_d_mlp2_b->printShape("vl_d_mlp2_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * OH * VI * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VDSD * OH * VI, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VDSD * OH * VI, file);
     weights->vl_d_mlp2_w = new Tensor({VDSD, OH, VI}, tmp_ptr);
     weights->vl_d_mlp2_w->printShape("vl_d_mlp2_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
     weights->vl_d_norm_b = new Tensor({VDSD, VI}, tmp_ptr);
     weights->vl_d_norm_b->printShape("vl_d_norm_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VDSD * VI * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VDSD * VI, file);
     weights->vl_d_norm_w = new Tensor({VDSD, VI}, tmp_ptr);
     weights->vl_d_norm_w->printShape("vl_d_norm_w");
     tmp_ptr = nullptr;
     
     tmp_ptr = (float*)malloc(1ll * VI * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VI, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VI, file);
     weights->vl_merge_mlp1_b = new Tensor({VI}, tmp_ptr);
     weights->vl_merge_mlp1_b->printShape("vl_merge_mlp1_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VI * VI * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VI * VI, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VI * VI, file);
     weights->vl_merge_mlp1_w = new Tensor({VI, VI}, tmp_ptr);
     weights->vl_merge_mlp1_w->printShape("vl_merge_mlp1_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * OH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * OH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * OH, file);
     weights->vl_merge_mlp2_b = new Tensor({OH}, tmp_ptr);
     weights->vl_merge_mlp2_b->printShape("vl_merge_mlp2_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * OH * VI * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * OH * VI, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * OH * VI, file);
     weights->vl_merge_mlp2_w = new Tensor({OH, VI}, tmp_ptr);
     weights->vl_merge_mlp2_w->printShape("vl_merge_mlp2_w");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VH, file);
     weights->vl_merge_norm_b = new Tensor({VH}, tmp_ptr);
     weights->vl_merge_norm_b->printShape("vl_merge_norm_b");
     tmp_ptr = nullptr;
 
     tmp_ptr = (float*)malloc(1ll * VH * sizeof(float));
-    fread(tmp_ptr, sizeof(float), 1ll * VH, file);
+    check_val = fread(tmp_ptr, sizeof(float), 1ll * VH, file);
     weights->vl_merge_norm_w = new Tensor({VH}, tmp_ptr);
     weights->vl_merge_norm_w->printShape("vl_merge_norm_w");
     tmp_ptr = nullptr;

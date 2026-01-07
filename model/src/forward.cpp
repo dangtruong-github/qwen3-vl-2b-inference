@@ -22,7 +22,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     float vision_scale = config->vision_scale;
     long d_tokens = total_tokens / (VSP * VSP);
 
-    printf("grid_h=%zu, grid_w=%zu, total_tokens=%zu\n", grid_h, grid_w, total_tokens);
+    printf("grid_h=%d, grid_w=%d, total_tokens=%zu\n", grid_h, grid_w, total_tokens);
 
     conv_3d(
         weight->vl_patch_emb_w, weight->vl_patch_emb_b, img_data,
@@ -38,7 +38,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     long VNP = config->max_vision_embeddings;
     long num_grid_per_side = sqrt(VNP);
 
-    printf("num_grid_per_side=%d\n", num_grid_per_side);
+    printf("num_grid_per_side=%ld\n", num_grid_per_side);
 
     vision_pos_embed(
         weight->vl_pos_emb_w, (float *)state->vision_t->ptr(), grid_h, grid_w,
