@@ -29,49 +29,63 @@ void validate_dimensions(const QwenConfig* config) {
 // -----------------------------------------------------------
 
 int main(int argc, char** argv) {
-    // Check if there are enough arguments for both paths (at least 5: program name, -flag1, path1, -flag2, path2)
-    // Removed original check for brevity, assuming standard path parsing.
     if (argc < 5) {
-        printf("Usage: %s --model_path <path/to/model.bin> --tokenizer_path <path/to/tokenizer.bin>\n", argv[0]);
+        printf(
+            "Usage: %s "
+            "--model_path <path/to/model.bin> "
+            "--tokenizer_path <path/to/tokenizer.bin> "
+            "[--model_dtype fp32|fp16]\n",
+            argv[0]
+        );
         return 1;
     }
 
     const char* model_path = NULL;
     const char* tokenizer_path = NULL;
+    const char* model_dtype = "fp32";  // default
 
-    // Iterate through command-line arguments to find both paths
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--model_path") == 0) {
             if (i + 1 < argc) {
-                model_path = argv[i + 1];
-                i++; // Skip the next argument as it's the path value
+                model_path = argv[++i];
             } else {
                 fprintf(stderr, "Error: Value missing after --model_path\n");
                 return 1;
             }
-        } else if (strcmp(argv[i], "--tokenizer_path") == 0) {
+        }
+        else if (strcmp(argv[i], "--tokenizer_path") == 0) {
             if (i + 1 < argc) {
-                tokenizer_path = argv[i + 1];
-                i++; // Skip the next argument as it's the path value
+                tokenizer_path = argv[++i];
             } else {
                 fprintf(stderr, "Error: Value missing after --tokenizer_path\n");
                 return 1;
             }
         }
+        else if (strcmp(argv[i], "--model_dtype") == 0) {
+            if (i + 1 < argc) {
+                model_dtype = argv[++i];
+                if (strcmp(model_dtype, "fp32") != 0 &&
+                    strcmp(model_dtype, "fp16") != 0) {
+                    fprintf(stderr,
+                        "Error: --model_dtype must be 'fp32' or 'fp16'\n");
+                    return 1;
+                }
+            } else {
+                fprintf(stderr, "Error: Value missing after --model_dtype\n");
+                return 1;
+            }
+        }
     }
 
-    // Check if both paths were successfully found
-    if (!model_path) {
-        fprintf(stderr, "Error: --model_path required\n");
-        return 1;
-    }
-    if (!tokenizer_path) {
-        fprintf(stderr, "Error: --tokenizer_path required\n");
+    if (!model_path || !tokenizer_path) {
+        fprintf(stderr,
+            "Error: --model_path and --tokenizer_path are required\n");
         return 1;
     }
 
     printf("Model path: %s\n", model_path);
     printf("Tokenizer path: %s\n", tokenizer_path);
+    printf("Model dtype: %s\n", model_dtype);
 
     // Initialize
     QwenConfig *config = new QwenConfig;
