@@ -11,7 +11,7 @@ const char* dtypeToStr(DType::Type dtype) {
 }
 
 Tensor::Tensor(
-    const vector<size_t> &shape_, DType::Type dtype_, DType::Type gpu_dtype_
+    const vector<size_t> &shape_, DType::Type dtype_
 ) : shape(shape_), dtype(dtype_), owns_host_buf(true) {
     ndim = shape_.size();
     size_t N_ = num_elem();
@@ -22,17 +22,12 @@ Tensor::Tensor(
         fprintf(stderr, "Dtype not implemented %s\n", dtypeToStr(dtype));
         exit(1);
     }
-
-    gpu_dtype = gpu_dtype_;
 }
 
 Tensor::Tensor(
-    const vector<size_t> &shape_, void *buf_,
-    DType::Type dtype_, DType::Type gpu_dtype_
+    const vector<size_t> &shape_, void *buf_, DType::Type dtype_
 ) : shape(shape_), buf(buf_), dtype(dtype_), owns_host_buf(false) {
     ndim = shape_.size();
-
-    gpu_dtype = gpu_dtype_;
 }
 
 Tensor::~Tensor() {
@@ -54,10 +49,6 @@ Tensor::~Tensor() {
             }
         }
         buf = nullptr;
-    }
-
-    if (gpu_buf != nullptr) {
-        free_device();
     }
 }
 
@@ -281,138 +272,3 @@ void Tensor::permute(const std::vector<size_t> &order) {
     shape = new_shape;
     owns_host_buf = true;
 }
-
-// GPU API
-size_t Tensor::get_gpu_dtype_size() const {
-    if (dtype == DType::FP32) {
-        return sizeof(float);
-    } else if (dtype == DType::INT32) {
-        return sizeof(int);
-    } else if (dtype == DType::FP16) {
-        return sizeof(half);
-    } else {
-        fprintf(stderr, "Dtype not implemented %s\n", dtypeToStr(dtype));
-        exit(1);
-    }
-}
-
-void Tensor::malloc_device() {
-    if (gpu_buf) {
-        fprintf(stderr, "Tensor has already been allocated");
-        exit(1);
-    }
-
-    size_t malloc_size = num_elem() * get_gpu_dtype_size();
-
-    printf("Malloc GPU with num elem = %zu\n", num_elem());
-    printf("Malloc GPU with dtype size = %zu\n", get_gpu_dtype_size());
-    printf("Malloc GPU with size %lf MB\n", float(malloc_size) / 1024.0);
-    fflush(stdout);
-
-    CHECK_CUDA(cudaMalloc(&gpu_buf, malloc_size));
-}
-
-void Tensor::free_device() {
-    if (gpu_buf == nullptr) {
-        fprintf(stderr, "Tensor has already been deallocated");
-        exit(1);
-    }
-
-    CHECK_CUDA(cudaFree(gpu_buf));
-    gpu_buf = nullptr;
-}
-
-void Tensor::to_gpu(cudaStream_t stream) {
-    if (gpu_buf == nullptr) {
-        malloc_device();
-    }
-
-    size_t n = num_elem();
-    size_t gpu_bytes = n * get_gpu_dtype_size();
-
-    if (dtype == gpu_dtype) {
-        // Direct copy if types match
-        CHECK_CUDA(cudaMemcpyAsync(gpu_buf, buf, gpu_bytes, cudaMemcpyHostToDevice, stream));
-    } else {
-        // 1. Allocate a temporary host buffer of the target GPU type
-        void* temp_host_buf = malloc(gpu_bytes);
-        if (!temp_host_buf) { 
-            fprintf(stderr, "Failed to allocate temporary buffer for conversion\n");
-            exit(1);
-        }
-
-        // 2. Perform CPU conversion
-        if (dtype == DType::FP32 && gpu_dtype == DType::FP16) {
-            float* src = (float*)buf;
-            half_cpu* dst = (half_cpu*)temp_host_buf;
-            for (size_t i = 0; i < n; ++i) dst[i] = (half_cpu)src[i];
-        } 
-        else if (dtype == DType::FP16 && gpu_dtype == DType::FP32) {
-            half_cpu* src = (half_cpu*)buf;
-            float* dst = (float*)temp_host_buf;
-            for (size_t i = 0; i < n; ++i) dst[i] = (float)src[i];
-        }
-        else {
-            fprintf(stderr, "CPU conversion from %s to %s not implemented\n", dtypeToStr(dtype), dtypeToStr(gpu_dtype));
-            free(temp_host_buf);
-            exit(1);
-        }
-
-        // 3. Copy the converted data to the GPU
-        CHECK_CUDA(cudaMemcpyAsync(gpu_buf, temp_host_buf, gpu_bytes, cudaMemcpyHostToDevice, stream));
-
-        // 4. Synchronize and free temporary memory
-        // We must sync because temp_host_buf is used by the async copy
-        cudaStreamSynchronize(stream);
-        free(temp_host_buf);
-    }
-}
-
-void Tensor::from_gpu(cudaStream_t stream) {
-    if (gpu_buf == nullptr) {
-        fprintf(stderr, "Error: GPU buffer hasn't been allocated.\n");
-        exit(1);
-    }
-
-    size_t n = num_elem();
-    size_t gpu_bytes = n * get_gpu_dtype_size();
-    size_t host_bytes = n * get_dtype_size();
-
-    if (dtype == gpu_dtype) {
-        // Direct copy if types match
-        CHECK_CUDA(cudaMemcpyAsync(buf, gpu_buf, host_bytes, cudaMemcpyDeviceToHost, stream));
-    } else {
-        // 1. Allocate a temporary host buffer to receive raw GPU data
-        void* temp_host_buf = malloc(gpu_bytes);
-        if (!temp_host_buf) {
-            fprintf(stderr, "Failed to allocate temporary buffer for conversion\n");
-            exit(1);
-        }
-
-        // 2. Copy from GPU to temporary host buffer
-        CHECK_CUDA(cudaMemcpyAsync(temp_host_buf, gpu_buf, gpu_bytes, cudaMemcpyDeviceToHost, stream));
-
-        // 3. Synchronize so we can read the data on CPU
-        cudaStreamSynchronize(stream);
-
-        // 4. Perform CPU conversion back to original host dtype
-        if (gpu_dtype == DType::FP16 && dtype == DType::FP32) {
-            half_cpu* src = (half_cpu*)temp_host_buf;
-            float* dst = (float*)buf;
-            for (size_t i = 0; i < n; ++i) dst[i] = (float)src[i];
-        }
-        else if (gpu_dtype == DType::FP32 && dtype == DType::FP16) {
-            float* src = (float*)temp_host_buf;
-            half_cpu* dst = (half_cpu*)buf;
-            for (size_t i = 0; i < n; ++i) dst[i] = (half_cpu)src[i];
-        }
-        else {
-            fprintf(stderr, "CPU conversion from %s back to %s not implemented\n", dtypeToStr(gpu_dtype), dtypeToStr(dtype));
-            free(temp_host_buf);
-            exit(1);
-        }
-
-        free(temp_host_buf);
-    }
-}
-

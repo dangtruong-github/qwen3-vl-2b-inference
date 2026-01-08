@@ -8,26 +8,10 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <stdint.h>
-#include <cuda.h>
-#include <cuda_runtime_api.h>
 
 #include "half.hpp" /* for half on CPU ('half_cpu') */
-#include "cuda_fp16.h" /* for half on GPU ('half') */
 
 using half_cpu = half_float::half;        // Bring the type into scope
-
-/* Macro for checking CUDA errors */
-#define CHECK_CUDA(call)                                             \
-    do {                                                              \
-        cudaError_t status_ = call;                                    \
-        if (status_ != cudaSuccess) {                                   \
-            fprintf(                                                     \
-                stderr, "CUDA error (%s:%d): %s:%s\n", __FILE__, __LINE__,\
-                cudaGetErrorName(status_), cudaGetErrorString(status_)     \
-            );                                                              \
-            exit(EXIT_FAILURE);                                              \
-        }                                                                     \
-    } while (0)
 
 
 // Helper to check for allocation errors
@@ -55,13 +39,11 @@ struct Tensor {
     // Constructors & Destructor
     Tensor(
         const std::vector<size_t> &shape_,
-        DType::Type dtype_ = DType::FP32,
-        DType::Type gpu_dtype_ = DType::FP32
+        DType::Type dtype_ = DType::FP32
     );
     Tensor(
         const std::vector<size_t> &shape_, void *buf_,
-        DType::Type dtype_ = DType::FP32,
-        DType::Type gpu_dtype_ = DType::FP32
+        DType::Type dtype_ = DType::FP32
     );
     ~Tensor();
 
@@ -73,14 +55,4 @@ struct Tensor {
     void printShape(const std::string &descr) const;
     void printDebug(const std::string &descr, bool full_tensor = false) const;
     void permute(const std::vector<size_t> &order);
-
-    // GPU API
-    void *gpu_buf = nullptr;
-    DType::Type gpu_dtype;
-    size_t get_gpu_dtype_size() const;
-    void malloc_device();
-    void free_device();
-    void to_gpu(cudaStream_t stream = 0);
-    void from_gpu(cudaStream_t stream = 0);
 };
-

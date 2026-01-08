@@ -282,33 +282,32 @@ def write_config_header(config: dict, fout) -> None:
 
 
 def write_weights_streaming(
-    providers: Dict[str, TensorProvider],
-    ordered_keys: List[str],
+    providers,
+    ordered_keys,
     fout,
-    out_dtype: str = "float32",
-) -> None:
-    """
-    Stream tensors to file in the specified order.
-    out_dtype: "float32" (default) or "bfloat16"
-    """
-    torch_cast = torch.float32 if out_dtype == "float32" else torch.bfloat16
-
+    out_dtype="float32",
+):
     print("\n--- Writing Weights ---")
+
     for name in ordered_keys:
-        # Load and cast on demand
-        tens = providers[name].load().to(torch_cast).cpu()
-        
-        # Convert to numpy and write bytes
-        if torch_cast == torch.bfloat16:
-            # For bfloat16, view as uint16 to get the raw 16-bit payload
-            np_arr = tens.view(torch.uint16).numpy().astype(np.uint16, copy=False)
-        else:
-            # For float32
+        tens = providers[name].load().cpu()
+
+        if out_dtype == "float32":
+            tens = tens.to(torch.float32)
             np_arr = tens.numpy().astype(np.float32, copy=False)
 
-        fout.write(np_arr.tobytes(order="C"))
-        print(f"Wrote {name}  shape={tuple(tens.shape)} dtype={torch_cast}")
+        elif out_dtype in ("float16", "bfloat16"):
+            tens = tens.to(
+                torch.float16 if out_dtype == "float16" else torch.bfloat16
+            )
+            # reinterpret 16-bit payload
+            np_arr = tens.numpy().view(np.uint16)
 
+        else:
+            raise ValueError(out_dtype)
+
+        fout.write(np_arr.tobytes(order="C"))
+        print(f"Wrote {name} shape={tuple(tens.shape)} dtype={out_dtype}")
 
 # ---- CLI ----
 
@@ -325,7 +324,7 @@ def parse_args():
     p.add_argument("--output", required=True, help="Output .bin path")
     p.add_argument(
         "--dtype",
-        choices=["float32", "bfloat16"],
+        choices=["float32", "bfloat16", "float16"],
         default="float32",
         help="Output weights dtype (default float32, or bfloat16 for raw bf16 payload)")
     return p.parse_args()
