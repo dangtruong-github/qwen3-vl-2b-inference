@@ -313,7 +313,7 @@ void forward_generate(const char *in_token_file, const char *in_img_path, const 
         return;
     }
     if (!in_img_file) {
-        fprintf(stderr, "Error: Could not open input image path file: %s\n", in_img_file);
+        fprintf(stderr, "Error: Could not open input image path file: %s\n", in_img_path);
         fclose(in_file);
         return;
     }

@@ -29,10 +29,25 @@ Tensor::Tensor(
     ndim = shape_.size();
 }
 
-
 Tensor::~Tensor() {
-    if (owns_host_buf && buf != nullptr) {
-        free(buf);
+    if (buf != nullptr) {
+        if (owns_host_buf) {
+            free(buf);
+        } else {
+            static size_t page_size = sysconf(_SC_PAGESIZE);
+            uintptr_t addr = (uintptr_t)buf;
+            uintptr_t aligned_addr = (addr / page_size) * page_size;
+            size_t offset_in_page = addr - aligned_addr;
+
+            // USE YOUR SIZE CALCULATION HERE
+            size_t data_size = num_elem() * get_dtype_size(); 
+            size_t total_mapped_size = data_size + offset_in_page;
+
+            if (munmap((void*)aligned_addr, total_mapped_size) == -1) {
+                perror("munmap failed");
+            }
+        }
+        buf = nullptr;
     }
 }
 
@@ -235,6 +250,19 @@ void Tensor::permute(const std::vector<size_t> &order) {
     // Update the tensor
     if (owns_host_buf) {
         free(buf);
+    } else {
+        static size_t page_size = sysconf(_SC_PAGESIZE);
+        uintptr_t addr = (uintptr_t)buf;
+        uintptr_t aligned_addr = (addr / page_size) * page_size;
+        size_t offset_in_page = addr - aligned_addr;
+
+        // USE YOUR SIZE CALCULATION HERE
+        size_t data_size = num_elem() * get_dtype_size(); 
+        size_t total_mapped_size = data_size + offset_in_page;
+
+        if (munmap((void*)aligned_addr, total_mapped_size) == -1) {
+            perror("munmap failed");
+        }
     }
     buf = new_buf;
     shape = new_shape;

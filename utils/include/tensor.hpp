@@ -5,6 +5,9 @@
 #include <cstring>
 #include <vector>
 #include <stdexcept>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <stdint.h>
 
 // Helper to check for allocation errors
 #define CHECK_ALLOC(ptr, size) if (!ptr) { \

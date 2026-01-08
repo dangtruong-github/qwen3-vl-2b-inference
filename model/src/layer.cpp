@@ -725,3 +725,65 @@ void gelu_tanh(Tensor *x, size_t x_size) {
         x_buf[i] = 0.5f * xi * (1.0f + tanh_inner);
     }
 }
+
+void linear(
+    const float *mat_A, const float *mat_B, const float *mat_bias,
+    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
+) {
+    /*
+    #ifdef OMP
+        linear_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
+        return;
+    #endif
+    */
+
+    if (mat_bias != nullptr) {
+        #pragma omp parallel for
+        for (size_t i = 0; i < M; ++i) {
+
+            #pragma omp simd
+            for (size_t j = 0; j < N; ++j) {
+                mat_C[i * N + j] = mat_bias[j];
+            }
+        }
+    } else {
+        #pragma omp parallel for collapse(2)
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t j = 0; j < N; ++j) {
+                mat_C[i * N + j] = 0.0f;
+            }
+        }
+    }
+
+    if (mat_B_transpose) {
+        // B is N x K. B^T[k][j] = B[j][k] = mat_B[j * K + k]
+        #pragma omp parallel for collapse(2)
+        for (size_t i = 0; i < M; ++i) {        // Row of A and C
+            for (size_t j = 0; j < N; ++j) {    // Column of B^T and C
+                // The current value of mat_C[i * N + j] is mat_bias[j] (or 0)
+                float sum = mat_C[i * N + j];
+                #pragma omp simd reduction(+:sum)
+                for (size_t k = 0; k < K; ++k) { // Inner dimension
+                    // C[i][j] += A[i][k] * B[j][k]
+                    sum += mat_A[i * K + k] * mat_B[j * K + k];
+                }
+                mat_C[i * N + j] = sum;
+            }
+        }
+    } else {
+        // B is K x N. So B[k][j] = mat_B[k * N + j]
+        #pragma omp parallel for collapse(2)
+        for (size_t i = 0; i < M; ++i) {        // Row of A and C
+            for (size_t j = 0; j < N; ++j) {    // Column of B and C
+                // The current value of mat_C[i * N + j] is mat_bias[j] (or 0)
+                float sum = mat_C[i * N + j];
+                #pragma omp simd reduction(+:sum)
+                for (size_t k = 0; k < K; ++k) { // Inner dimension
+                    // C[i][j] += A[i][k] * B[k][j]
+                    sum += mat_A[i * K + k] * mat_B[k * N + j];
+                }
+                mat_C[i * N + j] = sum;
+            }
+        }
+    }
+}

@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <vector>
 
 #include "../config.hpp"
 
