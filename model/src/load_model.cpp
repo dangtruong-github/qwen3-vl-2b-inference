@@ -120,6 +120,7 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     map_tensor(&weights->rms_ffn_w, {L, H}, "rms_ffn_w");
     map_tensor(&weights->w_mlp_down, {L, H, I}, "w_mlp_down");
     map_tensor(&weights->w_mlp_gate, {L, I, H}, "w_mlp_gate");
+    weights->w_mlp_gate->to_gpu();
     map_tensor(&weights->w_mlp_up, {L, I, H}, "w_mlp_up");
     map_tensor(&weights->rms_attn_w, {L, H}, "rms_attn_w");
     map_tensor(&weights->w_attn_k_norm, {L, head_dim}, "w_attn_k_norm");
