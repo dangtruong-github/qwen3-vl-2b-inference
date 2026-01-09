@@ -9,7 +9,7 @@
 
 #include "../config.hpp"
 #include "layer.hpp"
-#include "../../tokenizer/include/img_processor.hpp"
+#include "vision_layer.hpp"
 
 // ================================================================
 // Forward Functions
