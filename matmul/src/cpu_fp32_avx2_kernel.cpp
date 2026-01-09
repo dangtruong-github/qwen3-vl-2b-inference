@@ -1,5 +1,6 @@
-#include "../include/matmul_cpu.hpp"
+#include "../include/cpu_fp32_avx2_kernel.hpp"
 
+#if defined(__AVX2__) && defined(__FMA__)
 static inline float add_reduce_mm_256(__m256 vec) {
     // Step 1: Split into two 128-bit halves
     __m128 low  = _mm256_castps256_ps128(vec);          // lower 128 bits
@@ -1028,7 +1029,7 @@ void linear_normal(
     }
 }
 
-void linear_kernel(
+void fp32_avx2_kernel(
     const float *mat_A, const float *mat_B, const float *mat_bias,
     float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 ) {
@@ -1077,3 +1078,4 @@ void linear_kernel(
         }
     }
 }
+#endif

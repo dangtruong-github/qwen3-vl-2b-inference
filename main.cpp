@@ -82,6 +82,16 @@ int main(int argc, char** argv) {
             "Error: --model_path and --tokenizer_path are required\n");
         return 1;
     }
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+        printf("AVX512 enabled\n");
+        fflush(stdout);
+    #elif defined(__AVX2__) && defined(__FMA__)
+        printf("AVX2 enabled\n");
+        fflush(stdout);
+    #else
+        printf("Default fallback, no AVX2 or AVX512\n");
+        fflush(stdout);
+    #endif
 
     printf("Model path: %s\n", model_path);
     printf("Tokenizer path: %s\n", tokenizer_path);
