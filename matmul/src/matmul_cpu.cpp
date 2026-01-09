@@ -1,6 +1,6 @@
 #include "../include/matmul_cpu.hpp"
 
-void linear_mixed_precision(
+void linear_fp16(
     const float *mat_A /* fp32 */, 
     const half_cpu *mat_B /* fp16 */, 
     const half_cpu *mat_bias /* fp16 */,
@@ -55,31 +55,10 @@ void linear_mixed_precision(
     }
 }
 
-void linear(
-    const float *mat_A, const void *mat_B_in, const void *mat_bias_in,
-    float *mat_C, size_t M, size_t N, size_t K,
-    bool mat_B_transpose, DType::Type type_b
+void linear_fp32(
+    const float *mat_A, const float *mat_B, const float *mat_bias,
+    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 ) {
-    #ifdef CPU_TIME
-        CPUTimer timer("linear");
-        printf("Shape of matmul w/ precision %s: M=%zu, N=%zu, K=%zu, bias=%d, B transpose=%d\n", dtypeToStr(type_b), M, N, K, (mat_bias_in != nullptr), mat_B_transpose);
-    #endif
-    
-
-    if (type_b == DType::FP16) {
-        linear_mixed_precision(
-            mat_A,
-            static_cast<const half_cpu*>(mat_B_in), 
-            static_cast<const half_cpu*>(mat_bias_in),
-            mat_C, M, N, K, mat_B_transpose 
-        );
-        return;
-        
-    }
-
-    const float *mat_B = (const float *)mat_B_in;
-    const float *mat_bias = (const float *)mat_bias_in;
-
     /*
     #ifdef OMP
         linear_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
@@ -136,4 +115,35 @@ void linear(
             }
         }
     }
+}
+
+void linear(
+    const float *mat_A, const void *mat_B_in, const void *mat_bias_in,
+    float *mat_C, size_t M, size_t N, size_t K,
+    bool mat_B_transpose, DType::Type type_b
+) {
+    #ifdef CPU_TIME
+        CPUTimer timer("linear");
+        printf("Shape of matmul w/ precision %s: M=%zu, N=%zu, K=%zu, bias=%d, B transpose=%d\n", dtypeToStr(type_b), M, N, K, (mat_bias_in != nullptr), mat_B_transpose);
+    #endif
+    
+
+    if (type_b == DType::FP16) {
+        linear_fp16(
+            mat_A,
+            static_cast<const half_cpu*>(mat_B_in), 
+            static_cast<const half_cpu*>(mat_bias_in),
+            mat_C, M, N, K, mat_B_transpose 
+        );
+        return;
+    } else if (type_b == DType::FP32) {
+        linear_fp32(
+            mat_A, (const float *)mat_B_in, (const float *)mat_bias_in,
+            mat_C, M, N, K, mat_B_transpose
+        );
+        return;
+    }
+
+    fprintf(stderr, "DType matmul not supported %s\n", dtypeToStr(type_b));
+    exit(1);
 }

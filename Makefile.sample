@@ -1,15 +1,15 @@
 # === Compiler setup ===
 NVCC := nvcc
 GPP  := g++
-CXXFLAGS  := -std=c++17 -O3 -fopenmp -mf16c -mavx2 -mfma -march=native
-NVCCFLAGS := -std=c++17 -O3 -Xcompiler "-fopenmp -mavx2 -mfma"
+CXXFLAGS  := -std=c++17 -O3 -fopenmp -march=native
+NVCCFLAGS := -std=c++17 -O3 -Xcompiler "-fopenmp -march=native"
  
 # === OpenCV via system pkg-config ===
 OPENCV_CFLAGS := $(shell pkg-config --cflags opencv4)
 OPENCV_LIBS   := $(shell pkg-config --libs opencv4)
 
 # === Manually list top-level modules ===
-MODULES := tokenizer model utils
+MODULES := tokenizer model utils matmul
 
 # === Automatically derived directories ===
 SRC_DIRS := $(foreach m,$(MODULES),$(m)/src)

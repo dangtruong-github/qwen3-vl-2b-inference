@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include "matmul_cpu.hpp"
+#include "../../matmul/module.hpp"
 #include "../../utils/module.hpp"
 
 // #define DEBUG
