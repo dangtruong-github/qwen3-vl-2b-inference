@@ -84,7 +84,3 @@ void vision_att(
     float *out, int num_heads, int total_tokens, int head_dim, float scale
 );
 void gelu_tanh(Tensor *x, size_t x_size);
-void linear(
-    const float *mat_A, const float *mat_B, const float *mat_bias,
-    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
-);

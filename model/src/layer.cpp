@@ -4,10 +4,22 @@ void embedding_lookup(
     const Tensor *embedding /*[vocab, hidden]*/, size_t token_id,
     Tensor *out /*[hidden]*/, size_t hidden_size
 ) {
-    memcpy(
-        out->ptr(), embedding->ptr({token_id}),
-        hidden_size * sizeof(float)
-    );
+    if (embedding->dtype == DType::FP32) {
+        memcpy(
+            out->ptr(), embedding->ptr({token_id}),
+            hidden_size * sizeof(float)
+        );
+    } else {
+        // Get typed pointers
+        const half_cpu* src = static_cast<const half_cpu*>(embedding->ptr({token_id}));
+        float* dst = static_cast<float*>(out->ptr());
+
+        // Loop-based conversion (memcpy cannot be used here)
+        #pragma omp simd
+        for (size_t i = 0; i < hidden_size; ++i) {
+            dst[i] = static_cast<float>(src[i]);
+        }
+    }
 }
 
 void rms_norm(
@@ -16,24 +28,51 @@ void rms_norm(
     size_t batches, size_t layer_offset
 ) {
     const size_t hidden_size = scale->shape[scale->ndim - 1];
-    const float *scale_buf = (const float *)scale->ptr({layer_offset});
+    
+    if (scale->dtype == DType::FP32) {
+        const float *scale_buf = (const float *)scale->ptr({layer_offset});
 
-    for (size_t i = 0; i < batches; i++) {
-        // calculate sum of squares
-        double ss = 0.0;
-        for (size_t j = 0; j < hidden_size; j++) {
-            ss += x[j] * x[j];
+        for (size_t i = 0; i < batches; i++) {
+            // calculate sum of squares
+            double ss = 0.0;
+            #pragma omp simd reduction(+:ss)
+            for (size_t j = 0; j < hidden_size; j++) {
+                ss += x[j] * x[j];
+            }
+            ss /= hidden_size;
+            ss += eps;
+            ss = 1.0 / sqrt(ss);
+            // normalize and scale
+            #pragma omp simd
+            for (size_t j = 0; j < hidden_size; j++) {
+                out[j] = scale_buf[j] * (ss * x[j]);
+            }
+            
+            x += hidden_size;
+            out += hidden_size;
         }
-        ss /= hidden_size;
-        ss += eps;
-        ss = 1.0 / sqrt(ss);
-        // normalize and scale
-        for (size_t j = 0; j < hidden_size; j++) {
-            out[j] = scale_buf[j] * (ss * x[j]);
+    } else {
+        const half_cpu *scale_buf = static_cast<const half_cpu*>(scale->ptr({layer_offset}));
+
+        for (size_t i = 0; i < batches; i++) {
+            // calculate sum of squares
+            double ss = 0.0;
+            #pragma omp simd reduction(+:ss)
+            for (size_t j = 0; j < hidden_size; j++) {
+                ss += x[j] * x[j];
+            }
+            ss /= hidden_size;
+            ss += eps;
+            ss = 1.0 / sqrt(ss);
+            // normalize and scale
+            #pragma omp simd
+            for (size_t j = 0; j < hidden_size; j++) {
+                out[j] = static_cast<float>(scale_buf[j]) * (ss * x[j]);
+            }
+            
+            x += hidden_size;
+            out += hidden_size;
         }
-        
-        x += hidden_size;
-        out += hidden_size;
     }
 }
 
@@ -43,8 +82,7 @@ void classifier_gemm(
     size_t vocab_size, size_t hidden_size
 ) {
     linear(
-        (const float *)hid_states->ptr(), (const float *)embedding->ptr(), nullptr, 
-        (float *)logits->ptr(), 1, vocab_size, hidden_size, true
+        (const float *)hid_states->ptr(), embedding->ptr(), nullptr, (float *)logits->ptr(), 1, vocab_size, hidden_size, true, embedding->dtype
     );
 }
 
@@ -224,29 +262,56 @@ void conv_3d(
     // Total size of the VC * VTP * VP * VP feature block
     const long FEATURE_BLOCK_SIZE = VC * PLANE_SIZE;
 
-    const float *conv_b_buf = (const float *)conv_b->ptr();
+    if (conv_w->dtype == DType::FP32) {
+        const float *conv_b_buf = (const float *)conv_b->ptr();
 
-    // --- Outer loop: Iterate over the 'batch' dimension (img_h) ---
-    for (long i = 0; i < img_h; ++i) {
-        // Pointer to the current feature block in the input
-        const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
+        // --- Outer loop: Iterate over the 'batch' dimension (img_h) ---
+        for (long i = 0; i < img_h; ++i) {
+            // Pointer to the current feature block in the input
+            const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
 
-        // --- Second loop: Iterate over the output channels (VH) ---
-        for (size_t h = 0; h < VH; ++h) {
-            float accumulator = 0.0f;
+            // --- Second loop: Iterate over the output channels (VH) ---
+            for (size_t h = 0; h < VH; ++h) {
+                float accumulator = 0.0f;
 
-            // Pointer to the current kernel slice (VC * VTP * VP * VP) for this output channel
-            const float *kernel_slice_ptr = (const float *)conv_w->ptr({h});
+                // Pointer to the current kernel slice (VC * VTP * VP * VP) for this output channel
+                const float *kernel_slice_ptr = (const float *)conv_w->ptr({h});
 
-            // --- Innermost loop: Perform the dot product (contraction) ---
-            // This loop iterates over the flattened feature block (VC * VTP * VP * VP)
-            for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
-                accumulator += input_block_ptr[c] * kernel_slice_ptr[c];
+                // --- Innermost loop: Perform the dot product (contraction) ---
+                // This loop iterates over the flattened feature block (VC * VTP * VP * VP)
+                for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
+                    accumulator += input_block_ptr[c] * kernel_slice_ptr[c];
+                }
+
+                // Add the bias and store the result
+                // Output index: i * VH + h
+                out_img[i * VH + h] = accumulator + conv_b_buf[h];
             }
+        }
+    } else {
+        // Cast bias to fp16 type
+        const half_cpu *conv_b_buf = static_cast<const half_cpu*>(conv_b->ptr());
 
-            // Add the bias and store the result
-            // Output index: i * VH + h
-            out_img[i * VH + h] = accumulator + conv_b_buf[h];
+        // Parallelize across the batch (img_h) and output channels (VH)
+        #pragma omp parallel for collapse(2)
+        for (long i = 0; i < img_h; ++i) {
+            for (size_t h = 0; h < VH; ++h) {
+                float accumulator = 0.0f;
+
+                const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
+                // Weights for this specific output channel
+                const half_cpu *kernel_slice_ptr = static_cast<const half_cpu*>(conv_w->ptr({h}));
+
+                // Vectorized dot product (Contraction)
+                #pragma omp simd reduction(+:accumulator)
+                for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
+                    // F16C expands kernel_slice_ptr[c] to fp32 for the FMA
+                    accumulator += input_block_ptr[c] * static_cast<float>(kernel_slice_ptr[c]);
+                }
+
+                // Expand fp16 bias to fp32 and store result
+                out_img[i * VH + h] = accumulator + static_cast<float>(conv_b_buf[h]);
+            }
         }
     }
 }
@@ -366,25 +431,51 @@ void vision_pos_embed(const Tensor *pos_embed_w, float *x_embed, int grid_h, int
 
     float *pos_embed_ptr = (float *)malloc(1ll * total_elements * VH * sizeof(float));
 
-    for (size_t i = 0; i < total_elements; ++i) {
-        float *pos_embed_ptr_cur = pos_embed_ptr + (i * VH);
+    if (pos_embed_w->dtype == DType::FP32) {
+        for (size_t i = 0; i < total_elements; ++i) {
+            float *pos_embed_ptr_cur = pos_embed_ptr + (i * VH);
 
-        for (size_t j = 0; j < VH; j++) {
-            pos_embed_ptr_cur[j] = 0.0f;
-        }
-
-        for (int k = 0; k < 4; ++k) {
-
-            long source_index = idx_list_mem[k][i];
-            const float *pos_embed_w_idx_start = (const float *)pos_embed_w->ptr({(size_t)source_index});
-
-            float weight = weight_list_mem[k][i];
-
-            for (int j = 0; j < VH; ++j) {
-                pos_embed_ptr_cur[j] += pos_embed_w_idx_start[j] * weight;
+            for (size_t j = 0; j < VH; j++) {
+                pos_embed_ptr_cur[j] = 0.0f;
             }
-        }   
-    }
+
+            for (int k = 0; k < 4; ++k) {
+
+                long source_index = idx_list_mem[k][i];
+                const float *pos_embed_w_idx_start = (const float *)pos_embed_w->ptr({(size_t)source_index});
+
+                float weight = weight_list_mem[k][i];
+
+                for (int j = 0; j < VH; ++j) {
+                    pos_embed_ptr_cur[j] += pos_embed_w_idx_start[j] * weight;
+                }
+            }   
+        }
+    } else {
+        for (size_t i = 0; i < total_elements; ++i) {
+            float *pos_embed_ptr_cur = pos_embed_ptr + (i * VH);
+
+            // Initialize accumulator to zero
+            for (size_t j = 0; j < VH; j++) {
+                pos_embed_ptr_cur[j] = 0.0f;
+            }
+
+            for (int k = 0; k < 4; ++k) {
+                long source_index = idx_list_mem[k][i];
+                
+                // CHANGE: Cast to half_cpu instead of float
+                const half_cpu *pos_embed_w_idx_start = static_cast<const half_cpu*>(pos_embed_w->ptr({(size_t)source_index}));
+                float weight = weight_list_mem[k][i];
+
+                // Optimized with SIMD + F16C
+                #pragma omp simd
+                for (int j = 0; j < VH; ++j) {
+                    // Conversion from fp16 to fp32 happens here via F16C
+                    pos_embed_ptr_cur[j] += static_cast<float>(pos_embed_w_idx_start[j]) * weight;
+                }
+            }   
+        }
+    }    
 
     for (int i = 0; i < 4; ++i) {
         free(idx_list_mem[i]);
@@ -527,40 +618,83 @@ void layer_norm(
 ) {
     // 1. Pointers to current layer's weights
     const size_t hidden_size = scale->shape[scale->ndim - 1];
-
-    const float *scale_buf = (const float *)scale->ptr({layer_offset});
-    const float *bias_buf = (const float *)bias->ptr({layer_offset});
     const float *x_buf = (float *)x->ptr();
     float *out_buf = (float *)out->ptr();
 
-    for (size_t i = 0; i < batches; i++) {
-        // 2. Calculate Mean
-        float mean = 0.0f;
-        for (size_t j = 0; j < hidden_size; j++) {
-            mean += x_buf[j];
+    if (scale->dtype == DType::FP32) {
+        const float *scale_buf = (const float *)scale->ptr({layer_offset});
+        const float *bias_buf = (const float *)bias->ptr({layer_offset});
+
+        for (size_t i = 0; i < batches; i++) {
+            // 2. Calculate Mean
+            float mean = 0.0f;
+            #pragma omp simd reduction(+:mean)
+            for (size_t j = 0; j < hidden_size; j++) {
+                mean += x_buf[j];
+            }
+            mean /= hidden_size;
+
+            // 3. Calculate Variance (Sum of Squared Differences)
+            float variance = 0.0f;
+            #pragma omp simd reduction(+:variance)
+            for (size_t j = 0; j < hidden_size; j++) {
+                float diff = x_buf[j] - mean;
+                variance += diff * diff;
+            }
+            variance /= hidden_size;
+
+            // 4. Calculate Inverse Standard Deviation
+            // nn.LayerNorm uses sqrt(variance + eps)
+            float inv_std = 1.0f / sqrt(variance + eps);
+
+            // 5. Normalize and Apply Affine Transform
+            #pragma omp simd
+            for (size_t j = 0; j < hidden_size; j++) {
+                // (x - mean) * inv_std * gamma + beta
+                out_buf[j] = (x_buf[j] - mean) * inv_std * scale_buf[j] + bias_buf[j];
+            }
+
+            x_buf += hidden_size;
+            out_buf += hidden_size;
         }
-        mean /= hidden_size;
+    } else {
+        const half_cpu *scale_buf = static_cast<const half_cpu*>(scale->ptr({layer_offset}));
+        const half_cpu *bias_buf = static_cast<const half_cpu*>(bias->ptr({layer_offset}));
+    
+        for (size_t i = 0; i < batches; i++) {
+            // 1. Calculate Mean (Vectorized Reduction)
+            float mean = 0.0f;
+            #pragma omp simd reduction(+:mean)
+            for (size_t j = 0; j < hidden_size; j++) {
+                mean += x_buf[j];
+            }
+            mean /= hidden_size;
 
-        // 3. Calculate Variance (Sum of Squared Differences)
-        float variance = 0.0f;
-        for (size_t j = 0; j < hidden_size; j++) {
-            float diff = x_buf[j] - mean;
-            variance += diff * diff;
+            // 2. Calculate Variance
+            float variance = 0.0f;
+            #pragma omp simd reduction(+:variance)
+            for (size_t j = 0; j < hidden_size; j++) {
+                float diff = x_buf[j] - mean;
+                variance += diff * diff;
+            }
+            variance /= hidden_size;
+
+            // 3. Normalization Factor
+            float inv_std = 1.0f / sqrtf(variance + eps);
+
+            // 4. Normalize and Apply Affine Transform (Mixed Precision)
+            #pragma omp simd
+            for (size_t j = 0; j < hidden_size; j++) {
+                // scale_buf and bias_buf are fp16, converted via F16C during load
+                float gamma = static_cast<float>(scale_buf[j]);
+                float beta  = static_cast<float>(bias_buf[j]);
+                
+                out_buf[j] = (x_buf[j] - mean) * inv_std * gamma + beta;
+            }
+
+            x_buf += hidden_size;
+            out_buf += hidden_size;
         }
-        variance /= hidden_size;
-
-        // 4. Calculate Inverse Standard Deviation
-        // nn.LayerNorm uses sqrt(variance + eps)
-        float inv_std = 1.0f / sqrt(variance + eps);
-
-        // 5. Normalize and Apply Affine Transform
-        for (size_t j = 0; j < hidden_size; j++) {
-            // (x - mean) * inv_std * gamma + beta
-            out_buf[j] = (x_buf[j] - mean) * inv_std * scale_buf[j] + bias_buf[j];
-        }
-
-        x_buf += hidden_size;
-        out_buf += hidden_size;
     }
 }
 
@@ -680,7 +814,7 @@ void vision_att(
         // M = total_tokens, N = total_tokens, K = head_dim
         // ---------------------------------------------------------
 
-        linear(curr_q, curr_k, nullptr, attn_scores, total_tokens, total_tokens, head_dim, true);
+        linear(curr_q, curr_k, nullptr, attn_scores, total_tokens, total_tokens, head_dim, true, DType::FP32);
 
         // ---------------------------------------------------------
         // Step 2: Scale Factor and Bias
@@ -707,7 +841,7 @@ void vision_att(
         // Result:        [total_tokens, head_dim] -> written to curr_out
         // M = total_tokens, N = head_dim, K = total_tokens
         // ---------------------------------------------------------
-        linear(attn_scores, curr_v, NULL, curr_out, total_tokens, head_dim, total_tokens, false);
+        linear(attn_scores, curr_v, NULL, curr_out, total_tokens, head_dim, total_tokens, false, DType::FP32);
     }
 }
 
@@ -723,67 +857,5 @@ void gelu_tanh(Tensor *x, size_t x_size) {
         float inner = sqrt_2_over_pi * (xi + coeff * xi3);
         float tanh_inner = tanhf(inner);
         x_buf[i] = 0.5f * xi * (1.0f + tanh_inner);
-    }
-}
-
-void linear(
-    const float *mat_A, const float *mat_B, const float *mat_bias,
-    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
-) {
-    /*
-    #ifdef OMP
-        linear_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
-        return;
-    #endif
-    */
-
-    if (mat_bias != nullptr) {
-        #pragma omp parallel for
-        for (size_t i = 0; i < M; ++i) {
-
-            #pragma omp simd
-            for (size_t j = 0; j < N; ++j) {
-                mat_C[i * N + j] = mat_bias[j];
-            }
-        }
-    } else {
-        #pragma omp parallel for collapse(2)
-        for (size_t i = 0; i < M; ++i) {
-            for (size_t j = 0; j < N; ++j) {
-                mat_C[i * N + j] = 0.0f;
-            }
-        }
-    }
-
-    if (mat_B_transpose) {
-        // B is N x K. B^T[k][j] = B[j][k] = mat_B[j * K + k]
-        #pragma omp parallel for collapse(2)
-        for (size_t i = 0; i < M; ++i) {        // Row of A and C
-            for (size_t j = 0; j < N; ++j) {    // Column of B^T and C
-                // The current value of mat_C[i * N + j] is mat_bias[j] (or 0)
-                float sum = mat_C[i * N + j];
-                #pragma omp simd reduction(+:sum)
-                for (size_t k = 0; k < K; ++k) { // Inner dimension
-                    // C[i][j] += A[i][k] * B[j][k]
-                    sum += mat_A[i * K + k] * mat_B[j * K + k];
-                }
-                mat_C[i * N + j] = sum;
-            }
-        }
-    } else {
-        // B is K x N. So B[k][j] = mat_B[k * N + j]
-        #pragma omp parallel for collapse(2)
-        for (size_t i = 0; i < M; ++i) {        // Row of A and C
-            for (size_t j = 0; j < N; ++j) {    // Column of B and C
-                // The current value of mat_C[i * N + j] is mat_bias[j] (or 0)
-                float sum = mat_C[i * N + j];
-                #pragma omp simd reduction(+:sum)
-                for (size_t k = 0; k < K; ++k) { // Inner dimension
-                    // C[i][j] += A[i][k] * B[k][j]
-                    sum += mat_A[i * K + k] * mat_B[k * N + j];
-                }
-                mat_C[i * N + j] = sum;
-            }
-        }
     }
 }

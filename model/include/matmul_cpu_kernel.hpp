@@ -6,10 +6,8 @@
 #include <sched.h> // for sched_setaffinity(), cpu_set_t, CPU_ZERO, CPU_SET
 #include "../../utils/module.hpp"
 #include "../config.hpp"
-#include "matmul_cpu_kernel.hpp"
 
-void linear(
-    const float *mat_A, const void *mat_B_in, const void *mat_bias_in,
-    float *mat_C, size_t M, size_t N, size_t K,
-    bool mat_B_transpose, DType::Type type_b
+void linear_kernel(
+    const float *mat_A, const float *mat_B, const float *mat_bias,
+    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 );

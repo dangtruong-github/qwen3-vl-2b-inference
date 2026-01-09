@@ -52,34 +52,27 @@ Tensor::~Tensor() {
     }
 }
 
-void* Tensor::ptr(const std::vector<size_t>& strides_) const {
-    if (strides_.empty()) {
-        return buf;
-    }
+void* Tensor::ptr(const std::vector<size_t>& indices) const {
+    if (indices.empty()) return buf;
 
-    if (strides_.size() > ndim) {
-        fprintf(stderr, "Error in shape: stride=%ld ndim=%ld", strides_.size(), ndim);
+    if (indices.size() > ndim) {
+        fprintf(stderr, "Error: indices size %zu exceeds ndim %zu\n", indices.size(), ndim);
         exit(1);
     }
 
-    size_t stride_buf = num_elem();
-    if (dtype == DType::FP32) {
-        const float *cur_buf = (const float *)buf;
-        for (int i = 0; i < strides_.size(); i++) {
-            stride_buf /= shape[i];
-            cur_buf += strides_[i] * stride_buf;
-        }
-        return const_cast<float*>(cur_buf);
-    } else if (dtype == DType::INT32) {
-        const int *cur_buf = (const int *)buf;
-        for (int i = 0; i < strides_.size(); i++) {
-            stride_buf /= shape[i];
-            cur_buf += strides_[i] * stride_buf;
-        }
-        return const_cast<int*>(cur_buf);
+    size_t offset = 0;
+    size_t remaining_elements = num_elem();
+
+    // Calculate element-wise offset assuming row-major contiguity
+    for (size_t i = 0; i < indices.size(); ++i) {
+        remaining_elements /= shape[i];
+        offset += indices[i] * remaining_elements;
     }
 
-    return nullptr;
+    // Apply offset based on the size of the data type
+    // dtype_size() should return sizeof(float), sizeof(int), etc.
+    char* base_ptr = static_cast<char*>(buf);
+    return base_ptr + (offset * get_dtype_size());
 }
 
 size_t Tensor::num_elem() const {

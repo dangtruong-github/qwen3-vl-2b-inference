@@ -1,11 +1,12 @@
 # === Compiler setup ===
 NVCC := nvcc
 GPP  := g++
-CXXFLAGS := -std=c++17 -O3 -fopenmp -mavx2 -mfma -march=native
-NVCCFLAGS := -std=c++17 -O3 -Xcompiler -fopenmp
-
-# === Path to your conda environment ===
-CONDA_PATH := /your/conda/path
+CXXFLAGS  := -std=c++17 -O3 -fopenmp -mf16c -mavx2 -mfma -march=native
+NVCCFLAGS := -std=c++17 -O3 -Xcompiler "-fopenmp -mavx2 -mfma"
+ 
+# === OpenCV via system pkg-config ===
+OPENCV_CFLAGS := $(shell pkg-config --cflags opencv4)
+OPENCV_LIBS   := $(shell pkg-config --libs opencv4)
 
 # === Manually list top-level modules ===
 MODULES := tokenizer model utils
@@ -25,13 +26,10 @@ SRC_FILES := main.cpp $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
 OBJ_FILES := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 
 # === Include flags ===
-INCLUDE_FLAGS := $(foreach dir,$(INCLUDE_DIRS),-I$(dir)) \
-                 $(foreach dir,$(CONFIG_DIRS),-I$(dir)) \
-                 -I$(CONDA_PATH)/include/opencv4
-
-# === OpenCV linking flags ===
-OPENCV_LIBS := -L$(CONDA_PATH)/lib \
-               -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_imgcodecs
+INCLUDE_FLAGS := \
+	$(foreach dir,$(INCLUDE_DIRS),-I$(dir)) \
+	$(foreach dir,$(CONFIG_DIRS),-I$(dir)) \
+	$(OPENCV_CFLAGS)
 
 # === Output binary ===
 TARGET := main
@@ -51,7 +49,7 @@ gpu: FLAGS := $(NVCCFLAGS)
 gpu: MODE := GPU
 gpu: $(TARGET)
 
-# === Build rule ===
+# === Link rule ===
 $(TARGET): $(OBJ_FILES)
 	@echo "⚙️  Linking for $(MODE) mode..."
 	$(CXX) $(FLAGS) $(OBJ_FILES) $(OPENCV_LIBS) -o $@
