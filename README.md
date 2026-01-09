@@ -7,7 +7,3 @@ Install
 ```
 conda install -c conda-forge opencv gxx_linux-64 cmake pkg-config -y
 ```
-
-GPU MX230 (no images):
-- Average TTFT: 5.161633 (s)
-- Average generated tokens per second: 110.243660 (toks/s)
