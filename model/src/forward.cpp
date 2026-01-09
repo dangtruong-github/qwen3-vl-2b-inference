@@ -489,8 +489,8 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         #endif
 
         // QKV Projections
-        printf("BEFORE PTR\n");
-        fflush(stdout);
+        // printf("BEFORE PTR\n");
+        // fflush(stdout);
         const void *w_q = weight->w_attn_q->ptr({l});
         const void *w_k = weight->w_attn_k->ptr({l});
         const void *w_v = weight->w_attn_v->ptr({l});
@@ -498,9 +498,10 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         float *k_cache_ptr = (float *)state->key_cache->ptr({0, l, pos});
         float *v_cache_ptr = (float *)state->value_cache->ptr({0, l, pos});
 
-        printf("AFTER PTR\n");
-        fflush(stdout);
+        // printf("AFTER PTR\n");
+        // fflush(stdout);
         
+        fflush(stdout);
         linear(
             (const float *)state->t->ptr(), w_q, nullptr,
             (float *)state->q->ptr(),

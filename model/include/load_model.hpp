@@ -11,7 +11,7 @@
 
 #include "../config.hpp"
 
-void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weights);
+void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weights, DType::Type dtype_weight);
 void init_model_run_state(QwenRunState* state, const QwenConfig* config);
 void free_model_config(QwenConfig *config);
 void free_model_weights(QwenWeight* weights);

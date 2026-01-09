@@ -93,8 +93,15 @@ int main(int argc, char** argv) {
     QwenRunState *state = new QwenRunState;
     TokenizerStruct* tokenizer = new TokenizerStruct;
 
+    DType::Type dtype_weight;
+    if (strcmp(model_dtype, "fp32") == 0) {
+        dtype_weight = DType::FP32;
+    } else if (strcmp(model_dtype, "fp16") == 0) {
+        dtype_weight = DType::FP16;
+    }
+
     init_tokenizer(tokenizer, tokenizer_path);
-    init_model_weights(model_path, config, weights);
+    init_model_weights(model_path, config, weights, dtype_weight);
     init_model_run_state(state, config);
 
     // tokenizer_example(tokenizer);
@@ -122,14 +129,33 @@ int main(int argc, char** argv) {
     // Original example code removed for clarity, but you can put it back.
 
     // Cleanup
+
+    printf("STARTING FREE\n");
+    fflush(stdout);
     free_model_run_state(state);
+    printf("FINISH FREE state\n");
+    fflush(stdout);
     free_model_weights(weights);
+    printf("FINISH FREE weights\n");
+    fflush(stdout);
     free_model_config(config);
+    printf("FINISH FREE config\n");
+    fflush(stdout);
     free_tokenizer(tokenizer);
+    printf("FINISH FREE tokenizer\n");
+    fflush(stdout);
     delete config;
+    printf("FINISH DELETE config\n");
+    fflush(stdout);
     delete weights;
+    printf("FINISH DELETE weights\n");
+    fflush(stdout);
     delete state;
+    printf("FINISH DELETE state\n");
+    fflush(stdout);
     delete tokenizer;
+    printf("FINISH FREE AND DELETE\n");
+    fflush(stdout);
 
     return 0; // Return 0 if all validation samples passed
 }

@@ -8,9 +8,6 @@ void linear_mixed_precision(
     size_t M, size_t N, size_t K, 
     bool mat_B_transpose
 ) {
-    printf("MIXED PRECISION\n");
-    fflush(stdout);
-
     // 1. Initialize mat_C with fp16 bias (expanded to fp32) or zeros
     #pragma omp parallel for collapse(2)
     for (size_t i = 0; i < M; ++i) {
@@ -23,8 +20,6 @@ void linear_mixed_precision(
             }
         }
     }
-    printf("FINISH BIAS\n");
-    fflush(stdout);
 
     // 2. Compute Matrix Multiplication
     if (mat_B_transpose) {
@@ -65,9 +60,22 @@ void linear(
     float *mat_C, size_t M, size_t N, size_t K,
     bool mat_B_transpose, DType::Type type_b
 ) {
-    printf("START FUNCTION\n");
-    fflush(stdout);
+    #ifdef CPU_TIME
+        CPUTimer timer("linear");
+        printf("Shape of matmul w/ precision %s: M=%zu, N=%zu, K=%zu, bias=%d, B transpose=%d\n", dtypeToStr(type_b), M, N, K, (mat_bias_in != nullptr), mat_B_transpose);
+    #endif
     
+
+    if (type_b == DType::FP16) {
+        linear_mixed_precision(
+            mat_A,
+            static_cast<const half_cpu*>(mat_B_in), 
+            static_cast<const half_cpu*>(mat_bias_in),
+            mat_C, M, N, K, mat_B_transpose 
+        );
+        return;
+        
+    }
 
     const float *mat_B = (const float *)mat_B_in;
     const float *mat_bias = (const float *)mat_bias_in;
@@ -129,19 +137,3 @@ void linear(
         }
     }
 }
-
-/*
-linear_mixed_precision(
-            mat_A,
-            static_cast<const half_cpu*>(mat_B_in), 
-            static_cast<const half_cpu*>(mat_bias_in),
-            mat_C, M, N, K, mat_B_transpose 
-        );
-if (type_b == DType::FP16) {
-        printf("START FP16\n");
-        fflush(stdout);
-        
-        return;
-        
-    }
-*/

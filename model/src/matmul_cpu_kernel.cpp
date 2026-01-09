@@ -1032,11 +1032,6 @@ void linear_kernel(
     const float *mat_A, const float *mat_B, const float *mat_bias,
     float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 ) {
-    #ifdef CPU_TIME
-        CPUTimer timer("linear");
-        printf("Shape of matmul: M=%zu, N=%zu, K=%zu, B transpose=%d\n", M, N, K, mat_B_transpose);
-    #endif
-
     if (!mat_B_transpose) {
         linear_normal(mat_A, mat_B, mat_bias, mat_C, M, N, K);
         return;

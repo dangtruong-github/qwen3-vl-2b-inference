@@ -1,24 +1,53 @@
 #include "load_model.hpp"
 
-float* mmap_weight_safe(int fd, size_t size_in_bytes, off_t& current_offset) {
+void* mmap_weight_safe(
+    int fd,
+    size_t size_in_bytes,
+    off_t& current_offset,
+    DType::Type dtype
+) {
     if (size_in_bytes == 0) return nullptr;
+
     static size_t page_size = sysconf(_SC_PAGESIZE);
-    
+
+    // Align mmap offset to page boundary
     off_t aligned_offset = (current_offset / page_size) * page_size;
     off_t offset_in_page = current_offset - aligned_offset;
     size_t mapped_size = size_in_bytes + offset_in_page;
 
-    void* mapped_ptr = mmap(NULL, mapped_size, PROT_READ, MAP_PRIVATE, fd, aligned_offset);
+    void* mapped_ptr = mmap(
+        nullptr,
+        mapped_size,
+        PROT_READ,
+        MAP_PRIVATE,
+        fd,
+        aligned_offset
+    );
+
     if (mapped_ptr == MAP_FAILED) {
         perror("mmap failed");
         return nullptr;
     }
 
+    void* data_ptr = (char*)mapped_ptr + offset_in_page;
+
+    // Advance file offset
     current_offset += size_in_bytes;
-    return (float*)((char*)mapped_ptr + offset_in_page);
+
+    // Optional: sanity check
+    #ifdef DEBUG
+    if (dtype == DType::FP32 && size_in_bytes % sizeof(float) != 0) {
+        fprintf(stderr, "Warning: FP32 size not aligned\n");
+    }
+    if (dtype == DType::FP16 && size_in_bytes % sizeof(uint16_t) != 0) {
+        fprintf(stderr, "Warning: FP16 size not aligned\n");
+    }
+    #endif
+
+    return data_ptr;
 }
 
-void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weights) {
+void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weights, DType::Type dtype_weight) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) { perror("Error opening file"); return; }
 
@@ -109,9 +138,15 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
 
     auto map_tensor = [&](Tensor** target, std::vector<size_t> dims, const char* name) {
         size_t count = 1;
+        size_t size_elem;
+        if (dtype_weight == DType::FP32) {
+            size_elem = sizeof(float);
+        } else {
+            size_elem = sizeof(half_cpu);
+        }
         for (auto d : dims) count *= d;
-        float* ptr = mmap_weight_safe(fd, count * sizeof(float), current_offset);
-        *target = new Tensor(dims, ptr);
+        void* ptr = mmap_weight_safe(fd, count * size_elem, current_offset, dtype_weight);
+        *target = new Tensor(dims, ptr, dtype_weight);
         (*target)->printShape(name);
     };
 

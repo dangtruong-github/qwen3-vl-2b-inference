@@ -13,21 +13,31 @@ const char* dtypeToStr(DType::Type dtype) {
 Tensor::Tensor(
     const vector<size_t> &shape_, DType::Type dtype_
 ) : shape(shape_), dtype(dtype_), owns_host_buf(true) {
+    if (dtype != DType::FP32 && dtype != DType::FP16) {
+        fprintf(stderr, "Dtype not implemented %s\n", dtypeToStr(dtype));
+        exit(1);   
+    }
+
     ndim = shape_.size();
     size_t N_ = num_elem();
-    if (dtype == DType::FP32) {
-        buf = calloc(N_, sizeof(float));
-        CHECK_ALLOC(buf, N_ * sizeof(float));
-    } else {
-        fprintf(stderr, "Dtype not implemented %s\n", dtypeToStr(dtype));
-        exit(1);
-    }
+    size_t each_elem = get_dtype_size();
+
+    buf = calloc(N_, each_elem);
+    CHECK_ALLOC(buf, N_ * each_elem);
+
+    printf("Allocate tensor with size %lf MB\n", double(N_ * each_elem) / 1024.0 / 1024.0);
+    fflush(stdout);
 }
 
 Tensor::Tensor(
     const vector<size_t> &shape_, void *buf_, DType::Type dtype_
 ) : shape(shape_), buf(buf_), dtype(dtype_), owns_host_buf(false) {
     ndim = shape_.size();
+
+    size_t size_buf = num_elem() * get_dtype_size();
+
+    printf("New tensor wrapper with size %lf MB\n", double(size_buf) / 1024.0 / 1024.0);
+    fflush(stdout);
 }
 
 Tensor::~Tensor() {
