@@ -2,8 +2,7 @@
 
 #include "../config.hpp"
 #include "../include/forward.hpp"
-#include "../../tokenizer/include/utils.hpp"
-#include "../../tokenizer/include/test_utils.hpp"
+#include "../../tokenizer/module.hpp"
 #include "../../utils/module.hpp"
 
 void print_config(QwenConfig *config);

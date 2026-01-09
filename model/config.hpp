@@ -37,6 +37,10 @@ typedef struct {
     int vision_deep_stack_depth;
     int max_vision_embeddings;
     int *deep_layer;
+
+    int text_bits;
+    int group_size;
+    int vision_bits;
 } QwenConfig;
 
 typedef struct {

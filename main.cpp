@@ -33,16 +33,14 @@ int main(int argc, char** argv) {
         printf(
             "Usage: %s "
             "--model_path <path/to/model.bin> "
-            "--tokenizer_path <path/to/tokenizer.bin> "
-            "[--model_dtype fp32|fp16]\n",
+            "--tokenizer_path <path/to/tokenizer.bin>\n",
             argv[0]
         );
         return 1;
     }
 
-    const char* model_path = NULL;
-    const char* tokenizer_path = NULL;
-    const char* model_dtype = "fp32";  // default
+    const char* model_path = nullptr;
+    const char* tokenizer_path = nullptr;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--model_path") == 0) {
@@ -61,20 +59,6 @@ int main(int argc, char** argv) {
                 return 1;
             }
         }
-        else if (strcmp(argv[i], "--model_dtype") == 0) {
-            if (i + 1 < argc) {
-                model_dtype = argv[++i];
-                if (strcmp(model_dtype, "fp32") != 0 &&
-                    strcmp(model_dtype, "fp16") != 0) {
-                    fprintf(stderr,
-                        "Error: --model_dtype must be 'fp32' or 'fp16'\n");
-                    return 1;
-                }
-            } else {
-                fprintf(stderr, "Error: Value missing after --model_dtype\n");
-                return 1;
-            }
-        }
     }
 
     if (!model_path || !tokenizer_path) {
@@ -82,6 +66,7 @@ int main(int argc, char** argv) {
             "Error: --model_path and --tokenizer_path are required\n");
         return 1;
     }
+
     #if defined(__AVX512F__) && defined(__AVX512DQ__)
         printf("AVX512 enabled\n");
         fflush(stdout);
@@ -95,7 +80,6 @@ int main(int argc, char** argv) {
 
     printf("Model path: %s\n", model_path);
     printf("Tokenizer path: %s\n", tokenizer_path);
-    printf("Model dtype: %s\n", model_dtype);
 
     // Initialize
     QwenConfig *config = new QwenConfig;
@@ -103,15 +87,8 @@ int main(int argc, char** argv) {
     QwenRunState *state = new QwenRunState;
     TokenizerStruct* tokenizer = new TokenizerStruct;
 
-    DType::Type dtype_weight;
-    if (strcmp(model_dtype, "fp32") == 0) {
-        dtype_weight = DType::FP32;
-    } else if (strcmp(model_dtype, "fp16") == 0) {
-        dtype_weight = DType::FP16;
-    }
-
     init_tokenizer(tokenizer, tokenizer_path);
-    init_model_weights(model_path, config, weights, dtype_weight);
+    init_model_weights(model_path, config, weights);
     init_model_run_state(state, config);
 
     // tokenizer_example(tokenizer);

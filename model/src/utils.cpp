@@ -22,6 +22,9 @@ void print_config(QwenConfig *config) {
     printf("vision_start_token_id: %d\n", config->vision_start_token_id);
     printf("vision_end_token_id: %d\n", config->vision_end_token_id);
     printf("video_token_id: %d\n", config->video_token_id);
+    printf("text_bits: %d\n", config->text_bits);
+    printf("group_size: %d\n", config->group_size);
+    printf("vision_bits: %d\n", config->vision_bits);
 }
 
 void print_token(TokenizerStruct *tokenizer, int token_id) {

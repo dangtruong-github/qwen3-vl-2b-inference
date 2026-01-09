@@ -47,7 +47,7 @@ void* mmap_weight_safe(
     return data_ptr;
 }
 
-void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weights, DType::Type dtype_weight) {
+void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weights) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) { perror("Error opening file"); return; }
 
@@ -81,7 +81,10 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
         (fread(&(config->image_token_id), sizeof(int), 1, file) != 1) ||
         (fread(&(config->vision_start_token_id), sizeof(int), 1, file) != 1) ||
         (fread(&(config->vision_end_token_id), sizeof(int), 1, file) != 1) ||
-        (fread(&(config->video_token_id), sizeof(int), 1, file) != 1)
+        (fread(&(config->video_token_id), sizeof(int), 1, file) != 1)||
+        (fread(&(config->text_bits), sizeof(int), 1, file) != 1) ||
+        (fread(&(config->group_size), sizeof(int), 1, file) != 1) ||
+        (fread(&(config->vision_bits), sizeof(int), 1, file) != 1)
     ) {
         fprintf(stderr, "Error reading config field from file.\n");
         fclose(file);
@@ -139,14 +142,17 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     auto map_tensor = [&](Tensor** target, std::vector<size_t> dims, const char* name) {
         size_t count = 1;
         size_t size_elem;
-        if (dtype_weight == DType::FP32) {
-            size_elem = sizeof(float);
+        DType::Type type_elem;
+        if (config->text_bits == 32) {
+            type_elem = DType::FP32;
+            size_elem = 4;
         } else {
-            size_elem = sizeof(half_cpu);
+            type_elem = DType::FP16;
+            size_elem = 2;
         }
         for (auto d : dims) count *= d;
-        void* ptr = mmap_weight_safe(fd, count * size_elem, current_offset, dtype_weight);
-        *target = new Tensor(dims, ptr, dtype_weight);
+        void* ptr = mmap_weight_safe(fd, count * size_elem, current_offset, type_elem);
+        *target = new Tensor(dims, ptr, type_elem);
         (*target)->printShape(name);
     };
 
