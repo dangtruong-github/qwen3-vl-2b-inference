@@ -9,6 +9,6 @@
 #if defined(__AVX2__) && defined(__FMA__)
 void fp16_avx2_kernel(
     const float *mat_A, const half_cpu *mat_B, const half_cpu *mat_bias,
-    float *mat_C,  size_t M, size_t N, size_t K, bool mat_B_transpose
+    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 );
 #endif

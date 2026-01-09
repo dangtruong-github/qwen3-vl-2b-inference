@@ -244,7 +244,7 @@ void print_cv_img(const cv::Mat *img) {
     }
 }
 
-void hwc_to_chw(const cv::Mat& hwc_img,  float* chw_out) {
+void hwc_to_chw(const cv::Mat& hwc_img, float* chw_out) {
     CV_Assert(hwc_img.type() == CV_32FC3);
     CV_Assert(hwc_img.isContinuous());
 

@@ -129,10 +129,12 @@ void linear(
     float *mat_C, size_t M, size_t N, size_t K,
     bool mat_B_transpose, DType::Type type_b
 ) {
+    /*
     #ifdef CPU_TIME
         CPUTimer timer("linear");
         printf("Shape of matmul w/ precision %s: M=%zu, N=%zu, K=%zu, bias=%d, B transpose=%d\n", dtypeToStr(type_b), M, N, K, (mat_bias_in != nullptr), mat_B_transpose);
     #endif
+    */
 
     if (type_b == DType::FP16) {
         linear_fp16(
