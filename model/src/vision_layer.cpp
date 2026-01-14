@@ -35,7 +35,7 @@ void conv_3d(
                 out_img[i * VH + h] = accumulator + conv_b_buf[h];
             }
         }
-    } else {
+    } else if (conv_w->dtype == DType::FP16) {
         // Cast bias to fp16 type
         const half_cpu *conv_b_buf = static_cast<const half_cpu*>(conv_b->ptr());
 
@@ -58,6 +58,44 @@ void conv_3d(
 
                 // Expand fp16 bias to fp32 and store result
                 out_img[i * VH + h] = accumulator + static_cast<float>(conv_b_buf[h]);
+            }
+        }
+    } else {
+        // Quantized Weights and Scales
+        const int8_t *w_q = static_cast<const int8_t*>(conv_w->ptr());
+        const float *w_scales = static_cast<const float*>(conv_w->ptr({}, true));
+        
+        // Quantized Bias and Scales
+        const int8_t *b_q = static_cast<const int8_t*>(conv_b->ptr());
+        const float *b_scales = static_cast<const float*>(conv_b->ptr({}, true));
+
+        const size_t group_size = conv_w->group_size;
+        const size_t b_group_size = conv_b->group_size;
+
+        #pragma omp parallel for collapse(2)
+        for (long i = 0; i < img_h; ++i) {
+            for (size_t h = 0; h < VH; ++h) {
+                float accumulator = 0.0f;
+
+                const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
+                
+                // Offset weights to the h-th output channel
+                // Each channel has FEATURE_BLOCK_SIZE weights
+                const int8_t *kernel_q_slice = w_q + (h * FEATURE_BLOCK_SIZE);
+                // Each channel has (FEATURE_BLOCK_SIZE / group_size) scales
+                const float *kernel_scales_slice = w_scales + (h * FEATURE_BLOCK_SIZE / group_size);
+
+                // Inner dot product
+                for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
+                    float scale = kernel_scales_slice[c / group_size];
+                    float weight = static_cast<float>(kernel_q_slice[c]) * scale;
+                    accumulator += input_block_ptr[c] * weight;
+                }
+
+                // Dequantize bias: bias[h] = b_q[h] * b_scale[h / b_group_size]
+                float bias = static_cast<float>(b_q[h]) * b_scales[h / b_group_size];
+                
+                out_img[i * VH + h] = accumulator + bias;
             }
         }
     }
@@ -198,7 +236,7 @@ void vision_pos_embed(const Tensor *pos_embed_w, float *x_embed, int grid_h, int
                 }
             }   
         }
-    } else {
+    } else if (pos_embed_w->dtype == DType::FP16) {
         for (size_t i = 0; i < total_elements; ++i) {
             float *pos_embed_ptr_cur = pos_embed_ptr + (i * VH);
 
@@ -222,7 +260,32 @@ void vision_pos_embed(const Tensor *pos_embed_w, float *x_embed, int grid_h, int
                 }
             }   
         }
-    }    
+    } else {
+        for (size_t i = 0; i < total_elements; ++i) {
+            float *pos_embed_ptr_cur = pos_embed_ptr + (i * VH);
+
+            // Initialize accumulator to zero
+            for (size_t j = 0; j < VH; j++) {
+                pos_embed_ptr_cur[j] = 0.0f;
+            }
+
+            for (int k = 0; k < 4; ++k) {
+                long source_index = idx_list_mem[k][i];
+                
+                // CHANGE: Cast to half_cpu instead of float
+                const int8_t *pos_embed_w_idx_start = static_cast<const int8_t*>(pos_embed_w->ptr({(size_t)source_index}));
+                const float *pos_embed_w_idx_start_scale = static_cast<const float*>(pos_embed_w->ptr({(size_t)source_index}, true));
+                float weight = weight_list_mem[k][i];
+
+                // Optimized with SIMD + F16C
+                #pragma omp simd
+                for (int j = 0; j < VH; ++j) {
+                    // Conversion from fp16 to fp32 happens here via F16C
+                    pos_embed_ptr_cur[j] += static_cast<float>(pos_embed_w_idx_start[j]) * pos_embed_w_idx_start_scale[j] * weight;
+                }
+            }   
+        }
+    } 
 
     for (int i = 0; i < 4; ++i) {
         free(idx_list_mem[i]);
@@ -404,7 +467,7 @@ void layer_norm(
             x_buf += hidden_size;
             out_buf += hidden_size;
         }
-    } else {
+    } else if (scale->dtype == DType::FP16) {
         const half_cpu *scale_buf = static_cast<const half_cpu*>(scale->ptr({layer_offset}));
         const half_cpu *bias_buf = static_cast<const half_cpu*>(bias->ptr({layer_offset}));
     
@@ -435,6 +498,53 @@ void layer_norm(
                 // scale_buf and bias_buf are fp16, converted via F16C during load
                 float gamma = static_cast<float>(scale_buf[j]);
                 float beta  = static_cast<float>(bias_buf[j]);
+                
+                out_buf[j] = (x_buf[j] - mean) * inv_std * gamma + beta;
+            }
+
+            x_buf += hidden_size;
+            out_buf += hidden_size;
+        }
+    } else {
+        // Quantized scale (gamma) and its FP32 scales
+        const int8_t *scale_q = static_cast<const int8_t*>(scale->ptr({layer_offset}));
+        const float *scale_scales = static_cast<const float*>(scale->ptr({layer_offset}, true));
+        
+        // Quantized bias (beta) and its FP32 scales
+        const int8_t *bias_q = static_cast<const int8_t*>(bias->ptr({layer_offset}));
+        const float *bias_scales = static_cast<const float*>(bias->ptr({layer_offset}, true));
+
+        const size_t group_size = scale->group_size;
+        const size_t b_group_size = bias->group_size;
+
+        for (size_t i = 0; i < batches; i++) {
+            // 1. Calculate Mean
+            float mean = 0.0f;
+            #pragma omp simd reduction(+:mean)
+            for (size_t j = 0; j < hidden_size; j++) {
+                mean += x_buf[j];
+            }
+            mean /= hidden_size;
+
+            // 2. Calculate Variance
+            float variance = 0.0f;
+            #pragma omp simd reduction(+:variance)
+            for (size_t j = 0; j < hidden_size; j++) {
+                float diff = x_buf[j] - mean;
+                variance += diff * diff;
+            }
+            variance /= hidden_size;
+
+            // 3. Normalization Factor
+            float inv_std = 1.0f / sqrtf(variance + eps);
+
+            // 4. Normalize and Apply Dequantized Affine Transform
+            #pragma omp simd
+            for (size_t j = 0; j < hidden_size; j++) {
+                // Dequantize gamma (scale)
+                float gamma = static_cast<float>(scale_q[j]) * scale_scales[j / group_size];
+                // Dequantize beta (bias)
+                float beta = static_cast<float>(bias_q[j]) * bias_scales[j / b_group_size];
                 
                 out_buf[j] = (x_buf[j] - mean) * inv_std * gamma + beta;
             }
@@ -561,7 +671,11 @@ void vision_att(
         // M = total_tokens, N = total_tokens, K = head_dim
         // ---------------------------------------------------------
 
-        linear(curr_q, curr_k, nullptr, attn_scores, total_tokens, total_tokens, head_dim, true, DType::FP32);
+        linear(
+            curr_q, curr_k, nullptr, nullptr, nullptr,
+            attn_scores, total_tokens, total_tokens, head_dim,
+            true, DType::FP32, DType::FP32, 0
+        );
 
         // ---------------------------------------------------------
         // Step 2: Scale Factor and Bias
@@ -588,7 +702,11 @@ void vision_att(
         // Result:        [total_tokens, head_dim] -> written to curr_out
         // M = total_tokens, N = head_dim, K = total_tokens
         // ---------------------------------------------------------
-        linear(attn_scores, curr_v, NULL, curr_out, total_tokens, head_dim, total_tokens, false, DType::FP32);
+        linear(
+            attn_scores, curr_v, nullptr, nullptr, NULL, 
+            curr_out, total_tokens, head_dim,
+            total_tokens, false, DType::FP32, DType::FP32, 0
+        );
     }
 }
 

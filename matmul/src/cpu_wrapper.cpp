@@ -125,9 +125,9 @@ void linear_fp32(
 }
 
 void linear(
-    const float *mat_A, const void *mat_B_in, const void *mat_bias_in,
-    float *mat_C, size_t M, size_t N, size_t K,
-    bool mat_B_transpose, DType::Type type_b
+    const float *mat_A, const void *mat_B_in, const void *mat_B_scale,
+    const void *mat_bias_in, const void *mat_bias_scale,
+    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,DType::Type type_b, DType::Type type_b_scale, size_t group_size
 ) {
     /*
     #ifdef CPU_TIME
@@ -150,8 +150,18 @@ void linear(
             mat_C, M, N, K, mat_B_transpose
         );
         return;
+    } else if (type_b == DType::INT8 && type_b_scale == DType::FP32)  {
+        linear_int8_fp32s(
+            mat_A,
+            static_cast<const int8_t*>(mat_B_in),
+            static_cast<const float*>(mat_B_scale),
+            static_cast<const int8_t*>(mat_bias_in),
+            static_cast<const float*>(mat_bias_scale),
+            mat_C, M, N, K, mat_B_transpose, group_size
+        );
+        return;
     }
 
-    fprintf(stderr, "DType matmul not supported %s\n", dtypeToStr(type_b));
+    fprintf(stderr, "DType matmul not supported: type_b=%s, type_b_scale=%s\n", dtypeToStr(type_b), dtypeToStr(type_b_scale));
     exit(1);
 }

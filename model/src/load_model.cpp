@@ -137,70 +137,93 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     size_t vocab_size = config->vocab_size;
     size_t M = num_deepstack_mergers;
 
+    size_t text_bits = config->text_bits;
+    size_t vision_bits = config->vision_bits;
+
     off_t current_offset = ftell(file);
 
-    auto map_tensor = [&](Tensor** target, std::vector<size_t> dims, const char* name) {
+    auto map_tensor = [&](Tensor** target, std::vector<size_t> dims, const char* name, size_t weight_bits) {
         size_t count = 1;
         size_t size_elem;
         DType::Type type_elem;
-        if (config->text_bits == 32) {
-            type_elem = DType::FP32;
-            size_elem = 4;
+        if (weight_bits >= 16) {
+            if (weight_bits == 32) {
+                type_elem = DType::FP32;
+                size_elem = 4;
+            } else {
+                type_elem = DType::FP16;
+                size_elem = 2;
+            }
+            for (auto d : dims) count *= d;
+            void* ptr = mmap_weight_safe(fd, count * size_elem, current_offset, type_elem);
+            *target = new Tensor(dims, ptr, type_elem);
+            (*target)->printShape(name);
         } else {
-            type_elem = DType::FP16;
-            size_elem = 2;
+            if (weight_bits == 8) {
+                type_elem = DType::INT8;
+                size_elem = 1;
+            }
+            for (auto d : dims) count *= d;
+            size_t group_size = config->group_size;
+            if (count % group_size) {
+                fprintf(stderr, "Not even weights %s\n", name);
+                exit(1);
+            }
+            size_t count_scales = count / group_size;
+            size_t size_scale_elem = 4;
+            DType::Type scale_type_elem = DType::FP32;
+            void *scale_ptr = mmap_weight_safe(fd, count_scales * size_scale_elem, current_offset, scale_type_elem);
+            void *ptr = mmap_weight_safe(fd, count * size_elem, current_offset, type_elem);
+            *target = new Tensor(dims, ptr, scale_ptr, group_size, type_elem, scale_type_elem);
+            (*target)->printShape(name);
         }
-        for (auto d : dims) count *= d;
-        void* ptr = mmap_weight_safe(fd, count * size_elem, current_offset, type_elem);
-        *target = new Tensor(dims, ptr, type_elem);
-        (*target)->printShape(name);
     };
 
     // --- LLM WEIGHTS ---
-    map_tensor(&weights->token_embedding_table, {vocab_size, H}, "token_embedding_table");
-    map_tensor(&weights->rms_ffn_w, {L, H}, "rms_ffn_w");
-    map_tensor(&weights->w_mlp_down, {L, H, I}, "w_mlp_down");
-    map_tensor(&weights->w_mlp_gate, {L, I, H}, "w_mlp_gate");
-    map_tensor(&weights->w_mlp_up, {L, I, H}, "w_mlp_up");
-    map_tensor(&weights->rms_attn_w, {L, H}, "rms_attn_w");
-    map_tensor(&weights->w_attn_k_norm, {L, head_dim}, "w_attn_k_norm");
-    map_tensor(&weights->w_attn_k, {L, KVAD, H}, "w_attn_k");
-    map_tensor(&weights->w_attn_o, {L, H, H}, "w_attn_o");
-    map_tensor(&weights->w_attn_q_norm, {L, head_dim}, "w_attn_q_norm");
-    map_tensor(&weights->w_attn_q, {L, QD, H}, "w_attn_q");
-    map_tensor(&weights->w_attn_v, {L, KVAD, H}, "w_attn_v");
-    map_tensor(&weights->rms_out_w, {H}, "rms_out_w");
+    map_tensor(&weights->token_embedding_table, {vocab_size, H}, "token_embedding_table", text_bits);
+    map_tensor(&weights->rms_ffn_w, {L, H}, "rms_ffn_w", text_bits);
+    map_tensor(&weights->w_mlp_down, {L, H, I}, "w_mlp_down", text_bits);
+    map_tensor(&weights->w_mlp_gate, {L, I, H}, "w_mlp_gate", text_bits);
+    map_tensor(&weights->w_mlp_up, {L, I, H}, "w_mlp_up", text_bits);
+    map_tensor(&weights->rms_attn_w, {L, H}, "rms_attn_w", text_bits);
+    map_tensor(&weights->w_attn_k_norm, {L, head_dim}, "w_attn_k_norm", text_bits);
+    map_tensor(&weights->w_attn_k, {L, KVAD, H}, "w_attn_k", text_bits);
+    map_tensor(&weights->w_attn_o, {L, H, H}, "w_attn_o", text_bits);
+    map_tensor(&weights->w_attn_q_norm, {L, head_dim}, "w_attn_q_norm", text_bits);
+    map_tensor(&weights->w_attn_q, {L, QD, H}, "w_attn_q", text_bits);
+    map_tensor(&weights->w_attn_v, {L, KVAD, H}, "w_attn_v", text_bits);
+    map_tensor(&weights->rms_out_w, {H}, "rms_out_w", text_bits);
 
     // --- VISION WEIGHTS ---
-    map_tensor(&weights->vl_patch_emb_b, {VH}, "vl_patch_emb_b");
-    map_tensor(&weights->vl_patch_emb_w, {VH, VC, VTP, VP, VP}, "vl_patch_emb_w");
-    map_tensor(&weights->vl_pos_emb_w, {VNPE, VH}, "vl_pos_emb_w");
-    map_tensor(&weights->vl_attn_proj_b, {VD, VH}, "vl_attn_proj_b");
-    map_tensor(&weights->vl_attn_proj_w, {VD, VH, VH}, "vl_attn_proj_w");
-    map_tensor(&weights->vl_attn_qkv_b, {VD, 3, VH}, "vl_attn_qkv_b");
-    map_tensor(&weights->vl_attn_qkv_w, {VD, 3, VH, VH}, "vl_attn_qkv_w");
-    map_tensor(&weights->vl_mlp1_b, {VD, VI}, "vl_mlp1_b");
-    map_tensor(&weights->vl_mlp1_w, {VD, VI, VH}, "vl_mlp1_w");
-    map_tensor(&weights->vl_mlp2_b, {VD, VH}, "vl_mlp2_b");
-    map_tensor(&weights->vl_mlp2_w, {VD, VH, VI}, "vl_mlp2_w");
-    map_tensor(&weights->vl_norm1_b, {VD, VH}, "vl_norm1_b");
-    map_tensor(&weights->vl_norm1_w, {VD, VH}, "vl_norm1_w");
-    map_tensor(&weights->vl_norm2_b, {VD, VH}, "vl_norm2_b");
-    map_tensor(&weights->vl_norm2_w, {VD, VH}, "vl_norm2_w");
+    map_tensor(&weights->vl_patch_emb_b, {VH}, "vl_patch_emb_b", vision_bits);
+    map_tensor(&weights->vl_patch_emb_w, {VH, VC, VTP, VP, VP}, "vl_patch_emb_w", vision_bits);
+    map_tensor(&weights->vl_pos_emb_w, {VNPE, VH}, "vl_pos_emb_w", vision_bits);
+    map_tensor(&weights->vl_attn_proj_b, {VD, VH}, "vl_attn_proj_b", vision_bits);
+    map_tensor(&weights->vl_attn_proj_w, {VD, VH, VH}, "vl_attn_proj_w", vision_bits);
+    map_tensor(&weights->vl_attn_qkv_b, {VD, 3, VH}, "vl_attn_qkv_b", vision_bits);
+    map_tensor(&weights->vl_attn_qkv_w, {VD, 3, VH, VH}, "vl_attn_qkv_w", vision_bits);
+    map_tensor(&weights->vl_mlp1_b, {VD, VI}, "vl_mlp1_b", vision_bits);
+    map_tensor(&weights->vl_mlp1_w, {VD, VI, VH}, "vl_mlp1_w", vision_bits);
+    map_tensor(&weights->vl_mlp2_b, {VD, VH}, "vl_mlp2_b", vision_bits);
+    map_tensor(&weights->vl_mlp2_w, {VD, VH, VI}, "vl_mlp2_w", vision_bits);
+    map_tensor(&weights->vl_norm1_b, {VD, VH}, "vl_norm1_b", vision_bits);
+    map_tensor(&weights->vl_norm1_w, {VD, VH}, "vl_norm1_w", vision_bits);
+    map_tensor(&weights->vl_norm2_b, {VD, VH}, "vl_norm2_b", vision_bits);
+    map_tensor(&weights->vl_norm2_w, {VD, VH}, "vl_norm2_w", vision_bits);
 
     // --- DEEP STACK & MERGER ---
-    map_tensor(&weights->vl_d_mlp1_b, {VDSD, VI}, "vl_d_mlp1_b");
-    map_tensor(&weights->vl_d_mlp1_w, {VDSD, VI, VI}, "vl_d_mlp1_w");
-    map_tensor(&weights->vl_d_mlp2_b, {VDSD, OH}, "vl_d_mlp2_b");
-    map_tensor(&weights->vl_d_mlp2_w, {VDSD, OH, VI}, "vl_d_mlp2_w");
-    map_tensor(&weights->vl_d_norm_b, {VDSD, VI}, "vl_d_norm_b");
-    map_tensor(&weights->vl_d_norm_w, {VDSD, VI}, "vl_d_norm_w");
-    map_tensor(&weights->vl_merge_mlp1_b, {VI}, "vl_merge_mlp1_b");
-    map_tensor(&weights->vl_merge_mlp1_w, {VI, VI}, "vl_merge_mlp1_w");
-    map_tensor(&weights->vl_merge_mlp2_b, {OH}, "vl_merge_mlp2_b");
-    map_tensor(&weights->vl_merge_mlp2_w, {OH, VI}, "vl_merge_mlp2_w");
-    map_tensor(&weights->vl_merge_norm_b, {VH}, "vl_merge_norm_b");
-    map_tensor(&weights->vl_merge_norm_w, {VH}, "vl_merge_norm_w");
+    map_tensor(&weights->vl_d_mlp1_b, {VDSD, VI}, "vl_d_mlp1_b", vision_bits);
+    map_tensor(&weights->vl_d_mlp1_w, {VDSD, VI, VI}, "vl_d_mlp1_w", vision_bits);
+    map_tensor(&weights->vl_d_mlp2_b, {VDSD, OH}, "vl_d_mlp2_b", vision_bits);
+    map_tensor(&weights->vl_d_mlp2_w, {VDSD, OH, VI}, "vl_d_mlp2_w", vision_bits);
+    map_tensor(&weights->vl_d_norm_b, {VDSD, VI}, "vl_d_norm_b", vision_bits);
+    map_tensor(&weights->vl_d_norm_w, {VDSD, VI}, "vl_d_norm_w", vision_bits);
+    map_tensor(&weights->vl_merge_mlp1_b, {VI}, "vl_merge_mlp1_b", vision_bits);
+    map_tensor(&weights->vl_merge_mlp1_w, {VI, VI}, "vl_merge_mlp1_w", vision_bits);
+    map_tensor(&weights->vl_merge_mlp2_b, {OH}, "vl_merge_mlp2_b", vision_bits);
+    map_tensor(&weights->vl_merge_mlp2_w, {OH, VI}, "vl_merge_mlp2_w", vision_bits);
+    map_tensor(&weights->vl_merge_norm_b, {VH}, "vl_merge_norm_b", vision_bits);
+    map_tensor(&weights->vl_merge_norm_w, {VH}, "vl_merge_norm_w", vision_bits);
 
     fclose(file); // Note: file was opened from fd, so this closes the file handle.
 }

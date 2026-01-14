@@ -7,9 +7,10 @@
 #include "../../utils/module.hpp"
 #include "cpu_fp32_avx2_kernel.hpp"
 #include "cpu_fp16_avx2_kernel.hpp"
+#include "cpu_int8_fp32s_avx2_kernel.hpp"
 
 void linear(
-    const float *mat_A, const void *mat_B_in, const void *mat_bias_in,
-    float *mat_C, size_t M, size_t N, size_t K,
-    bool mat_B_transpose, DType::Type type_b
+    const float *mat_A, const void *mat_B_in, const void *mat_B_scale,
+    const void *mat_bias_in, const void *mat_bias_scale,
+    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,DType::Type type_b, DType::Type type_b_scale, size_t group_size
 );

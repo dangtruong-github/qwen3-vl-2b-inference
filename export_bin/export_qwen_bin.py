@@ -239,7 +239,7 @@ def write_weights_streaming(
         else:
             raise ValueError(bits)
 
-        print(f"Wrote {name} bits={bits} shape={t.shape}")
+        print(f"Wrote {name} bits={bits} shape={t.shape}", flush=True)
 
 
 # ----------------------------------------------------------------------

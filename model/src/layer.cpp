@@ -9,7 +9,7 @@ void embedding_lookup(
             out->ptr(), embedding->ptr({token_id}),
             hidden_size * sizeof(float)
         );
-    } else {
+    } else if (embedding->dtype == DType::FP16) {
         // Get typed pointers
         const half_cpu* src = static_cast<const half_cpu*>(embedding->ptr({token_id}));
         float* dst = static_cast<float*>(out->ptr());
@@ -18,6 +18,22 @@ void embedding_lookup(
         #pragma omp simd
         for (size_t i = 0; i < hidden_size; ++i) {
             dst[i] = static_cast<float>(src[i]);
+        }
+    } else {
+        const int8_t *src_q = static_cast<const int8_t*>(embedding->ptr({token_id}));
+        const float *scales = static_cast<const float*>(embedding->ptr({token_id}, true));
+        float *dst = static_cast<float*>(out->ptr());
+
+        size_t group_size = embedding->group_size; 
+
+        #pragma omp parallel for
+        for (size_t i = 0; i < hidden_size; ++i) {
+            // Find which scale group this index belongs to
+            size_t group_idx = i / group_size;
+            float scale = scales[group_idx];
+            
+            // Dequantize: float = int8 * scale
+            dst[i] = static_cast<float>(src_q[i]) * scale;
         }
     }
 }
@@ -51,7 +67,7 @@ void rms_norm(
             x += hidden_size;
             out += hidden_size;
         }
-    } else {
+    } else if (scale->dtype == DType::FP16) {
         const half_cpu *scale_buf = static_cast<const half_cpu*>(scale->ptr({layer_offset}));
 
         for (size_t i = 0; i < batches; i++) {
@@ -73,6 +89,32 @@ void rms_norm(
             x += hidden_size;
             out += hidden_size;
         }
+    } else {
+        const int8_t *scale_q = static_cast<const int8_t*>(scale->ptr({layer_offset}));
+        const float *scale_scales = static_cast<const float*>(scale->ptr({layer_offset}, true));
+        const size_t group_size = scale->group_size;
+
+        for (size_t i = 0; i < batches; i++) {
+            // 1. Calculate sum of squares (standard RMS logic)
+            double ss = 0.0;
+            #pragma omp simd reduction(+:ss)
+            for (size_t j = 0; j < hidden_size; j++) {
+                ss += (double)x[j] * x[j];
+            }
+            
+            float inv_rms = static_cast<float>(1.0 / sqrt(ss / hidden_size + eps));
+
+            // 2. Normalize and apply dequantized weights
+            // out[j] = (x[j] * inv_rms) * (scale_q[j] * scale_scales[j / group_size])
+            #pragma omp simd
+            for (size_t j = 0; j < hidden_size; j++) {
+                float weight = static_cast<float>(scale_q[j]) * scale_scales[j / group_size];
+                out[j] = weight * (inv_rms * x[j]);
+            }
+            
+            x += hidden_size;
+            out += hidden_size;
+        }
     }
 }
 
@@ -82,7 +124,11 @@ void classifier_gemm(
     size_t vocab_size, size_t hidden_size
 ) {
     linear(
-        (const float *)hid_states->ptr(), embedding->ptr(), nullptr, (float *)logits->ptr(), 1, vocab_size, hidden_size, true, embedding->dtype
+        (const float *)hid_states->ptr(), embedding->ptr(),
+        embedding->group_size > 0 ? embedding->ptr({}, true) : nullptr,
+        nullptr, nullptr, (float *)logits->ptr(),
+        1, vocab_size, hidden_size, true, embedding->dtype,
+        embedding->scale_dtype, embedding->group_size
     );
 }
 

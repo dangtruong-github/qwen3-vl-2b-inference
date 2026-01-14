@@ -6,6 +6,8 @@ const char* dtypeToStr(DType::Type dtype) {
         case DType::FP32: return "FP32";
         case DType::INT32: return "INT32";
         case DType::FP16: return "FP16";
+        case DType::INT8: return "INT8";
+        case DType::INT4: return "INT4";
         default: return "Unknown";
     }
 }
@@ -40,6 +42,18 @@ Tensor::Tensor(
     fflush(stdout);
 }
 
+Tensor::Tensor(
+    const std::vector<size_t> &shape_, void *buf_, void *scale_buf_,
+    size_t group_size_, DType::Type dtype_, DType::Type scale_dtype_
+) : shape(shape_), buf(buf_), scale_buf(scale_buf_), group_size(group_size_), dtype(dtype_), scale_dtype(scale_dtype_), owns_host_buf(false) {
+    ndim = shape_.size();
+
+    size_t size_buf = num_elem() * get_dtype_size();
+
+    printf("New tensor wrapper with size %lf MB\n", double(size_buf) / 1024.0 / 1024.0);
+    fflush(stdout);
+}
+
 Tensor::~Tensor() {
     if (buf != nullptr) {
         if (owns_host_buf) {
@@ -60,10 +74,30 @@ Tensor::~Tensor() {
         }
         buf = nullptr;
     }
+
+    if (scale_buf != nullptr) {
+        // free scale_buf
+        static size_t page_size = sysconf(_SC_PAGESIZE);
+        uintptr_t addr = (uintptr_t)scale_buf;
+        uintptr_t aligned_addr = (addr / page_size) * page_size;
+        size_t offset_in_page = addr - aligned_addr;
+
+        // USE YOUR SIZE CALCULATION HERE
+        size_t data_size = num_elem() * get_dtype_size(true); 
+        size_t total_mapped_size = data_size + offset_in_page;
+
+        scale_buf = nullptr;
+    }
 }
 
-void* Tensor::ptr(const std::vector<size_t>& indices) const {
-    if (indices.empty()) return buf;
+void* Tensor::ptr(const std::vector<size_t>& indices, bool get_scale) const {
+    if (get_scale && scale_buf == nullptr) {
+        fprintf(stderr, "scale_buf is null\n");
+        exit(1);
+    }
+    void *work_buf = get_scale ? scale_buf : buf;
+
+    if (indices.empty()) return work_buf;
 
     if (indices.size() > ndim) {
         fprintf(stderr, "Error: indices size %zu exceeds ndim %zu\n", indices.size(), ndim);
@@ -79,10 +113,18 @@ void* Tensor::ptr(const std::vector<size_t>& indices) const {
         offset += indices[i] * remaining_elements;
     }
 
+    if (get_scale) {
+        if (offset % group_size) {
+            fprintf(stderr, "Error: offset of scale_ptr must divide group_size, got offset=%zu and group_size=%zu\n", offset, group_size);
+            exit(1);
+        }
+        offset /= group_size;
+    }
+
     // Apply offset based on the size of the data type
     // dtype_size() should return sizeof(float), sizeof(int), etc.
-    char* base_ptr = static_cast<char*>(buf);
-    return base_ptr + (offset * get_dtype_size());
+    char* base_ptr = static_cast<char*>(work_buf);
+    return base_ptr + (offset * get_dtype_size(get_scale));
 }
 
 size_t Tensor::num_elem() const {
@@ -93,18 +135,19 @@ size_t Tensor::num_elem() const {
     return size;
 }
 
-size_t Tensor::get_dtype_size() const {
-    if (dtype == DType::FP32) {
-        return sizeof(float);
-    } else if (dtype == DType::INT32) {
-        return sizeof(int);
-    } else if (dtype == DType::FP16) {
-        return sizeof(half_cpu);
-    } else {
-        fprintf(stderr, "Dtype not implemented %s\n", dtypeToStr(dtype));
-        exit(1);
+size_t Tensor::get_dtype_size(bool get_scale) const {
+    DType::Type get_dtype = get_scale ? scale_dtype : dtype;
+    switch (get_dtype) {
+        case DType::FP32: return sizeof(float);
+        case DType::INT32: return sizeof(int);
+        case DType::FP16: return sizeof(half_cpu);
+        case DType::INT8: return sizeof(int8_t);
+        default: 
+            fprintf(stderr, "Dtype not implemented %s\n", dtypeToStr(get_dtype));
+            exit(1);
     }
 }
+
 void Tensor::reshape(const vector<size_t> &shape_) {
     size_t n = 1;
     ndim = shape_.size();  // ndim<=5
