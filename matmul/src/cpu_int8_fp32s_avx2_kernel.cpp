@@ -1,5 +1,6 @@
 #include "../include/cpu_int8_fp32s_avx2_kernel.hpp"
 
+#if defined(__AVX2__) && defined(__FMA__)
 static inline float add_reduce_mm_256(__m256 vec) {
     // Step 1: Split into two 128-bit halves
     __m128 low  = _mm256_castps256_ps128(vec);          // lower 128 bits
@@ -32,61 +33,68 @@ void linear_int8_fp32s_transpose(
             const float *a0_ptr = mat_A + i * K;
             const int8_t *b0_ptr = mat_B_in + j * K;
             const float *b_s_ptr = mat_B_scales + j * K / group_size;
-            
-            __m256 c0 = _mm256_setzero_ps();
-            __m256 c1 = _mm256_setzero_ps();
+
+            float acc = 0.0f;
+            if (mat_bias_in && mat_bias_scale) {
+                acc = (float)mat_bias_in[j] * mat_bias_scale[j / group_size];
+            }
 
             size_t k = 0;
             for (; k + group_size <= K; k += group_size) {
                 // group_size % 16 == 0
-                float scale = b_s_ptr[k / group_size];
-                __m256 bs = _mm256_set1_ps(scale);
-                for (size_t k_i = k; k_i < k + group_size; k_i += 16) {
+                __m256 c0 = _mm256_setzero_ps();
+                __m256 c1 = _mm256_setzero_ps();
+                __m256 c2 = _mm256_setzero_ps();
+                __m256 c3 = _mm256_setzero_ps();
+                for (size_t k_i = k; k_i < k + group_size; k_i += 32) {
                     __m256 a0 = _mm256_loadu_ps(a0_ptr + k_i);
                     __m256 a1 = _mm256_loadu_ps(a0_ptr + k_i + 8);
+                    __m256 a2 = _mm256_loadu_ps(a0_ptr + k_i + 16);
+                    __m256 a3 = _mm256_loadu_ps(a0_ptr + k_i + 24);
                     
-                    // 1. Load 16 int8 values into an xmm register (128-bit)
-                    __m128i q8 = _mm_loadu_si128((const __m128i*)(b0_ptr + k_i));
-                    __m256 b0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(q8));
-                    __m128i q8_hi = _mm_srli_si128(q8, 8);
-                    __m256 b1 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(q8_hi));
+                    // 1. Load 16 int8 values into an xmm register (128-bit)// 1. Load all 32 int8 values into a single 256-bit register
+                    __m256i q32 = _mm256_loadu_si256((const __m256i*)(b0_ptr + k_i));
 
-                    c0 = _mm256_fmadd_ps(a0, _mm256_mul_ps(b0, bs), c0);
-                    c1 = _mm256_fmadd_ps(a1, _mm256_mul_ps(b1, bs), c1);
+                    // 2. Extract 128-bit chunks (16 bytes each)
+                    __m128i low_16 = _mm256_castsi256_si128(q32);
+                    __m128i high_16 = _mm256_extracti128_si256(q32, 1);
+
+                    // 3. Convert first 16 bytes (low_16) into 2 float registers (8 floats each)
+                    // Low 8 of low_16
+                    __m256i i32_0 = _mm256_cvtepi8_epi32(low_16); 
+                    __m256 b0 = _mm256_cvtepi32_ps(i32_0);
+                    
+                    // High 8 of low_16 (shift right by 8 bytes first)
+                    __m256i i32_1 = _mm256_cvtepi8_epi32(_mm_srli_si128(low_16, 8));
+                    __m256 b1 = _mm256_cvtepi32_ps(i32_1);
+
+                    // 4. Convert next 16 bytes (high_16) into 2 float registers
+                    // Low 8 of high_16
+                    __m256i i32_2 = _mm256_cvtepi8_epi32(high_16);
+                    __m256 b2 = _mm256_cvtepi32_ps(i32_2);
+                    
+                    // High 8 of high_16 (shift right by 8 bytes first)
+                    __m256i i32_3 = _mm256_cvtepi8_epi32(_mm_srli_si128(high_16, 8));
+                    __m256 b3 = _mm256_cvtepi32_ps(i32_3);
+
+                    c0 = _mm256_fmadd_ps(a0, b0, c0);
+                    c1 = _mm256_fmadd_ps(a1, b1, c1);
+                    c2 = _mm256_fmadd_ps(a2, b2, c2);
+                    c3 = _mm256_fmadd_ps(a3, b3, c3);
                 }
-            }
 
-            for (; k + 16 <= K; k += 16) {
-                // Check if we cross a group boundary here. 
-                // Assuming group_size >= 32 for this SIMD block.
-                float scale = b_s_ptr[k / group_size];
-                __m256 bs = _mm256_set1_ps(scale);
+                c0 = _mm256_add_ps(c0, c1);
+                c2 = _mm256_add_ps(c2, c3);
 
-                __m256 a0 = _mm256_loadu_ps(a0_ptr + k);
-                __m256 a1 = _mm256_loadu_ps(a0_ptr + k + 8);
-                
-                // 1. Load 16 int8 values into an xmm register (128-bit)
-                __m128i q8 = _mm_loadu_si128((const __m128i*)(b0_ptr + k));
-                __m256 b0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(q8));
-                __m128i q8_hi = _mm_srli_si128(q8, 8);
-                __m256 b1 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(q8_hi));
-
-                c0 = _mm256_fmadd_ps(a0, _mm256_mul_ps(b0, bs), c0);
-                c1 = _mm256_fmadd_ps(a1, _mm256_mul_ps(b1, bs), c1);
+                acc += add_reduce_mm_256(_mm256_add_ps(c0, c2)) * b_s_ptr[k / group_size];
             }
 
             // Horizontal sum of all accumulators
-            float acc = add_reduce_mm_256(_mm256_add_ps(c0, c1));
 
             // Remainder loop
             for (; k < K; ++k) {
                 float scale = mat_B_scales[(j * K + k) / group_size];
                 acc += a0_ptr[k] * ((float)b0_ptr[k] * scale);
-            }
-
-            // Fusing Bias right here to save memory bandwidth
-            if (mat_bias_in && mat_bias_scale) {
-                acc += (float)mat_bias_in[j] * mat_bias_scale[j / group_size];
             }
 
             mat_C[i * N + j] = acc;
@@ -154,3 +162,4 @@ void linear_int8_fp32s_avx2_kernel(
         }
     }
 }
+#endif

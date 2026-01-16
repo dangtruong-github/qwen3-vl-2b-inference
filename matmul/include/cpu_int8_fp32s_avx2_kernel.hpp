@@ -6,6 +6,7 @@
 #include <sched.h> // for sched_setaffinity(), cpu_set_t, CPU_ZERO, CPU_SET
 #include "../../utils/module.hpp"
 
+#if defined(__AVX2__) && defined(__FMA__)
 void linear_int8_fp32s_avx2_kernel(
     const float *mat_A,          /* [M, K] */
     const int8_t *mat_B_in,      /* [N, K] if !trans, else [K, N] */
@@ -17,3 +18,4 @@ void linear_int8_fp32s_avx2_kernel(
     bool mat_B_transpose,
     size_t group_size            /* e.g., 32 or 64 */
 );
+#endif
