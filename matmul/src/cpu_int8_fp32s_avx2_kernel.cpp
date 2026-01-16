@@ -37,8 +37,7 @@ static inline float add_reduce_m256i(__m256i vec) {
     return (float)_mm_cvtsi128_si32(sum128);
 }
 
-// if defined INT16 x INT16
-void linear_int8_fp32s_int32acc_transpose(
+void sm_M_lg_N_lg_K_transpose(
     const float* mat_A,          // [M, K] FP32
     const int8_t* mat_B_in,      // [N, K] or [K, N] INT8
     const float* mat_B_scales,   // groupwise scales over linear B storage
@@ -46,6 +45,8 @@ void linear_int8_fp32s_int32acc_transpose(
     const float* mat_bias_scale, // groupwise scales over linear bias storage
     float* mat_C, size_t M, size_t N, size_t K, size_t group_size
 ) {
+    constexpr size_t TN = 16;
+
     for (size_t i = 0; i < M; ++i) {
         int16_t a_q16[K];
         float a_q16_s[K / group_size];
@@ -70,7 +71,121 @@ void linear_int8_fp32s_int32acc_transpose(
             }
         }
 
-        
+        #pragma omp parallel for
+        for (size_t jj = 0; jj < N; jj += 4) {
+            float total_acc_0 = 0.0f;
+            float total_acc_1 = 0.0f;
+            float total_acc_2 = 0.0f;
+            float total_acc_3 = 0.0f;
+
+            int16_t b_q16[4 * group_size];
+            const int16_t *b0_ptr = b_q16;
+            const int16_t *b1_ptr = b_q16 + group_size;
+            const int16_t *b2_ptr = b_q16 + 2 * group_size;
+            const int16_t *b3_ptr = b_q16 + 3 * group_size;
+            
+            for (size_t kk = 0; kk < K; kk += group_size) {
+                const int16_t *aq_now = a_q16 + kk;
+                const float a_s = a_q16_s[kk / group_size];
+
+                __m256i c0 = _mm256_setzero_si256();
+                __m256i c1 = _mm256_setzero_si256();
+                __m256i c2 = _mm256_setzero_si256();
+                __m256i c3 = _mm256_setzero_si256();
+
+                for (size_t k = 0; k < group_size; k += 32) {
+                    for (size_t j = 0; j < 4; ++j) {
+                        // load 32 int8 and save 32 int16
+                        __m256i b8 = _mm256_loadu_si256((__m256i*)(mat_B_in + (j + jj) * K + kk + k));
+                        __m256i b16_0 = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(b8));
+                        __m256i b16_1 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b8, 1));
+
+                        _mm256_storeu_si256((__m256i*)(b_q16 + j * group_size + k), b16_0);
+                        _mm256_storeu_si256((__m256i*)(b_q16 + j * group_size + k + 16), b16_1);
+                    }
+                }
+
+                for (size_t k = 0; k < group_size; k += 16) {
+                    __m256i a0 = _mm256_loadu_si256((__m256i*)(aq_now + k));
+
+                    __m256i b00 = _mm256_loadu_si256((__m256i*)(b0_ptr + k));
+                    __m256i b10 = _mm256_loadu_si256((__m256i*)(b1_ptr + k));
+                    __m256i b20 = _mm256_loadu_si256((__m256i*)(b2_ptr + k));
+                    __m256i b30 = _mm256_loadu_si256((__m256i*)(b3_ptr + k));
+
+                    c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(a0, b00));
+                    c1 = _mm256_add_epi32(c1, _mm256_madd_epi16(a0, b10));
+                    c2 = _mm256_add_epi32(c2, _mm256_madd_epi16(a0, b20));
+                    c3 = _mm256_add_epi32(c3, _mm256_madd_epi16(a0, b30));
+                }
+
+                float b0_q16_s = mat_B_scales[(jj * K + kk) / group_size];
+                float b1_q16_s = mat_B_scales[((jj + 1) * K + kk) / group_size];
+                float b2_q16_s = mat_B_scales[((jj + 2) * K + kk) / group_size];
+                float b3_q16_s = mat_B_scales[((jj + 3) * K + kk) / group_size];
+
+                total_acc_0 += add_reduce_m256i(c0) * a_s * b0_q16_s;
+                total_acc_1 += add_reduce_m256i(c1) * a_s * b1_q16_s;
+                total_acc_2 += add_reduce_m256i(c2) * a_s * b2_q16_s;
+                total_acc_3 += add_reduce_m256i(c3) * a_s * b3_q16_s;
+            }
+            
+            if (mat_bias_in && mat_bias_scale) {
+                mat_C[i * N + jj] = (float)mat_bias_in[jj] * mat_bias_scale[jj / group_size] + total_acc_0;
+                mat_C[i * N + jj + 1] = (float)mat_bias_in[jj + 1] * mat_bias_scale[(jj + 1) / group_size] + total_acc_1;
+                mat_C[i * N + jj + 2] = (float)mat_bias_in[jj + 2] * mat_bias_scale[(jj + 2) / group_size] + total_acc_2;
+                mat_C[i * N + jj + 3] = (float)mat_bias_in[jj + 3] * mat_bias_scale[(jj + 3) / group_size] + total_acc_3;
+            } else {
+                mat_C[i * N + jj] = total_acc_0;
+                mat_C[i * N + jj + 1] = total_acc_1;
+                mat_C[i * N + jj + 2] = total_acc_2;
+                mat_C[i * N + jj + 3] = total_acc_3;
+            }
+        }
+    }
+}
+
+// if defined INT16 x INT16
+void linear_int8_fp32s_int32acc_transpose(
+    const float* mat_A,          // [M, K] FP32
+    const int8_t* mat_B_in,      // [N, K] or [K, N] INT8
+    const float* mat_B_scales,   // groupwise scales over linear B storage
+    const int8_t* mat_bias_in,   // [N] INT8 (optional, can be nullptr)
+    const float* mat_bias_scale, // groupwise scales over linear bias storage
+    float* mat_C, size_t M, size_t N, size_t K, size_t group_size
+) {
+    if (M < 32 && N >= 1024 && K >= 1024) {
+        sm_M_lg_N_lg_K_transpose(
+            mat_A, mat_B_in, mat_B_scales, mat_bias_in,
+            mat_bias_scale, mat_C, M, N, K, group_size
+        );
+        return;
+    }
+
+    for (size_t i = 0; i < M; ++i) {
+        int16_t a_q16[K];
+        float a_q16_s[K / group_size];
+        const float *a0_ptr = mat_A + i * K;
+
+        #pragma omp parallel for
+        for (size_t kk = 0; kk < K; kk += group_size) {
+            float sumsq = 0.0f;
+
+            #pragma omp simd
+            for (size_t k = kk; k < kk + group_size; ++k) {
+                sumsq += a0_ptr[k] * a0_ptr[k];
+            }
+
+            float rms = sqrtf(sumsq / group_size + 1e-6f);
+            float inv_Sa = 127.0f / rms;
+            a_q16_s[kk / group_size] = 1 / inv_Sa;
+
+            #pragma omp simd
+            for (size_t k = kk; k < kk + group_size; ++k) {
+                a_q16[k] = (int16_t)(a0_ptr[k] * inv_Sa);
+            }
+        }
+
         #pragma omp parallel for
         for (size_t j = 0; j < N; ++j) {
             const int8_t *b0_ptr = mat_B_in + j * K;
