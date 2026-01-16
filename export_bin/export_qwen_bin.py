@@ -27,6 +27,7 @@ import numpy as np
 import torch
 from safetensors.torch import safe_open
 from typing import Dict, Callable, List
+import re
 
 # ----------------------------------------------------------------------
 # Config header keys (UNCHANGED)
@@ -81,13 +82,21 @@ def collect_effective_keys(f) -> Dict[str, TensorProvider]:
 # Ordering (UNCHANGED)
 # ----------------------------------------------------------------------
 
-def reorder_keys_for_write(all_keys: List[str], num_layers=28) -> List[str]:
+def reorder_keys_for_write(all_keys: List[str], num_layers: int = 28) -> List[str]:
+    """
+    Return keys ordered according to the Qwen-like hierarchical structure:
+    1. embed_tokens
+    2. per-layer stack (0..num_layers-1) in fixed subkey order
+    3. all remaining keys alphabetically
+    """
     ordered = []
 
+    # 1️⃣ Embedding
     if "model.language_model.embed_tokens.weight" in all_keys:
         ordered.append("model.language_model.embed_tokens.weight")
 
-    lm_sub = [
+    # 2️⃣ Per-layer ordering pattern
+    lm_subkeys = [
         "input_layernorm.weight",
         "mlp.down_proj.weight",
         "mlp.gate_proj.weight",
@@ -101,29 +110,100 @@ def reorder_keys_for_write(all_keys: List[str], num_layers=28) -> List[str]:
         "self_attn.v_proj.weight",
     ]
 
-    for s in lm_sub:
+    for sub in lm_subkeys:
         for i in range(num_layers):
-            k = f"model.language_model.layers.{i}.{s}"
-            if k in all_keys:
-                ordered.append(k)
+            prefix = f"model.language_model.layers.{i}."
+            name = prefix + sub
+            if name in all_keys:
+                ordered.append(name)
 
-    tail = [
+    next_lm_vision_keys = [
         "model.language_model.norm.weight",
         "model.visual.patch_embed.proj.bias",
         "model.visual.patch_embed.proj.weight",
-        "model.visual.pos_embed.weight",
+        "model.visual.pos_embed.weight"
     ]
 
-    for k in tail:
-        if k in all_keys:
-            ordered.append(k)
+    for each_key in next_lm_vision_keys:
+        if each_key in all_keys:
+            ordered.append(each_key)
 
-    for k in sorted(all_keys):
-        if k not in ordered:
-            ordered.append(k)
+    vision_block_subkeys = [
+        "attn.proj.bias",
+        "attn.proj.weight",
+        "attn.qkv.bias",
+        "attn.qkv.weight",
+        "mlp.linear_fc1.bias",
+        "mlp.linear_fc1.weight",
+        "mlp.linear_fc2.bias",
+        "mlp.linear_fc2.weight",
+        "norm1.bias",
+        "norm1.weight",
+        "norm2.bias",
+        "norm2.weight"
+    ]
+
+    for sub in vision_block_subkeys:
+        for i in range(24):
+            prefix = f"model.visual.blocks.{i}."
+            name = prefix + sub
+            if name in all_keys:
+                ordered.append(name)
+
+    deep_stack_merger_subkeys = [
+        "linear_fc1.bias",
+        "linear_fc1.weight",
+        "linear_fc2.bias",
+        "linear_fc2.weight",
+        "norm.bias",
+        "norm.weight"
+    ]
+
+    for sub in deep_stack_merger_subkeys:
+        for i in range(3):
+            prefix = f"model.visual.deepstack_merger_list.{i}."
+            name = prefix + sub
+            if name in all_keys:
+                ordered.append(name)
+
+    merger_subkeys = [
+        "linear_fc1.bias",
+        "linear_fc1.weight",
+        "linear_fc2.bias",
+        "linear_fc2.weight",
+        "norm.bias",
+        "norm.weight"
+    ]
+
+    prefix = "model.visual.merger."
+    for sub in merger_subkeys:
+        name = prefix + sub
+        if name in all_keys:
+            ordered.append(name)
+    
+    # 3️⃣ Remaining keys (e.g., vision or lm_head)
+    remaining = [k for k in all_keys if k not in ordered]
+    ordered.extend(sorted(remaining))
 
     return ordered
 
+def reorder_keys_by_group(ordered_keys: List[str]):
+    new_ordered_keys = []
+    tmp_keys = []
+    for item in ordered_keys:
+        numbers = re.findall(r'\.(\d+)\.', item)
+        if not numbers:
+            if tmp_keys:
+                new_ordered_keys.append(tmp_keys)
+            new_ordered_keys.append([item])
+            tmp_keys = []
+        else:
+            if int(numbers[0]) == 0 and tmp_keys:
+                new_ordered_keys.append(tmp_keys)
+                tmp_keys = []
+            tmp_keys.append(item)
+
+    return new_ordered_keys
 
 # ----------------------------------------------------------------------
 # Config Header Writer
@@ -150,8 +230,10 @@ def write_config_header(config: dict, fout):
         v = cfg.get(k)
         if isinstance(v, int):
             fout.write(struct.pack("<i", v))
+            print(f"Wrote config key {k}={v} (<i)")
         elif isinstance(v, float):
             fout.write(struct.pack("<f", v))
+            print(f"Wrote config key {k}={v} (<f)")
 
 
 # ----------------------------------------------------------------------
@@ -159,26 +241,21 @@ def write_config_header(config: dict, fout):
 # ----------------------------------------------------------------------
 
 def quantize_groupwise(x: np.ndarray, bits: int, group_size: int):
-    assert bits in (4, 8)
     qmax = (1 << (bits - 1)) - 1
-
-    x = x.reshape(-1)
-    n = len(x)
-
-    scales = []
-    qvals = []
-
-    for i in range(0, n, group_size):
-        g = x[i:i + group_size]
-        maxv = np.max(np.abs(g)) + 1e-8
-        scale = maxv / qmax
-        q = np.round(g / scale).astype(np.int8)
-        q = np.clip(q, -qmax, qmax)
-
-        scales.append(scale)
-        qvals.append(q)
-
-    return np.concatenate(qvals), np.array(scales, dtype=np.float32)
+    
+    # Reshape to (number_of_groups, group_size)
+    # This assumes x.size is divisible by group_size
+    x_reshaped = x.flatten().reshape(-1, group_size)
+    
+    # Calculate scales for all groups at once
+    maxv = np.max(np.abs(x_reshaped), axis=1, keepdims=True) + 1e-8
+    scales = maxv / qmax
+    
+    # Quantize
+    q = np.round(x_reshaped / scales).astype(np.int8)
+    q = np.clip(q, -qmax, qmax)
+    
+    return q.flatten(), scales.flatten().astype(np.float32)
 
 
 def pack_int4(q: np.ndarray) -> np.ndarray:
@@ -208,6 +285,10 @@ def write_weights_streaming(
     vision_bits: int,
     group_size: int,
 ):
+    # Lists to buffer the bytes in memory before writing
+    all_scales_bytes = []
+    all_weights_bytes = []
+
     for name in ordered_keys:
         t = providers[name].load().cpu().float()
         arr = t.numpy().reshape(-1)
@@ -215,32 +296,39 @@ def write_weights_streaming(
         is_vis = is_vision(name)
         bits = vision_bits if is_vis else text_bits
 
-        # FP32
+        # FP32 & FP16 (No separate scales)
         if bits == 32:
-            fout.write(arr.astype(np.float32).tobytes())
-
-        # FP16
+            all_weights_bytes.append(arr.astype(np.float32).tobytes())
         elif bits == 16:
-            fout.write(arr.astype(np.float16).tobytes())
+            all_weights_bytes.append(arr.astype(np.float16).tobytes())
 
         # INT8
         elif bits == 8:
             q, scales = quantize_groupwise(arr, 8, group_size)
-            fout.write(scales.tobytes())
-            fout.write(q.astype(np.int8).tobytes())
+            all_scales_bytes.append(scales.tobytes())
+            all_weights_bytes.append(q.astype(np.int8).tobytes())
 
         # INT4
         elif bits == 4:
             q, scales = quantize_groupwise(arr, 4, group_size)
             packed = pack_int4(q)
-            fout.write(scales.tobytes())
-            fout.write(packed.tobytes())
+            all_scales_bytes.append(scales.tobytes())
+            all_weights_bytes.append(packed.tobytes())
 
         else:
-            raise ValueError(bits)
+            raise ValueError(f"Unsupported bit depth: {bits}")
 
-        print(f"Wrote {name} bits={bits} shape={t.shape}", flush=True)
+        print(f"Processed {name} (bits={bits}, shape={t.shape})", flush=True)
 
+    # --- WRITING PHASE ---
+    if all_scales_bytes:
+        print("Writing scales to file...", flush=True)
+        for scale_data in all_scales_bytes:
+            fout.write(scale_data)
+
+    print("Writing weights to file...", flush=True)
+    for weight_data in all_weights_bytes:
+        fout.write(weight_data)
 
 # ----------------------------------------------------------------------
 # CLI
@@ -254,7 +342,7 @@ def parse_args():
 
     p.add_argument("--text_bits", type=int, choices=[4, 8, 16, 32], default=32)
     p.add_argument("--vision_bits", type=int, choices=[16, 32], default=32)
-    p.add_argument("--group_size", type=int, choices=[32, 64], default=32)
+    p.add_argument("--group_size", type=int, choices=[32, 64, 128], default=32)
 
     return p.parse_args()
 
@@ -269,6 +357,8 @@ def main():
         providers = collect_effective_keys(f)
         ordered = reorder_keys_for_write(list(providers.keys()))
 
+        ordered_new = reorder_keys_by_group(ordered)
+
         with open(args.output, "wb") as fout:
             # 1️⃣ config header
             write_config_header(config, fout)
@@ -277,16 +367,20 @@ def main():
             fout.write(struct.pack("<i", args.text_bits))
             fout.write(struct.pack("<i", args.group_size))
             fout.write(struct.pack("<i", args.vision_bits))
+            print(f"Wrote config key text_bits={args.text_bits} (<i)")
+            print(f"Wrote config key group_size={args.group_size} (<i)")
+            print(f"Wrote config key vision_bits={args.vision_bits} (<i)")
 
             # 3️⃣ weights
-            write_weights_streaming(
-                providers,
-                ordered,
-                fout,
-                args.text_bits,
-                args.vision_bits,
-                args.group_size,
-            )
+            for ordered_group in ordered_new:
+                write_weights_streaming(
+                    providers,
+                    ordered_group,
+                    fout,
+                    args.text_bits,
+                    args.vision_bits,
+                    args.group_size,
+                )
 
     print(f"\nDone → {args.output}")
 

@@ -124,17 +124,87 @@ void linear_fp32(
     #endif
 }
 
+void linear_int8_fp32s(
+    const float* mat_A,          // [M, K] FP32
+    const int8_t* mat_B_in,      // [N, K] or [K, N] INT8
+    const float* mat_B_scales,   // groupwise scales over linear B storage
+    const int8_t* mat_bias_in,   // [N] INT8 (optional, can be nullptr)
+    const float* mat_bias_scale, // groupwise scales over linear bias storage
+    float* mat_C,                // [M, N] FP32
+    size_t M,
+    size_t N,
+    size_t K,
+    bool mat_B_transpose,
+    size_t group_size
+) {
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+        // Must implement AVX512
+        linear_int8_fp32s_avx2_kernel(
+            mat_A, mat_B_in, mat_B_scales, mat_bias_in, mat_bias_scale,
+            mat_C, M, N, K, mat_B_transpose, group_size
+        );
+    #elif defined(__AVX2__) && defined(__FMA__)
+        linear_int8_fp32s_avx2_kernel(
+            mat_A, mat_B_in, mat_B_scales, mat_bias_in, mat_bias_scale,
+            mat_C, M, N, K, mat_B_transpose, group_size
+        );
+    #else
+        #pragma omp parallel for collapse(2)
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t j = 0; j < N; ++j) {
+                float acc = 0.0f;
+
+                // -------- GEMM --------
+                for (size_t k = 0; k < K; ++k) {
+                    float a = mat_A[i * K + k];
+
+                    // linear index into B (matches quantizer layout)
+                    size_t b_linear_idx;
+                    if (mat_B_transpose) {
+                        // B is [N, K]
+                        b_linear_idx = j * K + k;
+                    } else {
+                        // B is [K, N]
+                        b_linear_idx = k * N + j;
+                    }
+
+                    size_t scale_idx = b_linear_idx / group_size;
+                    float scale = mat_B_scales[scale_idx];
+
+                    float b = (float)mat_B_in[b_linear_idx] * scale;
+                    acc += a * b;
+                }
+
+                mat_C[i * N + j] = acc;
+            }
+        }
+
+        
+
+        // -------- Bias --------
+        if (mat_bias_in && mat_bias_scale) {
+            #pragma omp parallel for collapse(2)
+            for (size_t i = 0; i < M; ++i) {
+                for (size_t j = 0; j < N; ++j) {
+                    size_t bias_scale_idx = j / group_size;
+                    float bias =
+                        (float)mat_bias_in[j] * mat_bias_scale[bias_scale_idx];
+                    mat_C[i * N + j] += bias;
+                }
+            }
+        }
+    #endif
+}
+
 void linear(
     const float *mat_A, const void *mat_B_in, const void *mat_B_scale,
     const void *mat_bias_in, const void *mat_bias_scale,
     float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,DType::Type type_b, DType::Type type_b_scale, size_t group_size
 ) {
-    /*
     #ifdef CPU_TIME
         CPUTimer timer("linear");
         printf("Shape of matmul w/ precision %s: M=%zu, N=%zu, K=%zu, bias=%d, B transpose=%d\n", dtypeToStr(type_b), M, N, K, (mat_bias_in != nullptr), mat_B_transpose);
     #endif
-    */
 
     if (type_b == DType::FP16) {
         linear_fp16(

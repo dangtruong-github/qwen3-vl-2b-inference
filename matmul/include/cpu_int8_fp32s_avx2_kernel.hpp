@@ -6,7 +6,7 @@
 #include <sched.h> // for sched_setaffinity(), cpu_set_t, CPU_ZERO, CPU_SET
 #include "../../utils/module.hpp"
 
-void linear_int8_fp32s(
+void linear_int8_fp32s_avx2_kernel(
     const float *mat_A,          /* [M, K] */
     const int8_t *mat_B_in,      /* [N, K] if !trans, else [K, N] */
     const float *mat_B_scales,   /* Scales for B */

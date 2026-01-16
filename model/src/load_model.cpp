@@ -157,7 +157,6 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
             for (auto d : dims) count *= d;
             void* ptr = mmap_weight_safe(fd, count * size_elem, current_offset, type_elem);
             *target = new Tensor(dims, ptr, type_elem);
-            (*target)->printShape(name);
         } else {
             if (weight_bits == 8) {
                 type_elem = DType::INT8;
@@ -175,8 +174,8 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
             void *scale_ptr = mmap_weight_safe(fd, count_scales * size_scale_elem, current_offset, scale_type_elem);
             void *ptr = mmap_weight_safe(fd, count * size_elem, current_offset, type_elem);
             *target = new Tensor(dims, ptr, scale_ptr, group_size, type_elem, scale_type_elem);
-            (*target)->printShape(name);
         }
+        (*target)->printShape(name);
     };
 
     // --- LLM WEIGHTS ---

@@ -49,8 +49,11 @@ Tensor::Tensor(
     ndim = shape_.size();
 
     size_t size_buf = num_elem() * get_dtype_size();
+    size_t size_scale_buf = (num_elem() / group_size) * get_dtype_size(true);
 
+    printf("Dtype tensor %s with scale %s\n", dtypeToStr(dtype), dtypeToStr(scale_dtype));
     printf("New tensor wrapper with size %lf MB\n", double(size_buf) / 1024.0 / 1024.0);
+    printf("New tensor wrapper scale with size %lf MB\n", double(size_scale_buf) / 1024.0 / 1024.0);
     fflush(stdout);
 }
 
