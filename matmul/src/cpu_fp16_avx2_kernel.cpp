@@ -371,31 +371,14 @@ void lg_M_N_K_transpose(
                         acc_13 += a1 * pb3;
                     }
 
-                    if (kk == 0) {
-                        float bias[4] = {0.0f};
-                        if (mat_bias) {
-                            for (int x = 0; x < 4; ++x) {
-                                bias[x] = (float)(mat_bias[jj + j + x]);
-                            }
-                        }
-                        c0_ptr[j] = acc_00 + bias[0];
-                        c0_ptr[j + 1] = acc_01 + bias[1];
-                        c0_ptr[j + 2] = acc_02 + bias[2];
-                        c0_ptr[j + 3] = acc_03 + bias[3];
-                        c1_ptr[j] = acc_10 + bias[0];
-                        c1_ptr[j + 1] = acc_11 + bias[1];
-                        c1_ptr[j + 2] = acc_12 + bias[2];
-                        c1_ptr[j + 3] = acc_13 + bias[3];
-                    } else {
-                        c0_ptr[j] += acc_00;
-                        c0_ptr[j + 1] += acc_01;
-                        c0_ptr[j + 2] += acc_02;
-                        c0_ptr[j + 3] += acc_03;
-                        c1_ptr[j] += acc_10;
-                        c1_ptr[j + 1] += acc_11;
-                        c1_ptr[j + 2] += acc_12;
-                        c1_ptr[j + 3] += acc_13;
-                    }
+                    c0_ptr[j] += acc_00;
+                    c0_ptr[j + 1] += acc_01;
+                    c0_ptr[j + 2] += acc_02;
+                    c0_ptr[j + 3] += acc_03;
+                    c1_ptr[j] += acc_10;
+                    c1_ptr[j + 1] += acc_11;
+                    c1_ptr[j + 2] += acc_12;
+                    c1_ptr[j + 3] += acc_13;
                 }
                 
                 for (; j + 2 <= j_size; j += 2) {
@@ -452,24 +435,11 @@ void lg_M_N_K_transpose(
                         acc_01 += a0 * pb1;
                         acc_11 += a1 * pb1;
                     }
-
-                    if (kk == 0) {
-                        float bias[2] = {0.0f};
-                        if (mat_bias) {
-                            for (int x = 0; x < 2; ++x) {
-                                bias[x] = (float)(mat_bias[jj + j + x]);
-                            }
-                        }
-                        c0_ptr[j] = acc_00 + bias[0];
-                        c0_ptr[j + 1] = acc_01 + bias[1];
-                        c1_ptr[j] = acc_10 + bias[0];
-                        c1_ptr[j + 1] = acc_11 + bias[1];
-                    } else {
-                        c0_ptr[j] += acc_00;
-                        c0_ptr[j + 1] += acc_01;
-                        c1_ptr[j] += acc_10;
-                        c1_ptr[j + 1] += acc_11;
-                    }
+                    
+                    c0_ptr[j] += acc_00;
+                    c0_ptr[j + 1] += acc_01;
+                    c1_ptr[j] += acc_10;
+                    c1_ptr[j + 1] += acc_11;
 
                     j += 2;
                 }
@@ -528,14 +498,8 @@ void lg_M_N_K_transpose(
                         acc_1 += a1_ptr[k] * pb;
                     }
 
-                    if (kk == 0) {
-                        const float bias = mat_bias ? (float)(mat_bias[jj + j]) : 0.0f;
-                        c0_ptr[j] = acc_0 + bias;
-                        c1_ptr[j] = acc_1 + bias;
-                    } else {
-                        c0_ptr[j] += acc_0;
-                        c1_ptr[j] += acc_1;
-                    }
+                    c0_ptr[j] += acc_0;
+                    c1_ptr[j] += acc_1;
                 }
             
                 // ii += 2;
@@ -600,24 +564,11 @@ void lg_M_N_K_transpose(
                         acc_2 += a * packed_b2_ptr[k];
                         acc_3 += a * packed_b3_ptr[k];
                     }
-
-                    if (kk == 0) {
-                        float bias[4] = {0.0f};
-                        if (mat_bias) {
-                            for (int x = 0; x < 4; ++x) {
-                                bias[x] = (float)(mat_bias[jj + j + x]);
-                            }
-                        }
-                        c0_ptr[j] = acc_0 + bias[0];
-                        c0_ptr[j + 1] = acc_1 + bias[1];
-                        c0_ptr[j + 2] = acc_2 + bias[2];
-                        c0_ptr[j + 3] = acc_3 + bias[3];
-                    } else {
-                        c0_ptr[j] += acc_0;
-                        c0_ptr[j + 1] += acc_1;
-                        c0_ptr[j + 2] += acc_2;
-                        c0_ptr[j + 3] += acc_3;
-                    }
+                    
+                    c0_ptr[j] += acc_0;
+                    c0_ptr[j + 1] += acc_1;
+                    c0_ptr[j + 2] += acc_2;
+                    c0_ptr[j + 3] += acc_3;
                 }
             
                 if (j_size - j >= 2) {
@@ -677,19 +628,8 @@ void lg_M_N_K_transpose(
                         acc_1 += a * packed_b1_ptr[k];
                     }
 
-                    if (kk == 0) {
-                        float bias[2] = {0.0f};
-                        if (mat_bias) {
-                            for (int x = 0; x < 2; ++x) {
-                                bias[x] = (float)(mat_bias[jj + j + x]);
-                            }
-                        }
-                        c0_ptr[j] = acc_0 + bias[0];
-                        c0_ptr[j + 1] = acc_1 + bias[1];
-                    } else {
-                        c0_ptr[j] += acc_0;
-                        c0_ptr[j + 1] += acc_1;
-                    }
+                    c0_ptr[j] += acc_0;
+                    c0_ptr[j + 1] += acc_1;
 
                     j += 2;
                 }
@@ -727,12 +667,7 @@ void lg_M_N_K_transpose(
                         acc_0 += a0_ptr[k] * packed_b_ptr[k];
                     }
 
-                    if (kk == 0) {
-                        const float bias = mat_bias ? (float)(mat_bias[jj + j]) : 0.0f;
-                        c0_ptr[j] = acc_0 + bias;
-                    } else {
-                        c0_ptr[j] += acc_0;
-                    }
+                    c0_ptr[j] += acc_0;
                 }
             }
         }
