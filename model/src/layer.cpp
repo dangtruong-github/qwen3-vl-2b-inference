@@ -44,6 +44,7 @@ void rms_norm(
     size_t batches, size_t layer_offset
 ) {
     const size_t hidden_size = scale->shape[scale->ndim - 1];
+    const float inv_hs = 1.0f / (float)hidden_size;
     
     if (scale->dtype == DType::FP32) {
         const float *scale_buf = (const float *)scale->ptr({layer_offset});
@@ -94,26 +95,36 @@ void rms_norm(
         const float *scale_scales = static_cast<const float*>(scale->ptr({layer_offset}, true));
         const size_t group_size = scale->group_size;
 
+        #pragma omp parallel for
         for (size_t i = 0; i < batches; i++) {
+            const float *x_ptr = x + i * hidden_size;
+            float *out_ptr = out + i * hidden_size;
+
             // 1. Calculate sum of squares (standard RMS logic)
-            double ss = 0.0;
+            float ss = 0.0f;
             #pragma omp simd reduction(+:ss)
-            for (size_t j = 0; j < hidden_size; j++) {
-                ss += (double)x[j] * x[j];
+            for (size_t j = 0; j < hidden_size; ++j) {
+                ss += x_ptr[j] * x_ptr[j];
             }
             
-            float inv_rms = static_cast<float>(1.0 / sqrt(ss / hidden_size + eps));
+            float inv_rms = static_cast<float>(1.0 / sqrt(ss * inv_hs + eps));
 
             // 2. Normalize and apply dequantized weights
             // out[j] = (x[j] * inv_rms) * (scale_q[j] * scale_scales[j / group_size])
-            #pragma omp simd
-            for (size_t j = 0; j < hidden_size; j++) {
-                float weight = static_cast<float>(scale_q[j]) * scale_scales[j / group_size];
-                out[j] = weight * (inv_rms * x[j]);
+            for (size_t g = 0; g < hidden_size; g += group_size) {
+                // Load the scale once for the entire tile
+                float scale = scale_scales[g / group_size];
+                float combined_factor = scale * inv_rms;
+
+                const int8_t* s_q = &scale_q[g];
+                const float* x_p = &x_ptr[g];
+                float* o_p = &out_ptr[g];
+
+                #pragma omp simd
+                for (size_t j = 0; j < group_size; ++j) {
+                    o_p[j] = static_cast<float>(s_q[j]) * (combined_factor * x_p[j]);
+                }
             }
-            
-            x += hidden_size;
-            out += hidden_size;
         }
     }
 }
@@ -140,7 +151,7 @@ void add_vector(Tensor *add_to, const Tensor *add_from, size_t size_vec) {
     const float *add_from_buf = (const float *)add_from->ptr();
 
     #pragma omp parallel for simd
-    for (size_t i = 0; i < size_vec; i++) {
+    for (size_t i = 0; i < size_vec; ++i) {
         add_to_buf[i] += add_from_buf[i];
     }
 }
@@ -152,7 +163,7 @@ void add_vector(Tensor *add_to, const float *add_from, size_t size_vec) {
     float *add_to_buf = (float *)add_to->ptr();
     
     #pragma omp parallel for simd
-    for (size_t i = 0; i < size_vec; i++) {
+    for (size_t i = 0; i < size_vec; ++i) {
         add_to_buf[i] += add_from[i];
     }
 }
@@ -166,7 +177,7 @@ void swiglu(
     const float *up_buf = (const float *)up->ptr();
 
     #pragma omp simd
-    for (size_t i = 0; i < size_vec; i++) {
+    for (size_t i = 0; i < size_vec; ++i) {
         float x = gate_buf[i];
         float silu = x / (1.0f + expf(-x));  // SiLU(x) = x * sigmoid(x)
         gate_buf[i] = silu * up_buf[i];               // SwiGLU = SiLU(gate) * up
@@ -321,6 +332,7 @@ void attn_scores_all_heads(
         int kv_head_idx = h / kv_mul;
 
         // Compute attention scores
+        #pragma omp parallel for schedule(static)
         for (int t = 0; t <= pos; t++) {
             // Get the key for this timestep
             const float *k_head = key_cache_ptr + 1ll * t * kv_dim + 1ll * kv_head_idx * head_dim;
@@ -347,28 +359,33 @@ void attn_weighted_sum_all_heads(
     size_t layer_offset, int attn_heads, int kv_mul, int head_dim, int kv_dim,
     int seq_len, int pos
 ) {
-    // Initialize output to zero
+    // 1. Initialize output to zero
     memset(tb->ptr(), 0, 1ll * attn_heads * head_dim * sizeof(float));
-    float *tb_head = (float *)tb->ptr();
+    
+    float *tb_base = (float *)tb->ptr();
     const float *v_cache_ptr = (const float *)value_cache->ptr({0, layer_offset});
 
-    for (size_t h = 0; h < attn_heads; h++) {
-        const float *att_head = (const float *)att->ptr({0, h});
+    // 2. Parallelize across attention heads
+    #pragma omp parallel for schedule(static)
+    for (int h = 0; h < attn_heads; h++) {
+        // Calculate the specific output pointer for this head
+        float *tb_head = tb_base + (h * head_dim);
+        
+        const float *att_head = (const float *)att->ptr({0, (size_t)h});
         int kv_head_idx = h / kv_mul;
-        const float *v = v_cache_ptr + kv_head_idx * head_dim;
+        
+        // Initial V pointer for this specific KV head
+        const float *v_start = v_cache_ptr + (kv_head_idx * head_dim);
 
         for (int t = 0; t <= pos; t++) {
             float a = att_head[t];
+            const float *v_current = v_start + (t * kv_dim);
 
             #pragma omp simd
             for (int i = 0; i < head_dim; i++) {
-                tb_head[i] += a * v[i];
+                tb_head[i] += a * v_current[i];
             }
-
-            v += kv_dim;
         }
-
-        tb_head += head_dim;
     }
 }
 
@@ -382,31 +399,29 @@ void apply_rotary(
     const float *sin_buf = (const float *)sin_table->ptr();
     float *x_buf = (float *)x;
 
+    // Offset the table pointers to the current position 'pos' once
+    const float *cos_row = cos_buf + (pos * half);
+    const float *sin_row = sin_buf + (pos * half);
+
+    // Parallelize across heads
+    #pragma omp parallel for schedule(static)
     for (int h = 0; h < n_heads; h++) {
+        // Pointers for the specific head
+        float *x_head_part1 = x_buf + (h * head_dim);
+        float *x_head_part2 = x_buf + (h * head_dim + half);
+
+        // Vectorize the rotation across the head dimension
+        #pragma omp simd
         for (int i = 0; i < half; i++) {
-            // --- THIS IS THE KEY CHANGE ---
-            // Calculate the index to look up the cos/sin values for the given position.
-            // The tables are logically 2D [pos, i], so the 1D index is pos * (width) + i.
-            int rope_idx = pos * half + i;
-            float c = cos_buf[rope_idx];
-            float s = sin_buf[rope_idx];
+            float c = cos_row[i];
+            float s = sin_row[i];
 
-            // --- The rotation logic remains the same ---
-            // Indexing for the input tensor: head h, dim i
-            int x_idx1 = h * head_dim + i;         // first half
-            int x_idx2 = h * head_dim + half + i;  // second half
+            float x1 = x_head_part1[i];
+            float x2 = x_head_part2[i];
 
-            float x1 = x_buf[x_idx1];
-            float x2 = x_buf[x_idx2];
-
-            // Apply the 2D rotation
-            float o1 = x1 * c - x2 * s;
-            float o2 = x2 * c + x1 * s;
-
-            // Write the results back
-            x_buf[x_idx1] = o1;
-            x_buf[x_idx2] = o2;
+            // Standard RoPE rotation: [x1, x2] * [[c, s], [-s, c]]
+            x_head_part1[i] = x1 * c - x2 * s;
+            x_head_part2[i] = x1 * s + x2 * c;
         }
     }
 }
-

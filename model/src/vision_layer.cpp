@@ -470,24 +470,30 @@ void layer_norm(
     } else if (scale->dtype == DType::FP16) {
         const half_cpu *scale_buf = static_cast<const half_cpu*>(scale->ptr({layer_offset}));
         const half_cpu *bias_buf = static_cast<const half_cpu*>(bias->ptr({layer_offset}));
-    
+
+        const float inv_hs = 1.0f / (float)(hidden_size);
+        
+        #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < batches; i++) {
+            const float *x_buf_ptr = x_buf + i * hidden_size;
+            float *out_buf_ptr = out_buf + i * hidden_size;
+
             // 1. Calculate Mean (Vectorized Reduction)
             float mean = 0.0f;
             #pragma omp simd reduction(+:mean)
             for (size_t j = 0; j < hidden_size; j++) {
-                mean += x_buf[j];
+                mean += x_buf_ptr[j];
             }
-            mean /= hidden_size;
+            mean *= inv_hs;
 
             // 2. Calculate Variance
             float variance = 0.0f;
             #pragma omp simd reduction(+:variance)
             for (size_t j = 0; j < hidden_size; j++) {
-                float diff = x_buf[j] - mean;
+                float diff = x_buf_ptr[j] - mean;
                 variance += diff * diff;
             }
-            variance /= hidden_size;
+            variance *= inv_hs;
 
             // 3. Normalization Factor
             float inv_std = 1.0f / sqrtf(variance + eps);
@@ -499,11 +505,8 @@ void layer_norm(
                 float gamma = static_cast<float>(scale_buf[j]);
                 float beta  = static_cast<float>(bias_buf[j]);
                 
-                out_buf[j] = (x_buf[j] - mean) * inv_std * gamma + beta;
+                out_buf_ptr[j] = (x_buf_ptr[j] - mean) * inv_std * gamma + beta;
             }
-
-            x_buf += hidden_size;
-            out_buf += hidden_size;
         }
     } else {
         // Quantized scale (gamma) and its FP32 scales
@@ -556,89 +559,63 @@ void layer_norm(
 }
 
 void vision_apply_rotary_inplace(
-    const float *cos_tensor, // shape (total_tokens, head_dim)
-    const float *sin_tensor, // shape (total_tokens, head_dim)
-    float *buffer,           // shape (total_tokens, num_heads, head_dim)
+    const float *cos_tensor, 
+    const float *sin_tensor, 
+    float *buffer,           
     long total_tokens,
     int num_heads,
     int head_dim
 ) {
     const int half_dim = head_dim / 2;
-    const int head_size = head_dim;
 
-    for (long i = 0; i < total_tokens * num_heads; ++i) {
-        const long head_start_idx = i * head_size;
-        const long token_index = i / num_heads;
+    // Parallelize across tokens - this is usually the largest dimension
+    #pragma omp parallel for schedule(static)
+    for (long t = 0; t < total_tokens; ++t) {
+        
+        // Pre-calculate the cos/sin row for this specific token
+        const float *c_ptr = cos_tensor + (t * head_dim);
+        const float *s_ptr = sin_tensor + (t * head_dim);
 
-        // cos/sin indexed by token
-        const long cos_sin_offset = token_index * head_dim;
+        for (int h = 0; h < num_heads; ++h) {
+            // Calculate the start of the current head's data
+            float *current_x1 = buffer + (t * num_heads * head_dim) + (h * head_dim);
+            float *current_x2 = current_x1 + half_dim;
 
-        float *current = buffer + head_start_idx;
-        const float *current_cos = cos_tensor + cos_sin_offset;
-        const float *current_sin = sin_tensor + cos_sin_offset;
+            // Use pragma simd to tell the compiler to use AVX2/AVX-512 automatically
+            #pragma omp simd
+            for (int m = 0; m < half_dim; ++m) {
+                float x1_val = current_x1[m];
+                float x2_val = current_x2[m];
+                
+                float c1 = c_ptr[m];
+                float s1 = s_ptr[m];
+                float c2 = c_ptr[m + half_dim];
+                float s2 = s_ptr[m + half_dim];
 
-        for (int m = 0; m < half_dim; ++m) {
-            // Cache before overwrite (CRITICAL)
-            const float x1 = current[m];
-            const float x2 = current[m + half_dim];
-
-            const float cos_first  = current_cos[m];
-            const float sin_first  = current_sin[m];
-            const float cos_second = current_cos[m + half_dim];
-            const float sin_second = current_sin[m + half_dim];
-
-            // First half
-            current[m] =
-                (x1 * cos_first) + (-x2 * sin_first);
-
-            // Second half
-            current[m + half_dim] =
-                (x2 * cos_second) + (x1 * sin_second);
+                // Rotation math
+                current_x1[m] = (x1_val * c1) - (x2_val * s1);
+                current_x2[m] = (x2_val * c2) + (x1_val * s2);
+            }
         }
     }
 }
 
-void tensor_transpose(const float *in, float *out, int dim_0, int dim_1, int dim_2) {
-    // dim_0 is D0, dim_1 is D1, dim_2 is D2
-    const int D0 = dim_0;
-    const int D1 = dim_1;
-    const int D2 = dim_2;
-
-    // The inner-most dimension (D2) remains the same in both the input and output
-    // The dimensions change from (D0, D1, D2) to (D1, D0, D2)
-
-    // Stride for the D0 dimension in the input (D1 * D2)
+void tensor_transpose(const float *in, float *out, int D0, int D1, int D2) {
     const int in_stride_0 = D1 * D2;
-    // Stride for the D1 dimension in the input (D2)
-    const int in_stride_1 = D2;
-
-    // Stride for the D1 dimension in the output (D0 * D2)
     const int out_stride_1 = D0 * D2;
-    // Stride for the D0 dimension in the output (D2)
-    const int out_stride_0 = D2;
     
-    // Total size check (optional but good practice)
-    // const int total_size = D0 * D1 * D2;
+    // Size in bytes for the contiguous D2 block
+    const size_t block_size = D2 * sizeof(float);
 
-    // i iterates through dim_0 (D0)
+    #pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < D0; ++i) {
-        // j iterates through dim_1 (D1)
         for (int j = 0; j < D1; ++j) {
-            // k iterates through dim_2 (D2)
-            for (int k = 0; k < D2; ++k) {
-                
-                // Calculate the linear index for the input tensor in (D0, D1, D2) order
-                // in_idx = i * D1 * D2 + j * D2 + k
-                const int in_idx = i * in_stride_0 + j * in_stride_1 + k;
-
-                // Calculate the linear index for the output tensor in (D1, D0, D2) order
-                // The element at (i, j, k) in 'in' moves to (j, i, k) in 'out'
-                // out_idx = j * D0 * D2 + i * D2 + k
-                const int out_idx = j * out_stride_1 + i * out_stride_0 + k;
-
-                // Perform the element copy
-                out[out_idx] = in[in_idx];
-            }
+            // Source: start of D2 block at (i, j)
+            const float *src = &in[(i * in_stride_0) + (j * D2)];
+            
+            // Destination: start of D2 block at (j, i)
+            float *dst = &out[(j * out_stride_1) + (i * D2)];
+            memcpy(dst, src, block_size);
         }
     }
 }
@@ -651,7 +628,8 @@ void vision_att(
     // Size needed is (total_tokens * total_tokens) for a single head.
     // We will reuse this buffer for every head to save memory.
     size_t score_size = (size_t)total_tokens * total_tokens;
-
+    __m256 v_scale = _mm256_set1_ps(scale);
+    
     // Strides to move pointers to the next head
     size_t head_stride = (size_t)total_tokens * head_dim;
 
@@ -683,7 +661,38 @@ void vision_att(
         // Note: attn_bias is zeros in the python sample, so we skip adding it.
         // We iterate manually as 'linear' does not support scalar multiplication.
         // ---------------------------------------------------------
-        for (size_t i = 0; i < score_size; i++) {
+        size_t i = 0;
+        // Unroll by 4: Process 32 floats per iteration
+        // (4 registers * 8 floats per register)
+        for (; i + 31 < score_size; i += 32) {
+            // Load 4 blocks of 8 floats
+            __m256 v0 = _mm256_loadu_ps(&attn_scores[i]);
+            __m256 v1 = _mm256_loadu_ps(&attn_scores[i + 8]);
+            __m256 v2 = _mm256_loadu_ps(&attn_scores[i + 16]);
+            __m256 v3 = _mm256_loadu_ps(&attn_scores[i + 24]);
+
+            // Multiply all 4 blocks independently
+            v0 = _mm256_mul_ps(v0, v_scale);
+            v1 = _mm256_mul_ps(v1, v_scale);
+            v2 = _mm256_mul_ps(v2, v_scale);
+            v3 = _mm256_mul_ps(v3, v_scale);
+
+            // Store all 4 blocks back
+            _mm256_storeu_ps(&attn_scores[i],      v0);
+            _mm256_storeu_ps(&attn_scores[i + 8],  v1);
+            _mm256_storeu_ps(&attn_scores[i + 16], v2);
+            _mm256_storeu_ps(&attn_scores[i + 24], v3);
+        }
+
+        // Cleanup: handle remaining elements in steps of 8
+        for (; i + 7 < score_size; i += 8) {
+            __m256 v = _mm256_loadu_ps(&attn_scores[i]);
+            v = _mm256_mul_ps(v, v_scale);
+            _mm256_storeu_ps(&attn_scores[i], v);
+        }
+
+        // Final cleanup: handle remaining elements < 8
+        for (; i < score_size; i++) {
             attn_scores[i] *= scale;
         }
 

@@ -39,7 +39,7 @@ void vision_apply_rotary_inplace(
     int num_heads,
     int head_dim
 );
-void tensor_transpose(const float *in, float *out, int dim_0, int dim_1, int dim_2);
+void tensor_transpose(const float *in, float *out, int D0, int D1, int D2);
 void vision_att(
     const float *q, const float *k, const float *v, float *attn_scores,
     float *out, int num_heads, int total_tokens, int head_dim, float scale
