@@ -212,7 +212,7 @@ void lg_M_N_K_transpose(
     constexpr size_t TN = 8;
     constexpr size_t TK = 256;
     
-    
+    #pragma omp parallel for
     for (size_t jj = 0; jj < N; jj += TN) {
         size_t j_end = std::min(jj + TN, N);
         size_t j_size = j_end - jj;
