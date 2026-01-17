@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
     // ----------------------------------------------------
     // CALL THE VALIDATION FUNCTION HERE
     // ----------------------------------------------------
-    int validation_result = forward_validate("data/input_1.txt", "data/image_path.txt", "data/output_1.txt", tokenizer, config, weights, state); // forward_validate("data/input_tokens.txt", "data/image_path.txt", "data/output_tokens_gen_truth.txt", tokenizer, config, weights, state);
+    int validation_result = forward_validate("data/input_2.txt", "data/image_2.txt", "data/output_2.txt", tokenizer, config, weights, state); // forward_validate("data/input_tokens.txt", "data/image_path.txt", "data/output_tokens_gen_truth.txt", tokenizer, config, weights, state);
     if (validation_result == 0) {
         printf("\n✅ ALL FORWARD VALIDATION SAMPLES PASSED!\n");
     } else {

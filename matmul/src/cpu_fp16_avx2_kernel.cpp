@@ -211,6 +211,44 @@ void lg_M_N_K_transpose(
 ) {
     constexpr size_t TN = 8;
     constexpr size_t TK = 256;
+
+    if (mat_bias) {
+        // Step 1: Convert the bias chunk for this TN block ONCE
+        float local_bias[N] __attribute__((aligned(32)));
+
+        size_t jb = 0;
+        for (; jb + 31 < N; jb += 32) {
+            // 1. Load 4 chunks of 128-bit FP16 (8 elements each)
+            __m128i v16_0 = _mm_loadu_si128((const __m128i*)(mat_bias + jb));
+            __m128i v16_1 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 8));
+            __m128i v16_2 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 16));
+            __m128i v16_3 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 24));
+
+            // 2. Convert to FP32 vectors
+            __m256 v32_0 = _mm256_cvtph_ps(v16_0);
+            __m256 v32_1 = _mm256_cvtph_ps(v16_1);
+            __m256 v32_2 = _mm256_cvtph_ps(v16_2);
+            __m256 v32_3 = _mm256_cvtph_ps(v16_3);
+
+            // 3. Store (Use storeu unless local_bias is 32-byte aligned)
+            _mm256_storeu_ps(local_bias + jb,      v32_0);
+            _mm256_storeu_ps(local_bias + jb + 8,  v32_1);
+            _mm256_storeu_ps(local_bias + jb + 16, v32_2);
+            _mm256_storeu_ps(local_bias + jb + 24, v32_3);
+        }
+        for (; jb < N; ++jb) {
+            local_bias[jb] = static_cast<float>(mat_bias[jb]);
+        }
+
+        // Step 2: Broadcast to all rows M
+        const size_t copy_size = N * sizeof(float);
+        #pragma omp parallel for
+        for (size_t i = 0; i < M; ++i) {
+            memcpy(mat_C + i * N, local_bias, copy_size);
+        }
+    } else {
+        memset(mat_C, 0, M * N * sizeof(float));
+    }
     
     #pragma omp parallel for
     for (size_t jj = 0; jj < N; jj += TN) {
@@ -263,9 +301,8 @@ void lg_M_N_K_transpose(
                 }
             }
 
-            size_t ii;
-            #pragma omp parallel for
-            for (ii = 0; ii <= M - 2; ii += 2) {
+            size_t ii = 0;
+            for (; ii <= M - 2; ii += 2) {
                 const float *a0_ptr = mat_A + ii * K + kk;
                 const float *a1_ptr = mat_A + (ii + 1) * K + kk;
 
