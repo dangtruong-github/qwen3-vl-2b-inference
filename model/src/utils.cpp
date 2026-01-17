@@ -202,9 +202,9 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         
         t_gen_end = now_sec();
 
-        printf("  Generated %d total tokens (%d new tokens)\n", total_generated_count, total_generated_count - input_count);
+        printf("  Generated %d total tokens\n", total_generated_count);
 
-        new_tokens_gen_num += (total_generated_count - input_count);
+        new_tokens_gen_num += total_generated_count;
         first_tok_gen_time_total += (t_first_token - t_gen_start);
         gen_time_total += (t_gen_end - t_gen_start);
 
@@ -472,9 +472,9 @@ void forward_generate(const char *in_token_file, const char *in_img_path, const 
         fprintf(out_file, "\n");
         fflush(out_file);
 
-        printf("  Generated %d total tokens (%d new tokens)\n", total_generated_count, total_generated_count - input_count);
+        printf("  Generated %d total tokens\n", total_generated_count);
 
-        new_tokens_gen_num += (total_generated_count - input_count);
+        new_tokens_gen_num += total_generated_count;
         first_tok_gen_time_total += (t_first_token - t_gen_start);
         gen_time_total += (t_gen_end - t_gen_start);
 
