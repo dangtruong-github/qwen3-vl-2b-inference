@@ -91,22 +91,18 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_t->printDebug("vision_t");
         #endif
 
-        const void *w_q = weight->vl_attn_qkv_w->ptr({l});
-        const void *w_k = weight->vl_attn_qkv_w->ptr({l, 1});
-        const void *w_v = weight->vl_attn_qkv_w->ptr({l, 2});
-        const void *b_q = weight->vl_attn_qkv_b->ptr({l});
-        const void *b_k = weight->vl_attn_qkv_b->ptr({l, 1});
-        const void *b_v = weight->vl_attn_qkv_b->ptr({l, 2});
-        const void *w_q_s = g_false ? nullptr : weight->vl_attn_qkv_w->ptr({l}, true);
-        const void *w_k_s = g_false ? nullptr : weight->vl_attn_qkv_w->ptr({l, 1}, true);
-        const void *w_v_s = g_false ? nullptr : weight->vl_attn_qkv_w->ptr({l, 2}, true);
-        const void *b_q_s = g_false ? nullptr : weight->vl_attn_qkv_b->ptr({l}, true);
-        const void *b_k_s = g_false ? nullptr : weight->vl_attn_qkv_b->ptr({l, 1}, true);
-        const void *b_v_s = g_false ? nullptr : weight->vl_attn_qkv_b->ptr({l, 2}, true);
+        PtrPair w_q, w_k, w_v, b_q, b_k, b_v;
+        w_q = weight->vl_attn_qkv_w->ptr_all({l});
+        w_k = weight->vl_attn_qkv_w->ptr_all({l, 1});
+        w_v = weight->vl_attn_qkv_w->ptr_all({l, 2});
+        b_q = weight->vl_attn_qkv_b->ptr_all({l});
+        b_k = weight->vl_attn_qkv_b->ptr_all({l, 1});
+        b_v = weight->vl_attn_qkv_b->ptr_all({l, 2});
         
         // use vl_v as temporary buffer for vision_q
         linear(
-            (const float *)state->vision_t->ptr(), w_q, w_q_s, b_q, b_q_s,
+            (const float *)state->vision_t->ptr(),
+            w_q.buf, w_q.scale, b_q.buf, b_q.scale,
             (float *)state->vision_mlp_out->ptr(), total_tokens, VH, VH,
             true, dtype_weight, dtype_scale, vision_group_size
         );
@@ -148,7 +144,8 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
 
         // use vl_v as temporary buffer for vision_k
         linear(
-            (const float *)state->vision_t->ptr(), w_k, w_k_s, b_k, b_k_s,
+            (const float *)state->vision_t->ptr(), 
+            w_k.buf, w_k.scale, b_k.buf, b_k.scale,
             (float *)state->vision_mlp_out->ptr(), total_tokens, VH, VH,
             true, dtype_weight, dtype_scale, vision_group_size
         );
@@ -190,7 +187,8 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
 
         // swap vision_t and vl_v
         linear(
-            (const float *)state->vision_t->ptr(), w_v, w_v_s, b_v, b_v_s,
+            (const float *)state->vision_t->ptr(), 
+            w_v.buf, w_v.scale, b_v.buf, b_v.scale,
             (float *)state->vision_mlp_out->ptr(), total_tokens, VH, VH,
             true, dtype_weight, dtype_scale, vision_group_size
         );
@@ -247,16 +245,15 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_t->printDebug("vision_t");
         #endif
 
-        const void *w_attn_proj_ptr = weight->vl_attn_proj_w->ptr({l});
-        const void *b_attn_proj_ptr = weight->vl_attn_proj_b->ptr({l});
-        const void *w_attn_proj_s = g_false ? nullptr : weight->vl_attn_proj_w->ptr({l}, true);
-        const void *b_attn_proj_s = g_false ? nullptr : weight->vl_attn_proj_b->ptr({l}, true);
+        PtrPair w_attn_proj_ptr, b_attn_proj_ptr;
+        w_attn_proj_ptr = weight->vl_attn_proj_w->ptr_all({l});
+        b_attn_proj_ptr = weight->vl_attn_proj_b->ptr_all({l});
 
         // use vision_q as temporary buffer here
         linear(
             (const float *)state->vision_t->ptr(),
-            w_attn_proj_ptr, w_attn_proj_s,
-            b_attn_proj_ptr, b_attn_proj_s,
+            w_attn_proj_ptr.buf, w_attn_proj_ptr.scale,
+            b_attn_proj_ptr.buf, b_attn_proj_ptr.scale,
             (float *)state->vision_q->ptr(), total_tokens, VH, VH,
             true, dtype_weight, dtype_scale, vision_group_size
         );
@@ -293,13 +290,12 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_t->printDebug("vision_t");
         #endif
         
-        const void *w_mlp1_ptr = weight->vl_mlp1_w->ptr({l});
-        const void *b_mlp1_ptr = weight->vl_mlp1_b->ptr({l});
-        const void *w_mlp1_s = g_false ? nullptr : weight->vl_mlp1_w->ptr({l}, true);
-        const void *b_mlp1_s = g_false ? nullptr : weight->vl_mlp1_b->ptr({l}, true);
+        PtrPair w_mlp1_ptr, b_mlp1_ptr;
+        w_mlp1_ptr = weight->vl_mlp1_w->ptr_all({l});
+        b_mlp1_ptr = weight->vl_mlp1_b->ptr_all({l});
         linear(
             (const float *)state->vision_t->ptr(),
-            w_mlp1_ptr, w_mlp1_s, b_mlp1_ptr, b_mlp1_s,
+            w_mlp1_ptr.buf, w_mlp1_ptr.scale, b_mlp1_ptr.buf, b_mlp1_ptr.scale,
             (float *)state->vision_mlp_out->ptr(), total_tokens, VI, VH,
             true, dtype_weight, dtype_scale, vision_group_size
         );
@@ -322,13 +318,12 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
         
-        const void *w_mlp2_ptr = weight->vl_mlp2_w->ptr({l});
-        const void *b_mlp2_ptr = weight->vl_mlp2_b->ptr({l});
-        const void *w_mlp2_s = g_false ? nullptr : weight->vl_mlp2_w->ptr({l}, true);
-        const void *b_mlp2_s = g_false ? nullptr : weight->vl_mlp2_b->ptr({l}, true);
+        PtrPair w_mlp2_ptr, b_mlp2_ptr;
+        w_mlp2_ptr = weight->vl_mlp2_w->ptr_all({l});
+        b_mlp2_ptr = weight->vl_mlp2_b->ptr_all({l});
         linear(
             (const float *)state->vision_mlp_out->ptr(),
-            w_mlp2_ptr, w_mlp2_s, b_mlp2_ptr, b_mlp2_s,
+            w_mlp2_ptr.buf, w_mlp2_ptr.scale, b_mlp2_ptr.buf, b_mlp2_ptr.scale,
             (float *)state->vision_t->ptr(), total_tokens, VH, VI,
             true, dtype_weight, dtype_scale, vision_group_size
         );
@@ -366,14 +361,14 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             #ifdef PRINT_LOGITS_2
                 state->vision_t->printDebug("vision_t");
             #endif
-
-            const void *w_mlp1_d_ptr = weight->vl_d_mlp1_w->ptr({d_stride});
-            const void *b_mlp1_d_ptr = weight->vl_d_mlp1_b->ptr({d_stride});
-            const void *w_mlp1_d_s = g_false ? nullptr : weight->vl_d_mlp1_w->ptr({d_stride}, true);
-            const void *b_mlp1_d_s = g_false ? nullptr : weight->vl_d_mlp1_b->ptr({d_stride}, true);
+            
+            PtrPair w_mlp1_d_ptr, b_mlp1_d_ptr;
+            w_mlp1_d_ptr = weight->vl_d_mlp1_w->ptr_all({d_stride});
+            b_mlp1_d_ptr = weight->vl_d_mlp1_b->ptr_all({d_stride});
             linear(
                 (const float *)state->vision_t->ptr(),
-                w_mlp1_d_ptr, w_mlp1_d_s, b_mlp1_d_ptr, b_mlp1_d_s,
+                w_mlp1_d_ptr.buf, w_mlp1_d_ptr.scale,
+                b_mlp1_d_ptr.buf, b_mlp1_d_ptr.scale,
                 (float *)state->vision_mlp_out->ptr(), d_tokens, VI, VI,
                 true, dtype_weight, dtype_scale, vision_group_size
             );
@@ -396,13 +391,13 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
                 state->vision_mlp_out->printDebug("vision_mlp_out");
             #endif
 
-            const void *w_mlp2_d_ptr = weight->vl_d_mlp2_w->ptr({d_stride});
-            const void *b_mlp2_d_ptr = weight->vl_d_mlp2_b->ptr({d_stride});
-            const void *w_mlp2_d_s = g_false ? nullptr : weight->vl_d_mlp2_w->ptr({d_stride}, true);
-            const void *b_mlp2_d_s = g_false ? nullptr : weight->vl_d_mlp2_b->ptr({d_stride}, true);
+            PtrPair w_mlp2_d_ptr, b_mlp2_d_ptr;
+            w_mlp2_d_ptr = weight->vl_d_mlp2_w->ptr_all({d_stride});
+            b_mlp2_d_ptr = weight->vl_d_mlp2_b->ptr_all({d_stride});
             linear(
                 (const float *)state->vision_mlp_out->ptr(),
-                w_mlp2_d_ptr, w_mlp2_d_s, b_mlp2_d_ptr, b_mlp2_d_s,
+                w_mlp2_d_ptr.buf, w_mlp2_d_ptr.scale,
+                b_mlp2_d_ptr.buf, b_mlp2_d_ptr.scale,
                 (float *)state->vision_deep_stack->ptr({d_stride}), d_tokens,
                 OH, VI, true, dtype_weight, dtype_scale, vision_group_size
             );
@@ -430,12 +425,12 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         state->vision_t->printDebug("vision_t");
     #endif
 
+    PtrPair vl_merge_mlp1_w_ptr = weight->vl_merge_mlp1_w->ptr_all();
+    PtrPair vl_merge_mlp1_b_ptr = weight->vl_merge_mlp1_b->ptr_all();
     linear(
         (const float *)state->vision_t->ptr(),
-        weight->vl_merge_mlp1_w->ptr(),
-        g_false ? nullptr : weight->vl_merge_mlp1_w->ptr({}, true),
-        weight->vl_merge_mlp1_b->ptr(),
-        g_false ? nullptr : weight->vl_merge_mlp1_b->ptr({}, true),
+        vl_merge_mlp1_w_ptr.buf, vl_merge_mlp1_w_ptr.scale,
+        vl_merge_mlp1_b_ptr.buf, vl_merge_mlp1_b_ptr.scale,
         (float *)state->vision_mlp_out->ptr(),
         d_tokens, VI, VI, true, dtype_weight, dtype_scale, vision_group_size
     );
@@ -450,12 +445,12 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         state->vision_mlp_out->printDebug("vision_mlp_out");
     #endif
 
+    PtrPair vl_merge_mlp2_w_ptr = weight->vl_merge_mlp2_w->ptr_all();
+    PtrPair vl_merge_mlp2_b_ptr = weight->vl_merge_mlp2_b->ptr_all();
     linear(
         (const float *)state->vision_mlp_out->ptr(),
-        weight->vl_merge_mlp2_w->ptr(),
-        g_false ? nullptr : weight->vl_merge_mlp2_w->ptr({}, true),
-        weight->vl_merge_mlp2_b->ptr(),
-        g_false ? nullptr : weight->vl_merge_mlp2_b->ptr({}, true),
+        vl_merge_mlp2_w_ptr.buf, vl_merge_mlp2_w_ptr.scale,
+        vl_merge_mlp2_b_ptr.buf, vl_merge_mlp2_b_ptr.scale,
         (float *)state->vision_x->ptr(),
         d_tokens, OH, VI, true, dtype_weight, dtype_scale, vision_group_size
     );
@@ -491,7 +486,6 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     const DType::Type dtype_weight = weight->token_embedding_table->dtype;
     const DType::Type dtype_scale = weight->token_embedding_table->scale_dtype;
     const size_t text_group_size = weight->token_embedding_table->group_size;
-    const bool g_false = text_group_size <= 0;
 
     bool img_token_true = (token_id == config->image_token_id) || (token_id == config->video_token_id);
     
@@ -523,12 +517,10 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         // QKV Projections
         // printf("BEFORE PTR\n");
         // fflush(stdout);
-        const void *w_q = weight->w_attn_q->ptr({l});
-        const void *w_k = weight->w_attn_k->ptr({l});
-        const void *w_v = weight->w_attn_v->ptr({l});
-        const void *w_q_s = g_false ? nullptr : weight->w_attn_q->ptr({l}, true);
-        const void *w_k_s = g_false ? nullptr : weight->w_attn_k->ptr({l}, true);
-        const void *w_v_s = g_false ? nullptr : weight->w_attn_v->ptr({l}, true);
+        PtrPair w_q, w_k, w_v;
+        w_q = weight->w_attn_q->ptr_all({l});
+        w_k = weight->w_attn_k->ptr_all({l});
+        w_v = weight->w_attn_v->ptr_all({l});
 
         float *k_cache_ptr = (float *)state->key_cache->ptr({0, l, pos});
         float *v_cache_ptr = (float *)state->value_cache->ptr({0, l, pos});
@@ -538,7 +530,8 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         
         fflush(stdout);
         linear(
-            (const float *)state->t->ptr(), w_q, w_q_s, nullptr, nullptr,
+            (const float *)state->t->ptr(),
+            w_q.buf, w_q.scale, nullptr, nullptr,
             (float *)state->q->ptr(), 1, hidden_size, hidden_size, true,
             dtype_weight, dtype_scale, text_group_size
         );
@@ -548,12 +541,15 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         #endif
 
         linear(
-            (const float *)state->t->ptr(), w_k, w_k_s, nullptr, nullptr,
+            (const float *)state->t->ptr(),
+            w_k.buf, w_k.scale, nullptr, nullptr,
             k_cache_ptr, 1, kv_dim, hidden_size, true, dtype_weight,
             dtype_scale, text_group_size
         );
         linear(
-            (const float *)state->t->ptr(), w_v, w_v_s, nullptr, nullptr, v_cache_ptr, 1, kv_dim, hidden_size, true, dtype_weight,
+            (const float *)state->t->ptr(),
+            w_v.buf, w_v.scale, nullptr, nullptr,
+            v_cache_ptr, 1, kv_dim, hidden_size, true, dtype_weight,
             dtype_scale, text_group_size
         );
 
@@ -613,11 +609,11 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         #endif
 
         // Output projection: using state->t for attn_out
-        const void *w_out_proj = weight->w_attn_o->ptr({l});
-        const void *w_out_proj_s = g_false ? nullptr : weight->w_attn_o->ptr({l}, true);
+        PtrPair w_out_proj;
+        w_out_proj = weight->w_attn_o->ptr_all({l});
         linear(
             (const float *)state->qkv_out->ptr(),
-            w_out_proj, w_out_proj_s, nullptr, nullptr,
+            w_out_proj.buf, w_out_proj.scale, nullptr, nullptr,
             (float *)state->t->ptr(), 1, hidden_size,
             hidden_size, true, dtype_weight, dtype_scale, text_group_size
         );
@@ -644,20 +640,19 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         #endif
 
         // MLP: Gate and Up projections
-        const void *w_gate = weight->w_mlp_gate->ptr({l});
-        const void *w_up = weight->w_mlp_up->ptr({l});
-        const void *w_gate_s = g_false ? nullptr : weight->w_mlp_gate->ptr({l}, true);
-        const void *w_up_s = g_false ? nullptr : weight->w_mlp_up->ptr({l}, true);
+        PtrPair w_gate, w_up;
+        w_gate = weight->w_mlp_gate->ptr_all({l});
+        w_up = weight->w_mlp_up->ptr_all({l});
         linear(
             (const float *)state->t->ptr(),
-            w_gate, w_gate_s, nullptr, nullptr,
+            w_gate.buf, w_gate.scale, nullptr, nullptr,
             (float *)state->gate->ptr(), 1,
             config->intermediate_size, hidden_size, true,
             dtype_weight, dtype_scale, text_group_size
         );
         linear(
             (const float *)state->t->ptr(),
-            w_up, w_up_s, nullptr, nullptr,
+            w_up.buf, w_up.scale, nullptr, nullptr,
             (float *)state->up->ptr(), 1,
             config->intermediate_size, hidden_size, true,
             dtype_weight, dtype_scale, text_group_size
@@ -669,20 +664,18 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         #endif
         
         // SwiGLU activation
-        swiglu(
-            state->gate, state->up, config->intermediate_size
-        );
+        swiglu(state->gate, state->up, config->intermediate_size);
 
         #ifdef PRINT_LOGITS
             state->gate->printDebug("gate");
         #endif
 
         // MLP: Down projection: using state->t for down
-        const void *w_down = weight->w_mlp_down->ptr({l});
-        const void *w_down_s = g_false ? nullptr : weight->w_mlp_down->ptr({l}, true);
+        PtrPair w_down;
+        w_down = weight->w_mlp_down->ptr_all({l});
         linear(
             (const float *)state->gate->ptr(),
-            w_down, w_down_s, nullptr, nullptr,
+            w_down.buf, w_down.scale, nullptr, nullptr,
             (float *)state->t->ptr(), 1, hidden_size,
             config->intermediate_size, true, dtype_weight,
             dtype_scale, text_group_size

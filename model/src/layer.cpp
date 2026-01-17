@@ -4,14 +4,12 @@ void embedding_lookup(
     const Tensor *embedding /*[vocab, hidden]*/, size_t token_id,
     Tensor *out /*[hidden]*/, size_t hidden_size
 ) {
+    PtrPair emb_ptr = embedding->ptr_all({token_id});
     if (embedding->dtype == DType::FP32) {
-        memcpy(
-            out->ptr(), embedding->ptr({token_id}),
-            hidden_size * sizeof(float)
-        );
+        memcpy(out->ptr(), emb_ptr.buf, hidden_size * sizeof(float));
     } else if (embedding->dtype == DType::FP16) {
         // Get typed pointers
-        const half_cpu* src = static_cast<const half_cpu*>(embedding->ptr({token_id}));
+        const half_cpu* src = static_cast<const half_cpu*>(emb_ptr.buf);
         float* dst = static_cast<float*>(out->ptr());
 
         // Loop-based conversion (memcpy cannot be used here)
@@ -20,8 +18,8 @@ void embedding_lookup(
             dst[i] = static_cast<float>(src[i]);
         }
     } else {
-        const int8_t *src_q = static_cast<const int8_t*>(embedding->ptr({token_id}));
-        const float *scales = static_cast<const float*>(embedding->ptr({token_id}, true));
+        const int8_t *src_q = static_cast<const int8_t*>(emb_ptr.buf);
+        const float *scales = static_cast<const float*>(emb_ptr.scale);
         float *dst = static_cast<float*>(out->ptr());
 
         size_t group_size = embedding->group_size; 
@@ -45,9 +43,11 @@ void rms_norm(
 ) {
     const size_t hidden_size = scale->shape[scale->ndim - 1];
     const float inv_hs = 1.0f / (float)hidden_size;
+
+    PtrPair scale_ptr = scale->ptr_all({layer_offset});
     
     if (scale->dtype == DType::FP32) {
-        const float *scale_buf = (const float *)scale->ptr({layer_offset});
+        const float *scale_buf = (const float *)(scale_ptr.buf);
 
         for (size_t i = 0; i < batches; i++) {
             // calculate sum of squares
@@ -69,7 +69,7 @@ void rms_norm(
             out += hidden_size;
         }
     } else if (scale->dtype == DType::FP16) {
-        const half_cpu *scale_buf = static_cast<const half_cpu*>(scale->ptr({layer_offset}));
+        const half_cpu *scale_buf = static_cast<const half_cpu*>(scale_ptr.buf);
 
         for (size_t i = 0; i < batches; i++) {
             // calculate sum of squares
@@ -91,8 +91,8 @@ void rms_norm(
             out += hidden_size;
         }
     } else {
-        const int8_t *scale_q = static_cast<const int8_t*>(scale->ptr({layer_offset}));
-        const float *scale_scales = static_cast<const float*>(scale->ptr({layer_offset}, true));
+        const int8_t *scale_q = static_cast<const int8_t*>(scale_ptr.buf);
+        const float *scale_scales = static_cast<const float*>(scale_ptr.scale);
         const size_t group_size = scale->group_size;
 
         #pragma omp parallel for
@@ -134,9 +134,9 @@ void classifier_gemm(
     const Tensor *hid_states /*[hidden]*/, Tensor *logits /*[vocab]*/,
     size_t vocab_size, size_t hidden_size
 ) {
+    PtrPair emb_ptr = embedding->ptr_all();
     linear(
-        (const float *)hid_states->ptr(), embedding->ptr(),
-        embedding->group_size > 0 ? embedding->ptr({}, true) : nullptr,
+        (const float *)hid_states->ptr(), emb_ptr.buf, emb_ptr.scale,
         nullptr, nullptr, (float *)logits->ptr(),
         1, vocab_size, hidden_size, true, embedding->dtype,
         embedding->scale_dtype, embedding->group_size

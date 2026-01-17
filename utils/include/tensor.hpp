@@ -26,6 +26,11 @@ struct DType {
     enum Type { FP32, INT32, FP16, INT8, INT4 };
 };
 
+struct PtrPair {
+    const void* buf;
+    const void* scale;
+};
+
 const char* dtypeToStr(DType::Type dtype);
 
 struct Tensor {
@@ -61,8 +66,9 @@ struct Tensor {
     size_t num_elem() const;
     size_t get_dtype_size(bool get_scale = false) const;
     void* ptr(
-        const std::vector<size_t> &strides_ = {}, bool get_scale = false
+        const std::vector<size_t> &indices = {}, bool get_scale = false
     ) const;
+    PtrPair ptr_all(const std::vector<size_t> &indices = {}) const;
     void reshape(const std::vector<size_t> &shape_);
     void printShape(const std::string &descr) const;
     // NEEDS IMPLEMENTING FOR scale_buf

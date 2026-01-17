@@ -130,6 +130,48 @@ void* Tensor::ptr(const std::vector<size_t>& indices, bool get_scale) const {
     return base_ptr + (offset * get_dtype_size(get_scale));
 }
 
+PtrPair Tensor::ptr_all(const std::vector<size_t> &indices) const {
+    PtrPair out{};
+
+    // Fast path: no indexing
+    if (indices.empty()) {
+        out.buf   = buf;
+        out.scale = scale_buf;
+        return out;
+    }
+    
+    if (indices.size() > ndim) {
+        fprintf(stderr, "Error: indices size %zu exceeds ndim %zu\n", indices.size(), ndim);
+        exit(1);
+    }
+
+    size_t offset = 0;
+    size_t remaining_elements = num_elem();
+
+    // Calculate element-wise offset assuming row-major contiguity
+    for (size_t i = 0; i < indices.size(); ++i) {
+        remaining_elements /= shape[i];
+        offset += indices[i] * remaining_elements;
+    }
+
+    // Apply offset based on the size of the data type
+    // dtype_size() should return sizeof(float), sizeof(int), etc.
+    char* buf_ptr = static_cast<char*>(buf);
+    out.buf = buf_ptr + (offset * get_dtype_size());
+    if (scale_buf) {
+        if (offset % group_size) {
+            fprintf(stderr, "Error: offset of scale_ptr must divide group_size, got offset=%zu and group_size=%zu\n", offset, group_size);
+            exit(1);
+        }
+        size_t offset_s = offset / group_size;
+        char* scale_ptr = static_cast<char*>(scale_buf);
+        out.scale = scale_ptr + (offset_s * get_dtype_size(true));
+    } else {
+        out.scale = nullptr;
+    }
+    return out;
+}
+
 size_t Tensor::num_elem() const {
     size_t size = 1;
     for (size_t i = 0; i < ndim; i++) {

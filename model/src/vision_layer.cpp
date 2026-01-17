@@ -9,8 +9,11 @@ void conv_3d(
     // Total size of the VC * VTP * VP * VP feature block
     const long FEATURE_BLOCK_SIZE = VC * PLANE_SIZE;
 
+    PtrPair conv_w_ptr = conv_w->ptr_all();
+    PtrPair conv_b_ptr = conv_b->ptr_all();
+
     if (conv_w->dtype == DType::FP32) {
-        const float *conv_b_buf = (const float *)conv_b->ptr();
+        const float *conv_b_buf = (const float *)(conv_b_ptr.buf);
 
         // --- Outer loop: Iterate over the 'batch' dimension (img_h) ---
         for (long i = 0; i < img_h; ++i) {
@@ -37,7 +40,7 @@ void conv_3d(
         }
     } else if (conv_w->dtype == DType::FP16) {
         // Cast bias to fp16 type
-        const half_cpu *conv_b_buf = static_cast<const half_cpu*>(conv_b->ptr());
+        const half_cpu *conv_b_buf = static_cast<const half_cpu*>(conv_b_ptr.buf);
 
         // Parallelize across the batch (img_h) and output channels (VH)
         #pragma omp parallel for collapse(2)
@@ -62,12 +65,12 @@ void conv_3d(
         }
     } else {
         // Quantized Weights and Scales
-        const int8_t *w_q = static_cast<const int8_t*>(conv_w->ptr());
-        const float *w_scales = static_cast<const float*>(conv_w->ptr({}, true));
+        const int8_t *w_q = static_cast<const int8_t*>(conv_w_ptr.buf);
+        const float *w_scales = static_cast<const float*>(conv_w_ptr.scale);
         
         // Quantized Bias and Scales
-        const int8_t *b_q = static_cast<const int8_t*>(conv_b->ptr());
-        const float *b_scales = static_cast<const float*>(conv_b->ptr({}, true));
+        const int8_t *b_q = static_cast<const int8_t*>(conv_b_ptr.buf);
+        const float *b_scales = static_cast<const float*>(conv_b_ptr.scale);
 
         const size_t group_size = conv_w->group_size;
         const size_t b_group_size = conv_b->group_size;
@@ -261,6 +264,7 @@ void vision_pos_embed(const Tensor *pos_embed_w, float *x_embed, int grid_h, int
             }   
         }
     } else {
+        PtrPair pe_start_ptr;
         for (size_t i = 0; i < total_elements; ++i) {
             float *pos_embed_ptr_cur = pos_embed_ptr + (i * VH);
 
@@ -273,8 +277,9 @@ void vision_pos_embed(const Tensor *pos_embed_w, float *x_embed, int grid_h, int
                 long source_index = idx_list_mem[k][i];
                 
                 // CHANGE: Cast to half_cpu instead of float
-                const int8_t *pos_embed_w_idx_start = static_cast<const int8_t*>(pos_embed_w->ptr({(size_t)source_index}));
-                const float *pos_embed_w_idx_start_scale = static_cast<const float*>(pos_embed_w->ptr({(size_t)source_index}, true));
+                pe_start_ptr = pos_embed_w->ptr_all({(size_t)source_index});
+                const int8_t *pos_embed_w_idx_start = static_cast<const int8_t*>(pe_start_ptr.buf);
+                const float *pos_embed_w_idx_start_scale = static_cast<const float*>(pe_start_ptr.scale);
                 float weight = weight_list_mem[k][i];
 
                 // Optimized with SIMD + F16C
@@ -509,13 +514,15 @@ void layer_norm(
             }
         }
     } else {
+        PtrPair scale_ptr = scale->ptr_all({layer_offset});
+        PtrPair bias_ptr = bias->ptr_all({layer_offset});
         // Quantized scale (gamma) and its FP32 scales
-        const int8_t *scale_q = static_cast<const int8_t*>(scale->ptr({layer_offset}));
-        const float *scale_scales = static_cast<const float*>(scale->ptr({layer_offset}, true));
+        const int8_t *scale_q = static_cast<const int8_t*>(scale_ptr.buf);
+        const float *scale_scales = static_cast<const float*>(scale_ptr.scale);
         
         // Quantized bias (beta) and its FP32 scales
-        const int8_t *bias_q = static_cast<const int8_t*>(bias->ptr({layer_offset}));
-        const float *bias_scales = static_cast<const float*>(bias->ptr({layer_offset}, true));
+        const int8_t *bias_q = static_cast<const int8_t*>(bias_ptr.buf);
+        const float *bias_scales = static_cast<const float*>(bias_ptr.scale);
 
         const size_t group_size = scale->group_size;
         const size_t b_group_size = bias->group_size;
