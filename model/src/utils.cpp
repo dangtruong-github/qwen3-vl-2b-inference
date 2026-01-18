@@ -192,10 +192,12 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                 }
             }
 
+            /*
             if (total_generated_count >= expected_count) {
                 printf("\nExpected token count reached, break\n");
                 break;
             }
+            */
 
             token = next; // Update token for next iteration
         }

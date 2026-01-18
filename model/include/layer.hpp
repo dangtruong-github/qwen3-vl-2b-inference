@@ -13,37 +13,65 @@
 
 // ------------------------ Helper functions ------------------------
 void embedding_lookup(
-    const Tensor *embedding /*[vocab, hidden]*/, size_t token_id,
-    Tensor *out /*[hidden]*/, size_t hidden_size
+    const Tensor *__restrict embedding /*[vocab, hidden]*/, 
+    Tensor *__restrict out /*[hidden]*/,
+    size_t token_id, size_t hidden_size
 );
 void rms_norm(
-    const float *x /*[hidden]*/, const Tensor *scale /*[hidden]*/,
-    float *out /*[hidden]*/, float eps,
-    size_t batches, size_t layer_offset
+    const float *__restrict x /*[hidden]*/,
+    const Tensor *__restrict scale /*[hidden]*/,
+    float *__restrict out /*[hidden]*/, 
+    float eps, size_t batches, size_t layer_offset
+);
+void rms_norm_inplace(
+    float *__restrict x /*[hidden]*/,
+    const Tensor *__restrict scale /*[hidden]*/,
+    float eps, size_t batches, size_t layer_offset
 );
 void classifier_gemm(
-    const Tensor *embedding /*[vocab, hidden]*/,
-    const Tensor *hid_states /*[hidden]*/, Tensor *logits /*[vocab]*/,
+    const Tensor *__restrict embedding /*[vocab, hidden]*/,
+    const Tensor *__restrict hid_states /*[hidden]*/,
+    Tensor *__restrict logits /*[vocab]*/,
     size_t vocab_size, size_t hidden_size
 );
-void softmax(float *x, size_t n);
-void add_vector(Tensor *add_to, const Tensor *add_from, size_t size_vec = 0);
-void add_vector(Tensor *add_to, const float *add_from, size_t size_vec = 0);
+void softmax(float *__restrict x, size_t n);
+void add_vector(
+    Tensor *__restrict add_to,
+    const Tensor *__restrict add_from,
+    size_t size_vec = 0
+);
+void add_vector(
+    Tensor *__restrict add_to,
+    const float *__restrict add_from,
+    size_t size_vec
+);
 void swiglu(
-    Tensor *gate /*[d]*/, const Tensor *up /*[d]*/, size_t size_vec
+    Tensor *__restrict gate,  // [d]
+    const Tensor *__restrict up,    // [d]
+    size_t size_vec
 );
 void attn_scores_all_heads(
-    const Tensor *key_cache, const Tensor *q, Tensor *att,
-    size_t layer_offset, size_t attn_heads, int kv_mul, int head_dim,
-    int kv_dim, int seq_len, int pos
+    const float *__restrict key_cache,
+    const Tensor *__restrict q, Tensor *__restrict att,
+    size_t attn_heads, int kv_mul, int head_dim,
+    int kv_dim, size_t sh_offset, int pos
 );
 void attn_weighted_sum_all_heads(
-    const Tensor *value_cache, const Tensor *att, Tensor *tb,
-    size_t layer_offset, int attn_heads, int kv_mul, int head_dim, int kv_dim,
-    int seq_len, int pos
+    const float *__restrict value_cache,
+    const Tensor *__restrict att, Tensor *__restrict tb,
+    int attn_heads, int kv_mul, int head_dim, int kv_dim,
+    size_t sh_offset, int pos
 );
 void apply_rotary(
-    float *x /*[n_heads*hd]*/, const Tensor *cos_table /*[seq_len*hd/2]*/,
-    const Tensor *sin_table /*[seq_len*hd/2]*/, int n_heads, int head_dim,
-    int pos
+    Tensor *__restrict x /*[n_heads*hd]*/,
+    const Tensor *__restrict cos_table /*[seq_len*hd/2]*/,
+    const Tensor *__restrict sin_table /*[seq_len*hd/2]*/,
+    int n_heads, int head_dim, int pos
+);
+void apply_rotary_cache(
+    const Tensor *__restrict in /*[n_heads*hd]*/,
+    float *__restrict k_out      /*[n_heads*seq_len*hd]*/,
+    const Tensor *__restrict cos_table /*[seq_len*hd/2]*/,
+    const Tensor *__restrict sin_table /*[seq_len*hd/2]*/,
+    int n_heads, int head_dim, int pos, size_t sh_off
 );

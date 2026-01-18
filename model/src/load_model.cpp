@@ -310,6 +310,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->t = new Tensor({BATCH_SIZE, H});
 
     state->q = new Tensor({BATCH_SIZE, NH, D});
+    state->k = new Tensor({BATCH_SIZE, NH, D});
+    state->v = new Tensor({BATCH_SIZE, NH, D});
 
     state->att = new Tensor({BATCH_SIZE, NH, S});
 
@@ -325,8 +327,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->logits = new Tensor({BATCH_SIZE, V});
 
     // ---- KV cache ----
-    state->key_cache = new Tensor({BATCH_SIZE, L, S, NKV, D});
-    state->value_cache = new Tensor({BATCH_SIZE, L, S, NKV, D});
+    state->key_cache = new Tensor({BATCH_SIZE, L, NKV, S, D});
+    state->value_cache = new Tensor({BATCH_SIZE, L, NKV, S, D});
 
     // -- Vision states --
     state->vision_x = new Tensor({VNP_max, VH});
@@ -362,6 +364,8 @@ void free_model_run_state(QwenRunState* state) {
     if (state->x) delete state->x;
     if (state->t) delete state->t;
     if (state->q) delete state->q;
+    if (state->k) delete state->k;
+    if (state->v) delete state->v;
     if (state->att) delete state->att;
     if (state->qkv_out) delete state->qkv_out;
     if (state->gate) delete state->gate;

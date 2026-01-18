@@ -1,7 +1,8 @@
 #include "../include/vision_layer.hpp"
 
 void conv_3d(
-    const Tensor *conv_w, const Tensor *conv_b, float *in_img, float *out_img,
+    const Tensor *__restrict conv_w, const Tensor *__restrict conv_b,
+    const float *__restrict in_img, Tensor *__restrict out_img_tensor,
     long img_h, long VC, long VTP, long VP, long VH
 ) {
     // Total size of the VTP * VP * VP plane
@@ -12,8 +13,10 @@ void conv_3d(
     PtrPair conv_w_ptr = conv_w->ptr_all();
     PtrPair conv_b_ptr = conv_b->ptr_all();
 
+    float *__restrict out_img = (float *)out_img_tensor->ptr();
+
     if (conv_w->dtype == DType::FP32) {
-        const float *conv_b_buf = (const float *)(conv_b_ptr.buf);
+        const float *__restrict conv_b_buf = (const float *)(conv_b_ptr.buf);
 
         // --- Outer loop: Iterate over the 'batch' dimension (img_h) ---
         for (long i = 0; i < img_h; ++i) {
@@ -40,7 +43,7 @@ void conv_3d(
         }
     } else if (conv_w->dtype == DType::FP16) {
         // Cast bias to fp16 type
-        const half_cpu *conv_b_buf = static_cast<const half_cpu*>(conv_b_ptr.buf);
+        const half_cpu *__restrict conv_b_buf = static_cast<const half_cpu*>(conv_b_ptr.buf);
 
         // Parallelize across the batch (img_h) and output channels (VH)
         #pragma omp parallel for collapse(2)
@@ -104,10 +107,15 @@ void conv_3d(
     }
 }
 
-void vision_pos_embed(const Tensor *pos_embed_w, float *x_embed, int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH) {
+void vision_pos_embed(
+    const Tensor *__restrict pos_embed_w, Tensor *__restrict x_tensor,
+    int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH
+) {
     if (grid_h <= 0 || grid_w <= 0 || num_grid_per_side <= 0) {
         return;
     }
+
+    float *__restrict x_embed = (float *)x_tensor->ptr();
 
     size_t total_elements = (size_t)grid_h * (size_t)grid_w;
     
@@ -372,10 +380,15 @@ void vision_pos_embed(const Tensor *pos_embed_w, float *x_embed, int grid_h, int
 
 // Full vision_rot_pos_emb wrapper function example
 void vision_rot_pos_emb(
-    float *pos_emb_out_cos, float *pos_emb_out_sin,
-    const float *cos_tensor, const float *sin_tensor,
+    Tensor *__restrict pe_cos, Tensor *__restrict pe_sin,
+    const Tensor *__restrict cos_total, const Tensor *__restrict sin_total,
     int grid_h, int grid_w, int merge_size, int head_dim
 ) {
+    float *pos_emb_out_cos = (float *)pe_cos->ptr();
+    float *pos_emb_out_sin = (float *)pe_sin->ptr();
+    const float *cos_tensor = (const float *)cos_total->ptr();
+    const float *sin_tensor = (const float *)sin_total->ptr();
+
     int max_hw = max(grid_h, grid_w);
     int total_tokens = grid_h * grid_w;
     int freqs_depth_dim = head_dim / 4;
@@ -423,13 +436,11 @@ void vision_rot_pos_emb(
 }
 
 void layer_norm(
-    const Tensor *x,           /* [batches, hidden] */
-    const Tensor *scale,       /* [layers, hidden] */
-    const Tensor *bias,        /* [layers, hidden] */
-    Tensor *out,               /* [batches, hidden] */
-    float eps, 
-    size_t batches, 
-    size_t layer_offset
+    const Tensor *__restrict x,           /* [batches, hidden] */
+    const Tensor *__restrict scale,       /* [layers, hidden] */
+    const Tensor *__restrict bias,        /* [layers, hidden] */
+    Tensor *__restrict out,               /* [batches, hidden] */
+    float eps, size_t batches, size_t layer_offset
 ) {
     // 1. Pointers to current layer's weights
     const size_t hidden_size = scale->shape[scale->ndim - 1];
@@ -566,13 +577,14 @@ void layer_norm(
 }
 
 void vision_apply_rotary_inplace(
-    const float *cos_tensor, 
-    const float *sin_tensor, 
-    float *buffer,           
-    long total_tokens,
-    int num_heads,
-    int head_dim
+    const Tensor *__restrict cos_total, // shape (T, HD)
+    const Tensor *__restrict sin_total, // shape (T, HD)
+    Tensor *__restrict tensor_buffer,   // shape (T, NH, HD)
+    long total_tokens, int num_heads, int head_dim
 ) {
+    const float *__restrict cos_tensor = (const float *)cos_total->ptr();
+    const float *__restrict sin_tensor = (const float *)sin_total->ptr();
+    float *__restrict buffer = (float *)tensor_buffer->ptr();
     const int half_dim = head_dim / 2;
 
     // Parallelize across tokens - this is usually the largest dimension
@@ -607,7 +619,14 @@ void vision_apply_rotary_inplace(
     }
 }
 
-void tensor_transpose(const float *in, float *out, int D0, int D1, int D2) {
+void tensor_transpose(
+    const Tensor *__restrict in_tensor,
+    Tensor *__restrict out_tensor,
+    int D0, int D1, int D2
+) {
+    const float *__restrict in = (const float *)in_tensor->ptr();
+    float *__restrict out = (float *)out_tensor->ptr();
+
     const int in_stride_0 = D1 * D2;
     const int out_stride_1 = D0 * D2;
     

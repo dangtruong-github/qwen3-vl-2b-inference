@@ -13,33 +13,37 @@
 #define max(a, b) ((a) > (b) ? (a) : (b))
 
 void conv_3d(
-    const Tensor *conv_w, const Tensor *conv_b, float *in_img, float *out_img,
+    const Tensor *__restrict conv_w, const Tensor *__restrict conv_b,
+    const float *__restrict in_img, Tensor *__restrict out_img_tensor,
     long img_h, long VC, long VTP, long VP, long VH
 );
-void vision_pos_embed(const Tensor *pos_embed_w, float *x_embed, int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH);
+void vision_pos_embed(
+    const Tensor *__restrict pos_embed_w, Tensor *__restrict x_embed,
+    int grid_h, int grid_w, int num_grid_per_side, int VSP, int VH
+);
 void vision_rot_pos_emb(
-    float *pos_emb_out_cos, float *pos_emb_out_sin,
-    const float *cos_tensor, const float *sin_tensor,
+    Tensor *__restrict pe_cos, Tensor *__restrict pe_sin,
+    const Tensor *__restrict cos_total, const Tensor *__restrict sin_total,
     int grid_h, int grid_w, int merge_size, int head_dim
 );
 void layer_norm(
-    const Tensor *x,           /* [batches, hidden] */
-    const Tensor *scale,       /* [layers, hidden] */
-    const Tensor *bias,        /* [layers, hidden] */
-    Tensor *out,               /* [batches, hidden] */
-    float eps, 
-    size_t batches, 
-    size_t layer_offset
+    const Tensor *__restrict x,           /* [batches, hidden] */
+    const Tensor *__restrict scale,       /* [layers, hidden] */
+    const Tensor *__restrict bias,        /* [layers, hidden] */
+    Tensor *__restrict out,               /* [batches, hidden] */
+    float eps, size_t batches, size_t layer_offset
 );
 void vision_apply_rotary_inplace(
-    const float *cos_tensor, // shape (total_tokens, head_dim)
-    const float *sin_tensor, // shape (total_tokens, head_dim)
-    float *buffer,           // shape (total_tokens, num_heads, head_dim)
-    long total_tokens,
-    int num_heads,
-    int head_dim
+    const Tensor *__restrict cos_total, // shape (T, HD)
+    const Tensor *__restrict sin_total, // shape (T, HD)
+    Tensor *__restrict tensor_buffer,   // shape (T, NH, HD)
+    long total_tokens, int num_heads, int head_dim
 );
-void tensor_transpose(const float *in, float *out, int D0, int D1, int D2);
+void tensor_transpose(
+    const Tensor *__restrict in,
+    Tensor *__restrict out,
+    int D0, int D1, int D2
+);
 void vision_att(
     const float *q, const float *k, const float *v, float *attn_scores,
     float *out, int num_heads, int total_tokens, int head_dim, float scale
