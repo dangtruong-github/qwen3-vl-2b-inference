@@ -8,14 +8,12 @@
 
 #if defined(__AVX2__) && defined(__FMA__)
 void linear_int8_fp32s_avx2_kernel(
-    const float *mat_A,          /* [M, K] */
-    const int8_t *mat_B_in,      /* [N, K] if !trans, else [K, N] */
-    const float *mat_B_scales,   /* Scales for B */
-    const int8_t *mat_bias_in,   /* [N] */
-    const float *mat_bias_scale, /* Scales for bias */
-    float *mat_C,                /* [M, N] */
-    size_t M, size_t N, size_t K,
-    bool mat_B_transpose,
-    size_t group_size            /* e.g., 32 or 64 */
+    const float *__restrict mat_A,
+    const int8_t *__restrict mat_B_in,
+    const float *__restrict mat_B_scales,
+    const int8_t *__restrict mat_bias_in,
+    const float *__restrict mat_bias_scale,
+    float *__restrict mat_C, size_t M, size_t N, size_t K,
+    bool mat_B_transpose, size_t group_size
 );
 #endif

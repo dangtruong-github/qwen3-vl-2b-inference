@@ -17,33 +17,23 @@ static inline float add_reduce_mm_256(__m256 vec) {
     return _mm_cvtss_f32(sum128);
 }
 
-static inline float add_reduce_m256i(__m256i vec) {
-    // 1. Extract the top 128 bits and add them to the bottom 128 bits
-    __m128i hi128 = _mm256_extractf128_si256(vec, 1);
-    __m128i lo128 = _mm256_castsi256_si128(vec);
-    __m128i sum128 = _mm_add_epi32(hi128, lo128);
-
-    // 2. Horizontal add within the remaining 128 bits
-    // [A, B, C, D] -> [B, A, D, C]
-    __m128i shuf = _mm_shuffle_epi32(sum128, _MM_SHUFFLE(2, 3, 0, 1));
-    sum128 = _mm_add_epi32(sum128, shuf);
-
-    // 3. Final shuffle and add
-    // [A+B, B+A, C+D, D+C] -> [C+D, D+C, A+B, B+A]
-    shuf = _mm_shuffle_epi32(sum128, _MM_SHUFFLE(1, 0, 3, 2));
-    sum128 = _mm_add_epi32(sum128, shuf);
-
-    // 4. Extract the lower 32-bit integer and convert to float
-    return (float)_mm_cvtsi128_si32(sum128);
+static inline float add_reduce_m256i(__m256i v) {
+    __m128i v128 = _mm_add_epi32(
+        _mm256_castsi256_si128(v),
+        _mm256_extracti128_si256(v, 1)
+    );
+    v128 = _mm_hadd_epi32(v128, v128);
+    v128 = _mm_hadd_epi32(v128, v128);
+    return (float)_mm_cvtsi128_si32(v128);
 }
 
 void sm_M_lg_N_lg_K_transpose_prepacked(
-    const float* mat_A,          // [M, K] FP32
-    const int8_t* mat_B_in,      // [N, K] or [K, N] INT8
-    const float* mat_B_scales,   // groupwise scales over linear B storage
-    const int8_t* mat_bias_in,   // [N] INT8 (optional, can be nullptr)
-    const float* mat_bias_scale, // groupwise scales over linear bias storage
-    float* mat_C, size_t M, size_t N, size_t K, size_t group_size
+    const float *__restrict mat_A,
+    const int8_t *__restrict mat_B_in,
+    const float *__restrict mat_B_scales,
+    const int8_t *__restrict mat_bias_in,
+    const float *__restrict mat_bias_scale,
+    float *__restrict mat_C, size_t M, size_t N, size_t K, size_t group_size
 ) {
     constexpr size_t MAX_GS = 128; // assume MAX_GS == group_size
     constexpr size_t TN = 4 * 2;
@@ -229,156 +219,185 @@ void sm_M_lg_N_lg_K_transpose_prepacked(
     }
 }
 
-void sm_M_lg_N_lg_K_transpose(
-    const float* mat_A,          // [M, K] FP32
-    const int8_t* mat_B_in,      // [N, K] or [K, N] INT8
-    const float* mat_B_scales,   // groupwise scales over linear B storage
-    const int8_t* mat_bias_in,   // [N] INT8 (optional, can be nullptr)
-    const float* mat_bias_scale, // groupwise scales over linear bias storage
-    float* mat_C, size_t M, size_t N, size_t K, size_t group_size
+void gemv_lg_N_lg_K_transpose(
+    const float *__restrict mat_A,
+    const int8_t *__restrict mat_B_in,
+    const float *__restrict mat_B_scales,
+    const int8_t *__restrict mat_bias_in,
+    const float *__restrict mat_bias_scale,
+    float *__restrict mat_C, size_t N, size_t K, size_t group_size
 ) {
-    constexpr size_t TN = 16;
     // Pre-calculate this once outside all loops
     const float inv_group_size = 1.0f / (float)group_size;
     const float inv_127 = 1.0f / 127.0f;
 
-    for (size_t i = 0; i < M; ++i) {
-        int16_t a_q16[K];
-        float a_q16_s[K / group_size];
-        const float *a0_ptr = mat_A + i * K;
+    int16_t a_q16[K];
+    float a_q16_s[K / group_size];
 
-        for (size_t kk = 0; kk < K; kk += group_size) {
-            __m256 v_sumsq0 = _mm256_setzero_ps();
-            __m256 v_sumsq1 = _mm256_setzero_ps();
+    for (size_t kk = 0; kk < K; kk += group_size) {
+        __m256 v_sumsq0 = _mm256_setzero_ps();
+        __m256 v_sumsq1 = _mm256_setzero_ps();
 
-            for (size_t k = kk; k < kk + group_size; k += 16) {
-                __m256 v_a0 = _mm256_loadu_ps(a0_ptr + k);
-                __m256 v_a1 = _mm256_loadu_ps(a0_ptr + k + 8);
+        for (size_t k = kk; k < kk + group_size; k += 16) {
+            __m256 v_a0 = _mm256_loadu_ps(mat_A + k);
+            __m256 v_a1 = _mm256_loadu_ps(mat_A + k + 8);
 
-                v_sumsq0 = _mm256_fmadd_ps(v_a0, v_a0, v_sumsq0);
-                v_sumsq1 = _mm256_fmadd_ps(v_a1, v_a1, v_sumsq1);
-            }
-
-            // Combine at the end
-            float sumsq = add_reduce_mm_256(_mm256_add_ps(v_sumsq0, v_sumsq1));
-
-            // Inside the loop:
-            float rms = sqrtf(sumsq * inv_group_size + 1e-6f);
-            float s_val = rms * inv_127; 
-
-            a_q16_s[kk / group_size] = s_val;
-
-            __m256 v_inv_Sa = _mm256_set1_ps(1 / s_val);
-
-            for (size_t k = kk; k < kk + group_size; k += 16) {
-                // 1. Load 16 floats
-                __m256 f0 = _mm256_loadu_ps(a0_ptr + k);
-                __m256 f1 = _mm256_loadu_ps(a0_ptr + k + 8);
-
-                // 2. Scale and Convert to i32
-                __m256i i0 = _mm256_cvtps_epi32(_mm256_mul_ps(f0, v_inv_Sa));
-                __m256i i1 = _mm256_cvtps_epi32(_mm256_mul_ps(f1, v_inv_Sa));
-
-                // 3. Pack (This creates the "Lane Mess")
-                __m256i packed = _mm256_packs_epi32(i0, i1);
-
-                // 4. FIX THE LANES (The Magic Step)
-                // This permutes 64-bit quads to restore linear order: 0, 2, 1, 3
-                __m256i linear = _mm256_permute4x64_epi64(packed, 0xD8); 
-
-                // 5. Store
-                _mm256_storeu_si256((__m256i*)(a_q16 + k), linear);
-            }
+            v_sumsq0 = _mm256_fmadd_ps(v_a0, v_a0, v_sumsq0);
+            v_sumsq1 = _mm256_fmadd_ps(v_a1, v_a1, v_sumsq1);
         }
 
-        #pragma omp parallel for
-        for (size_t jj = 0; jj < N; jj += 4) {
-            float total_acc_0 = 0.0f;
-            float total_acc_1 = 0.0f;
-            float total_acc_2 = 0.0f;
-            float total_acc_3 = 0.0f;
+        // Combine at the end
+        float sumsq = add_reduce_mm_256(_mm256_add_ps(v_sumsq0, v_sumsq1));
 
-            const int8_t *b0_ptr = mat_B_in + jj * K;
-            const int8_t *b1_ptr = mat_B_in + (jj + 1) * K;
-            const int8_t *b2_ptr = mat_B_in + (jj + 2) * K;
-            const int8_t *b3_ptr = mat_B_in + (jj + 3) * K;
-            
-            for (size_t kk = 0; kk < K; kk += group_size) {
-                __m256i c00 = _mm256_setzero_si256();
-                __m256i c10 = _mm256_setzero_si256();
-                __m256i c20 = _mm256_setzero_si256();
-                __m256i c30 = _mm256_setzero_si256();
+        // Inside the loop:
+        float rms = sqrtf(sumsq * inv_group_size + 1e-6f);
+        float s_val = rms * inv_127; 
 
-                __m256i c01 = _mm256_setzero_si256();
-                __m256i c11 = _mm256_setzero_si256();
-                __m256i c21 = _mm256_setzero_si256();
-                __m256i c31 = _mm256_setzero_si256();
+        a_q16_s[kk / group_size] = s_val;
 
-                for (size_t k = kk; k < kk + group_size; k += 32) {
-                    __m256i a0 = _mm256_loadu_si256((__m256i*)(a_q16 + k));
-                    __m256i a1 = _mm256_loadu_si256((__m256i*)(a_q16 + k + 16));
+        __m256 v_inv_Sa = _mm256_set1_ps(1 / s_val);
 
-                    __m256i b0 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b0_ptr + k)));
-                    __m256i b1 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b1_ptr + k)));
-                    __m256i b2 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b2_ptr + k)));
-                    __m256i b3 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b3_ptr + k)));
+        for (size_t k = kk; k < kk + group_size; k += 16) {
+            // 1. Load 16 floats
+            __m256 f0 = _mm256_loadu_ps(mat_A + k);
+            __m256 f1 = _mm256_loadu_ps(mat_A + k + 8);
 
-                    c00 = _mm256_add_epi32(c00, _mm256_madd_epi16(a0, b0));
-                    c10 = _mm256_add_epi32(c10, _mm256_madd_epi16(a0, b1));
-                    c20 = _mm256_add_epi32(c20, _mm256_madd_epi16(a0, b2));
-                    c30 = _mm256_add_epi32(c30, _mm256_madd_epi16(a0, b3));
+            // 2. Scale and Convert to i32
+            __m256i i0 = _mm256_cvtps_epi32(_mm256_mul_ps(f0, v_inv_Sa));
+            __m256i i1 = _mm256_cvtps_epi32(_mm256_mul_ps(f1, v_inv_Sa));
 
-                    b0 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b0_ptr + k + 16)));
-                    b1 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b1_ptr + k + 16)));
-                    b2 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b2_ptr + k + 16)));
-                    b3 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b3_ptr + k + 16)));
+            // 3. Pack (This creates the "Lane Mess")
+            __m256i packed = _mm256_packs_epi32(i0, i1);
 
-                    c01 = _mm256_add_epi32(c01, _mm256_madd_epi16(a1, b0));
-                    c11 = _mm256_add_epi32(c11, _mm256_madd_epi16(a1, b1));
-                    c21 = _mm256_add_epi32(c21, _mm256_madd_epi16(a1, b2));
-                    c31 = _mm256_add_epi32(c31, _mm256_madd_epi16(a1, b3));
-                }
+            // 4. FIX THE LANES (The Magic Step)
+            // This permutes 64-bit quads to restore linear order: 0, 2, 1, 3
+            __m256i linear = _mm256_permute4x64_epi64(packed, 0xD8); 
 
-                float b0_q16_s = mat_B_scales[(jj * K + kk) / group_size];
-                float b1_q16_s = mat_B_scales[((jj + 1) * K + kk) / group_size];
-                float b2_q16_s = mat_B_scales[((jj + 2) * K + kk) / group_size];
-                float b3_q16_s = mat_B_scales[((jj + 3) * K + kk) / group_size];
-                const float a_s = a_q16_s[kk / group_size];
+            // 5. Store
+            _mm256_storeu_si256((__m256i*)(a_q16 + k), linear);
+        }
+    }
 
-                total_acc_0 += add_reduce_m256i(_mm256_add_epi32(c00, c01)) * a_s * b0_q16_s;
-                total_acc_1 += add_reduce_m256i(_mm256_add_epi32(c10, c11)) * a_s * b1_q16_s;
-                total_acc_2 += add_reduce_m256i(_mm256_add_epi32(c20, c21)) * a_s * b2_q16_s;
-                total_acc_3 += add_reduce_m256i(_mm256_add_epi32(c30, c31)) * a_s * b3_q16_s;
+    const size_t K_g = K / group_size;
+
+    #pragma omp parallel for schedule(static)
+    for (size_t jj = 0; jj <= N - 6; jj += 6) {
+        float acc[6] = {0.0f};
+
+        const int8_t *b0_ptr = mat_B_in + jj * K;
+        const int8_t *b1_ptr = mat_B_in + (jj + 1) * K;
+        const int8_t *b2_ptr = mat_B_in + (jj + 2) * K;
+        const int8_t *b3_ptr = mat_B_in + (jj + 3) * K;
+        const int8_t *b4_ptr = mat_B_in + (jj + 4) * K;
+        const int8_t *b5_ptr = mat_B_in + (jj + 5) * K;
+        
+        for (size_t kk = 0; kk < K; kk += group_size) {
+            const size_t g_off = (jj * K + kk) / group_size;
+            const float *b_s_ptr = mat_B_scales + g_off;
+
+            __m256i c0 = _mm256_setzero_si256();
+            __m256i c1 = _mm256_setzero_si256();
+            __m256i c2 = _mm256_setzero_si256();
+            __m256i c3 = _mm256_setzero_si256();
+            __m256i c4 = _mm256_setzero_si256();
+            __m256i c5 = _mm256_setzero_si256();
+
+            for (size_t k = kk; k < kk + group_size; k += 16) {
+                __m256i a0 = _mm256_loadu_si256((__m256i*)(a_q16 + k));
+
+                __m256i b0 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b0_ptr + k)));
+                __m256i b1 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b1_ptr + k)));
+                __m256i b2 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b2_ptr + k)));
+                __m256i b3 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b3_ptr + k)));
+                __m256i b4 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b4_ptr + k)));
+                __m256i b5 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b5_ptr + k)));
+
+                c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(a0, b0));
+                c1 = _mm256_add_epi32(c1, _mm256_madd_epi16(a0, b1));
+                c2 = _mm256_add_epi32(c2, _mm256_madd_epi16(a0, b2));
+                c3 = _mm256_add_epi32(c3, _mm256_madd_epi16(a0, b3));
+                c4 = _mm256_add_epi32(c4, _mm256_madd_epi16(a0, b4));
+                c5 = _mm256_add_epi32(c5, _mm256_madd_epi16(a0, b5));
             }
+
+            const float a_s = a_q16_s[kk / group_size];
             
-            if (mat_bias_in && mat_bias_scale) {
-                mat_C[i * N + jj] = (float)mat_bias_in[jj] * mat_bias_scale[jj / group_size] + total_acc_0;
-                mat_C[i * N + jj + 1] = (float)mat_bias_in[jj + 1] * mat_bias_scale[(jj + 1) / group_size] + total_acc_1;
-                mat_C[i * N + jj + 2] = (float)mat_bias_in[jj + 2] * mat_bias_scale[(jj + 2) / group_size] + total_acc_2;
-                mat_C[i * N + jj + 3] = (float)mat_bias_in[jj + 3] * mat_bias_scale[(jj + 3) / group_size] + total_acc_3;
-            } else {
-                mat_C[i * N + jj] = total_acc_0;
-                mat_C[i * N + jj + 1] = total_acc_1;
-                mat_C[i * N + jj + 2] = total_acc_2;
-                mat_C[i * N + jj + 3] = total_acc_3;
+            acc[0] += add_reduce_m256i(c0) * a_s * b_s_ptr[0];
+            acc[1] += add_reduce_m256i(c1) * a_s * b_s_ptr[K_g];
+            acc[2] += add_reduce_m256i(c2) * a_s * b_s_ptr[2 * K_g];
+            acc[3] += add_reduce_m256i(c3) * a_s * b_s_ptr[3 * K_g];
+            acc[4] += add_reduce_m256i(c4) * a_s * b_s_ptr[4 * K_g];
+            acc[5] += add_reduce_m256i(c5) * a_s * b_s_ptr[5 * K_g];
+        }
+        
+        if (mat_bias_in && mat_bias_scale) {
+            for (int x = 0; x < 6; ++x) {
+                mat_C[jj + x] = (float)mat_bias_in[jj + x] * mat_bias_scale[(jj + x) / group_size] + acc[x];
             }
+        } else {
+            for (int x = 0; x < 6; ++x) {
+                mat_C[jj + x] = acc[x];
+            }
+        }
+    }
+
+    size_t start_j = (N / 6) * 6;
+    for (size_t jj = start_j; jj < N; ++jj) {
+        float acc_f = 0.0f;
+        const int8_t *b_ptr = mat_B_in + jj * K;
+        
+        for (size_t kk = 0; kk < K; kk += group_size) {
+            __m256i c0 = _mm256_setzero_si256();
+            __m256i c1 = _mm256_setzero_si256();
+            __m256i c2 = _mm256_setzero_si256();
+            __m256i c3 = _mm256_setzero_si256();
+
+            for (size_t k = kk; k < kk + group_size; k += 64) {
+                __m256i a0 = _mm256_loadu_si256((__m256i*)(a_q16 + k));
+                __m256i a1 = _mm256_loadu_si256((__m256i*)(a_q16 + k + 16));
+                __m256i a2 = _mm256_loadu_si256((__m256i*)(a_q16 + k + 32));
+                __m256i a3 = _mm256_loadu_si256((__m256i*)(a_q16 + k + 48));
+
+                __m256i b0 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b_ptr + k)));
+                __m256i b1 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b_ptr + k + 16)));
+                __m256i b2 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b_ptr + k + 32)));
+                __m256i b3 = _mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i*)(b_ptr + k + 48)));
+
+                c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(a0, b0));
+                c1 = _mm256_add_epi32(c1, _mm256_madd_epi16(a1, b1));
+                c2 = _mm256_add_epi32(c2, _mm256_madd_epi16(a2, b2));
+                c3 = _mm256_add_epi32(c3, _mm256_madd_epi16(a3, b3));
+            }
+
+            c0 = _mm256_add_epi32(c0, c1);
+            c2 = _mm256_add_epi32(c2, c3);
+
+            const float a_s = a_q16_s[kk / group_size];
+            const float b_s = mat_B_scales[(jj * K + kk) / group_size];
+            acc_f += add_reduce_m256i(_mm256_add_epi32(c0, c2)) * a_s * b_s;
+        }
+        
+        if (mat_bias_in && mat_bias_scale) {
+            mat_C[jj] = (float)mat_bias_in[jj] * mat_bias_scale[jj / group_size] + acc_f;
+        } else {
+            mat_C[jj] = acc_f;
         }
     }
 }
 
 // if defined INT16 x INT16
 void linear_int8_fp32s_int32acc_transpose(
-    const float* mat_A,          // [M, K] FP32
-    const int8_t* mat_B_in,      // [N, K] or [K, N] INT8
-    const float* mat_B_scales,   // groupwise scales over linear B storage
-    const int8_t* mat_bias_in,   // [N] INT8 (optional, can be nullptr)
-    const float* mat_bias_scale, // groupwise scales over linear bias storage
-    float* mat_C, size_t M, size_t N, size_t K, size_t group_size
+    const float *__restrict mat_A,
+    const int8_t *__restrict mat_B_in,
+    const float *__restrict mat_B_scales,
+    const int8_t *__restrict mat_bias_in,
+    const float *__restrict mat_bias_scale,
+    float *__restrict mat_C, size_t M, size_t N, size_t K, size_t group_size
 ) {
     if (M == 1 && N >= 1024 && K >= 1024) {
-        sm_M_lg_N_lg_K_transpose(
+        gemv_lg_N_lg_K_transpose(
             mat_A, mat_B_in, mat_B_scales, mat_bias_in,
-            mat_bias_scale, mat_C, M, N, K, group_size
+            mat_bias_scale, mat_C, N, K, group_size
         );
         return;
     }
@@ -575,111 +594,17 @@ void linear_int8_fp32s_int32acc_transpose(
     }
 }
 
-void linear_int8_fp32s_transpose(
-    const float* mat_A,          // [M, K] FP32
-    const int8_t* mat_B_in,      // [N, K] or [K, N] INT8
-    const float* mat_B_scales,   // groupwise scales over linear B storage
-    const int8_t* mat_bias_in,   // [N] INT8 (optional, can be nullptr)
-    const float* mat_bias_scale, // groupwise scales over linear bias storage
-    float* mat_C, size_t M, size_t N, size_t K, size_t group_size
-) {
-    linear_int8_fp32s_int32acc_transpose(
-        mat_A, mat_B_in, mat_B_scales, mat_bias_in,
-        mat_bias_scale, mat_C, M, N, K, group_size
-    );
-    return;
-    // default fallback
-    // KERNEL ENSURE group_size >= 16
-    #pragma omp parallel for collapse(2)
-    for (size_t i = 0; i < M; ++i) {
-        for (size_t j = 0; j < N; ++j) {
-            const float *a0_ptr = mat_A + i * K;
-            const int8_t *b0_ptr = mat_B_in + j * K;
-            const float *b_s_ptr = mat_B_scales + j * K / group_size;
-
-            float acc = 0.0f;
-            if (mat_bias_in && mat_bias_scale) {
-                acc = (float)mat_bias_in[j] * mat_bias_scale[j / group_size];
-            }
-
-            size_t k = 0;
-            for (; k + group_size <= K; k += group_size) {
-                // group_size % 16 == 0
-                __m256 c0 = _mm256_setzero_ps();
-                __m256 c1 = _mm256_setzero_ps();
-                __m256 c2 = _mm256_setzero_ps();
-                __m256 c3 = _mm256_setzero_ps();
-                for (size_t k_i = k; k_i < k + group_size; k_i += 32) {
-                    __m256 a0 = _mm256_loadu_ps(a0_ptr + k_i);
-                    __m256 a1 = _mm256_loadu_ps(a0_ptr + k_i + 8);
-                    __m256 a2 = _mm256_loadu_ps(a0_ptr + k_i + 16);
-                    __m256 a3 = _mm256_loadu_ps(a0_ptr + k_i + 24);
-                    
-                    // 1. Load 16 int8 values into an xmm register (128-bit)// 1. Load all 32 int8 values into a single 256-bit register
-                    __m256i q32 = _mm256_loadu_si256((const __m256i*)(b0_ptr + k_i));
-
-                    // 2. Extract 128-bit chunks (16 bytes each)
-                    __m128i low_16 = _mm256_castsi256_si128(q32);
-                    __m128i high_16 = _mm256_extracti128_si256(q32, 1);
-
-                    // 3. Convert first 16 bytes (low_16) into 2 float registers (8 floats each)
-                    // Low 8 of low_16
-                    __m256i i32_0 = _mm256_cvtepi8_epi32(low_16); 
-                    __m256 b0 = _mm256_cvtepi32_ps(i32_0);
-                    
-                    // High 8 of low_16 (shift right by 8 bytes first)
-                    __m256i i32_1 = _mm256_cvtepi8_epi32(_mm_srli_si128(low_16, 8));
-                    __m256 b1 = _mm256_cvtepi32_ps(i32_1);
-
-                    // 4. Convert next 16 bytes (high_16) into 2 float registers
-                    // Low 8 of high_16
-                    __m256i i32_2 = _mm256_cvtepi8_epi32(high_16);
-                    __m256 b2 = _mm256_cvtepi32_ps(i32_2);
-                    
-                    // High 8 of high_16 (shift right by 8 bytes first)
-                    __m256i i32_3 = _mm256_cvtepi8_epi32(_mm_srli_si128(high_16, 8));
-                    __m256 b3 = _mm256_cvtepi32_ps(i32_3);
-
-                    c0 = _mm256_fmadd_ps(a0, b0, c0);
-                    c1 = _mm256_fmadd_ps(a1, b1, c1);
-                    c2 = _mm256_fmadd_ps(a2, b2, c2);
-                    c3 = _mm256_fmadd_ps(a3, b3, c3);
-                }
-
-                c0 = _mm256_add_ps(c0, c1);
-                c2 = _mm256_add_ps(c2, c3);
-
-                acc += add_reduce_mm_256(_mm256_add_ps(c0, c2)) * b_s_ptr[k / group_size];
-            }
-
-            // Horizontal sum of all accumulators
-
-            // Remainder loop
-            for (; k < K; ++k) {
-                float scale = mat_B_scales[(j * K + k) / group_size];
-                acc += a0_ptr[k] * ((float)b0_ptr[k] * scale);
-            }
-
-            mat_C[i * N + j] = acc;
-        }
-    }
-}
-
 void linear_int8_fp32s_avx2_kernel(
-    const float* mat_A,          // [M, K] FP32
-    const int8_t* mat_B_in,      // [N, K] or [K, N] INT8
-    const float* mat_B_scales,   // groupwise scales over linear B storage
-    const int8_t* mat_bias_in,   // [N] INT8 (optional, can be nullptr)
-    const float* mat_bias_scale, // groupwise scales over linear bias storage
-    float* mat_C,                // [M, N] FP32
-    size_t M,
-    size_t N,
-    size_t K,
-    bool mat_B_transpose,
-    size_t group_size
+    const float *__restrict mat_A,
+    const int8_t *__restrict mat_B_in,
+    const float *__restrict mat_B_scales,
+    const int8_t *__restrict mat_bias_in,
+    const float *__restrict mat_bias_scale,
+    float *__restrict mat_C, size_t M, size_t N, size_t K,
+    bool mat_B_transpose, size_t group_size
 ) {
     if (mat_B_transpose) {
-        linear_int8_fp32s_transpose(
+        linear_int8_fp32s_int32acc_transpose(
             mat_A, mat_B_in, mat_B_scales, mat_bias_in,
             mat_bias_scale, mat_C, M, N, K, group_size
         );
