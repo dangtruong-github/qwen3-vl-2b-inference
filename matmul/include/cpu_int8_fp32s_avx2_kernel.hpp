@@ -6,6 +6,8 @@
 #include <sched.h> // for sched_setaffinity(), cpu_set_t, CPU_ZERO, CPU_SET
 #include "../../utils/module.hpp"
 
+#define VERY_LARGE_N 65536
+
 #if defined(__AVX2__) && defined(__FMA__)
 void linear_int8_fp32s_avx2_kernel(
     const float *__restrict mat_A,
