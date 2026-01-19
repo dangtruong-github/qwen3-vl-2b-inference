@@ -142,7 +142,7 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
 
     off_t current_offset = ftell(file);
 
-    auto map_tensor = [&](Tensor** target, std::vector<size_t> dims, const char* name, size_t weight_bits) {
+    auto map_tensor = [&](Tensor** target, std::vector<size_t> dims, const char* name, size_t weight_bits, bool print_shape = true) {
         size_t count = 1;
         size_t size_elem;
         DType::Type type_elem;
@@ -175,7 +175,7 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
             void *ptr = mmap_weight_safe(fd, count * size_elem, current_offset, type_elem);
             *target = new Tensor(dims, ptr, scale_ptr, group_size, type_elem, scale_type_elem);
         }
-        (*target)->printShape(name);
+        if (print_shape) (*target)->printShape(name);
     };
 
     // --- LLM WEIGHTS ---
@@ -198,13 +198,21 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     map_tensor(&weights->vl_patch_emb_w, {VH, VC, VTP, VP, VP}, "vl_patch_emb_w", vision_bits);
     map_tensor(&weights->vl_pos_emb_w, {VNPE, VH}, "vl_pos_emb_w", vision_bits);
     map_tensor(&weights->vl_attn_proj_b, {VD, VH}, "vl_attn_proj_b", vision_bits);
-    map_tensor(&weights->vl_attn_proj_w, {VD, VH, VH}, "vl_attn_proj_w", vision_bits);
+    map_tensor(&weights->vl_attn_proj_w, {VD, VH, VH}, "vl_attn_proj_w", vision_bits, false);
+    weights->vl_attn_proj_w->permute({0, 2, 1});
+    weights->vl_attn_proj_w->printShape("vl_attn_qkv_w");
     map_tensor(&weights->vl_attn_qkv_b, {VD, 3, VH}, "vl_attn_qkv_b", vision_bits);
-    map_tensor(&weights->vl_attn_qkv_w, {VD, 3, VH, VH}, "vl_attn_qkv_w", vision_bits);
+    map_tensor(&weights->vl_attn_qkv_w, {VD, 3, VH, VH}, "vl_attn_qkv_w", vision_bits, false);
+    // weights->vl_attn_qkv_w->permute({0, 1, 3, 2});
+    weights->vl_attn_qkv_w->printShape("vl_attn_qkv_w");
     map_tensor(&weights->vl_mlp1_b, {VD, VI}, "vl_mlp1_b", vision_bits);
-    map_tensor(&weights->vl_mlp1_w, {VD, VI, VH}, "vl_mlp1_w", vision_bits);
+    map_tensor(&weights->vl_mlp1_w, {VD, VI, VH}, "vl_mlp1_w", vision_bits, false);
+    weights->vl_mlp1_w->permute({0, 2, 1});
+    weights->vl_mlp1_w->printShape("vl_mlp1_w");
     map_tensor(&weights->vl_mlp2_b, {VD, VH}, "vl_mlp2_b", vision_bits);
-    map_tensor(&weights->vl_mlp2_w, {VD, VH, VI}, "vl_mlp2_w", vision_bits);
+    map_tensor(&weights->vl_mlp2_w, {VD, VH, VI}, "vl_mlp2_w", vision_bits, false);
+    // weights->vl_mlp2_w->permute({0, 2, 1});
+    weights->vl_mlp2_w->printShape("vl_mlp2_w");
     map_tensor(&weights->vl_norm1_b, {VD, VH}, "vl_norm1_b", vision_bits);
     map_tensor(&weights->vl_norm1_w, {VD, VH}, "vl_norm1_w", vision_bits);
     map_tensor(&weights->vl_norm2_b, {VD, VH}, "vl_norm2_b", vision_bits);

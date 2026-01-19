@@ -40,6 +40,7 @@ struct Tensor {
     DType::Type dtype;
     bool owns_host_buf = false;
     bool use_gpu = false;
+    bool permuted = false;
 
     void* scale_buf = nullptr;
     DType::Type scale_dtype;

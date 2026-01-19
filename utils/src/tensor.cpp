@@ -361,5 +361,6 @@ void Tensor::permute(const std::vector<size_t> &order) {
     }
     buf = new_buf;
     shape = new_shape;
+    permuted = true;
     owns_host_buf = true;
 }
