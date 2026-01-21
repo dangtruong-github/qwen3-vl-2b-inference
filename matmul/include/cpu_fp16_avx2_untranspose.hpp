@@ -5,14 +5,13 @@
 #include <immintrin.h>
 #include <sched.h> // for sched_setaffinity(), cpu_set_t, CPU_ZERO, CPU_SET
 #include "../../utils/module.hpp"
-#include "cpu_fp16_avx2_untranspose.hpp"
 
 #if defined(__AVX2__) && defined(__FMA__)
-void fp16_avx2_kernel(
+void fp16_avx2_kernel_untranspose(
     const float *__restrict mat_A,
     const half_cpu *__restrict mat_B,
     const half_cpu *__restrict mat_bias,
     float *__restrict mat_C,
-    size_t M, size_t N, size_t K, bool mat_B_transpose
+    size_t M, size_t N, size_t K
 );
 #endif

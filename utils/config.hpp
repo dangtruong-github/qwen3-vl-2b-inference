@@ -5,3 +5,4 @@
 // #define PRINT_LOGITS_2
 // #define CPU_TIME
 // #define CPU_TIME_FP16
+// #define CPU_TIME_FP16_EVAL

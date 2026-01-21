@@ -1,6 +1,6 @@
 #include "../include/cpu_fp16_avx2_kernel.hpp"
 
-#if defined(__AVX2__) && defined(__FMA__)
+// #if defined(__AVX2__) && defined(__FMA__)
 static inline float add_reduce_mm_256(__m256 vec) {
     // Step 1: Split into two 128-bit halves
     __m128 low  = _mm256_castps256_ps128(vec);          // lower 128 bits
@@ -683,22 +683,24 @@ void lg_M_N_K_transpose(
     }
 }
 
-void lg_M_N_K(
+template <size_t TN, size_t TK>
+void lg_M_N_K_even_transpose(
     const float *__restrict mat_A,
     const half_cpu *__restrict mat_B,
     const half_cpu *__restrict mat_bias,
     float *__restrict mat_C,
     size_t M, size_t N, size_t K
 ) {
-    constexpr size_t TN = 128;
-    constexpr size_t TK = 32;
+    #ifdef CPU_TIME_FP16_EVAL
+        CPUTimer timer("linear");
+        printf("Shape of matmul transpose FP16: M=%zu, N=%zu, K=%zu, TN=%zu, TK=%zu\n", M, N, K, TN, TK);
+    #endif
 
     if (mat_bias) {
         // Step 1: Convert the bias chunk for this TN block ONCE
         float local_bias[N] __attribute__((aligned(32)));
 
-        size_t jb = 0;
-        for (; jb + 31 < N; jb += 32) {
+        for (size_t jb = 0; jb + 31 < N; jb += 32) {
             // 1. Load 4 chunks of 128-bit FP16 (8 elements each)
             __m128i v16_0 = _mm_loadu_si128((const __m128i*)(mat_bias + jb));
             __m128i v16_1 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 8));
@@ -712,13 +714,10 @@ void lg_M_N_K(
             __m256 v32_3 = _mm256_cvtph_ps(v16_3);
 
             // 3. Store (Use storeu unless local_bias is 32-byte aligned)
-            _mm256_storeu_ps(local_bias + jb,      v32_0);
-            _mm256_storeu_ps(local_bias + jb + 8,  v32_1);
-            _mm256_storeu_ps(local_bias + jb + 16, v32_2);
-            _mm256_storeu_ps(local_bias + jb + 24, v32_3);
-        }
-        for (; jb < N; ++jb) {
-            local_bias[jb] = static_cast<float>(mat_bias[jb]);
+            _mm256_store_ps(local_bias + jb,      v32_0);
+            _mm256_store_ps(local_bias + jb + 8,  v32_1);
+            _mm256_store_ps(local_bias + jb + 16, v32_2);
+            _mm256_store_ps(local_bias + jb + 24, v32_3);
         }
 
         // Step 2: Broadcast to all rows M
@@ -733,135 +732,141 @@ void lg_M_N_K(
     
     #pragma omp parallel
     {
-        // thread-private packed_B
-        alignas(32) float packed_B[TK * TN];
-        
-        for (size_t kk = 0; kk < K; kk += TK) {
-            size_t k_end = std::min(kk + TK, K);
-            size_t k_size = k_end - kk;
+        alignas(32) float packed_B[TN * TK];
 
-            for (size_t jj = 0; jj < N; jj += TN) {
-                size_t j_end = std::min(jj + TN, N);
-                size_t j_size = j_end - jj;
+        #pragma omp for schedule(static)
+        for (size_t jj = 0; jj < N; jj += TN) {
+            for (size_t kk = 0; kk < K; kk += TK) {
+                for (size_t j = 0; j < TN; ++j) {
+                    const half_cpu* b_ptr = &mat_B[(j + jj) * K + kk];
+                    float *packed_B_ptr = packed_B + j * TK;
 
-                for (size_t k = 0; k < k_size; ++k) {
-                    size_t j = 0;
-                    const half_cpu* b_ptr = &mat_B[(k + kk) * N + jj];
-                    float *packed_B_ptr = packed_B + k * TN;
+                    // Process 32 elements per iteration (4 * 8)
+                    for (size_t k = 0; k + 63 < TK; k += 64) {
+                        // Load 8 blocks of 128-bit (8 x fp16)
+                        __m128i v16_0 = _mm_loadu_si128((const __m128i*)(b_ptr + k));
+                        __m128i v16_1 = _mm_loadu_si128((const __m128i*)(b_ptr + k + 8));
+                        __m128i v16_2 = _mm_loadu_si128((const __m128i*)(b_ptr + k + 16));
+                        __m128i v16_3 = _mm_loadu_si128((const __m128i*)(b_ptr + k + 24));
+                        __m128i v16_4 = _mm_loadu_si128((const __m128i*)(b_ptr + k + 32));
+                        __m128i v16_5 = _mm_loadu_si128((const __m128i*)(b_ptr + k + 40));
+                        __m128i v16_6 = _mm_loadu_si128((const __m128i*)(b_ptr + k + 48));
+                        __m128i v16_7 = _mm_loadu_si128((const __m128i*)(b_ptr + k + 56));
 
-                    for (; j + 8 <= j_size; j += 8) {
-                        __m128i v16 = _mm_loadu_si128((const __m128i*)(b_ptr + j));
-                        __m256 v32 = _mm256_cvtph_ps(v16);
-                        _mm256_store_ps(packed_B_ptr + j, v32);
-                    }
-
-                    for (; j < j_size; ++j) {
-                        packed_B_ptr[j] = (float)b_ptr[j];
+                        // Store converted results (Aligned store is key here)
+                        _mm256_store_ps(packed_B_ptr + k,      _mm256_cvtph_ps(v16_0));
+                        _mm256_store_ps(packed_B_ptr + k + 8,  _mm256_cvtph_ps(v16_1));
+                        _mm256_store_ps(packed_B_ptr + k + 16, _mm256_cvtph_ps(v16_2));
+                        _mm256_store_ps(packed_B_ptr + k + 24, _mm256_cvtph_ps(v16_3));
+                        _mm256_store_ps(packed_B_ptr + k + 32, _mm256_cvtph_ps(v16_4));
+                        _mm256_store_ps(packed_B_ptr + k + 40, _mm256_cvtph_ps(v16_5));
+                        _mm256_store_ps(packed_B_ptr + k + 48, _mm256_cvtph_ps(v16_6));
+                        _mm256_store_ps(packed_B_ptr + k + 56, _mm256_cvtph_ps(v16_7));
                     }
                 }
 
-                #pragma omp for schedule(static)
-                for (size_t ii = 0; ii < M; ++ii) {
+                size_t ii = 0;
+                for (; ii <= M - 2; ii += 2) {
+                    const float *a0_ptr = mat_A + ii * K + kk;
+                    const float *a1_ptr = mat_A + (ii + 1) * K + kk;
+
+                    float *c0_ptr = mat_C + ii * N + jj;
+                    float *c1_ptr = mat_C + (ii+1) * N + jj;
+
+                    for (size_t j = 0; j + 4 <= TN; j += 4) {
+                        const float *packed_b0_ptr = packed_B + j * TK;
+                        const float *packed_b1_ptr = packed_B + (j+1) * TK;
+                        const float *packed_b2_ptr = packed_B + (j+2) * TK;
+                        const float *packed_b3_ptr = packed_B + (j+3) * TK;
+
+                        __m256 c00 = _mm256_setzero_ps();
+                        __m256 c01 = _mm256_setzero_ps();
+                        __m256 c02 = _mm256_setzero_ps();
+                        __m256 c03 = _mm256_setzero_ps();
+                        __m256 c10 = _mm256_setzero_ps();
+                        __m256 c11 = _mm256_setzero_ps();
+                        __m256 c12 = _mm256_setzero_ps();
+                        __m256 c13 = _mm256_setzero_ps();
+                        
+                        for (size_t k = 0; k + 8 <= TK; k += 8) {
+                            __m256 a0 = _mm256_loadu_ps(a0_ptr + k);
+                            __m256 a1 = _mm256_loadu_ps(a1_ptr + k);
+                            
+                            __m256 b0 = _mm256_load_ps(packed_b0_ptr + k);
+                            __m256 b1 = _mm256_load_ps(packed_b1_ptr + k);
+                            __m256 b2 = _mm256_load_ps(packed_b2_ptr + k);
+                            __m256 b3 = _mm256_load_ps(packed_b3_ptr + k);
+
+                            c00 = _mm256_fmadd_ps(a0, b0, c00);
+                            c01 = _mm256_fmadd_ps(a0, b1, c01);
+                            c02 = _mm256_fmadd_ps(a0, b2, c02);
+                            c03 = _mm256_fmadd_ps(a0, b3, c03);
+                            c10 = _mm256_fmadd_ps(a1, b0, c10);
+                            c11 = _mm256_fmadd_ps(a1, b1, c11);
+                            c12 = _mm256_fmadd_ps(a1, b2, c12);
+                            c13 = _mm256_fmadd_ps(a1, b3, c13);
+                        }
+
+                        c0_ptr[j] += add_reduce_mm_256(c00);
+                        c0_ptr[j + 1] += add_reduce_mm_256(c01);
+                        c0_ptr[j + 2] += add_reduce_mm_256(c02);
+                        c0_ptr[j + 3] += add_reduce_mm_256(c03);
+                        c1_ptr[j] += add_reduce_mm_256(c10);
+                        c1_ptr[j + 1] += add_reduce_mm_256(c11);
+                        c1_ptr[j + 2] += add_reduce_mm_256(c12);
+                        c1_ptr[j + 3] += add_reduce_mm_256(c13);
+                    }
+                }
+            
+                if (M - ii >= 1) {
                     const float *a0_ptr = mat_A + ii * K + kk;
                     float *c0_ptr = mat_C + ii * N + jj;
 
-                    size_t j_tile = 0;
-                    for (; j_tile + 48 <= j_size; j_tile += 48) {
-                        const float *pb_j = packed_B + j_tile;
+                    for (size_t j = 0; j + 4 <= TN; j += 4) {
+                        const float *packed_b0_ptr = packed_B + j * TK;
+                        const float *packed_b1_ptr = packed_B + (j+1) * TK;
+                        const float *packed_b2_ptr = packed_B + (j+2) * TK;
+                        const float *packed_b3_ptr = packed_B + (j+3) * TK;
+
+                        __m256 c00 = _mm256_setzero_ps();
+                        __m256 c10 = _mm256_setzero_ps();
+                        __m256 c20 = _mm256_setzero_ps();
+                        __m256 c30 = _mm256_setzero_ps();
                         
-                        __m256 c0 = _mm256_loadu_ps(c0_ptr + j_tile);
-                        __m256 c1 = _mm256_loadu_ps(c0_ptr + j_tile + 8);
-                        __m256 c2 = _mm256_loadu_ps(c0_ptr + j_tile + 16);
-                        __m256 c3 = _mm256_loadu_ps(c0_ptr + j_tile + 24);
-                        __m256 c4 = _mm256_loadu_ps(c0_ptr + j_tile + 32);
-                        __m256 c5 = _mm256_loadu_ps(c0_ptr + j_tile + 40);
+                        __m256 c01 = _mm256_setzero_ps();
+                        __m256 c11 = _mm256_setzero_ps();
+                        __m256 c21 = _mm256_setzero_ps();
+                        __m256 c31 = _mm256_setzero_ps();
 
-                        size_t k = 0;
-                        for (; k + 2 <= k_size; k += 2) {
-                            const float *pb0 = pb_j + k * TN;
-                            const float *pb1 = pb_j + (k+1) * TN;
-                            __m256 a0 = _mm256_set1_ps(a0_ptr[k]);
-                            __m256 a1 = _mm256_set1_ps(a0_ptr[k+1]);
+                        for (size_t k = 0; k + 16 <= TK; k += 16) {
+                            __m256 a0 = _mm256_loadu_ps(a0_ptr + k);
+                            __m256 a1 = _mm256_loadu_ps(a0_ptr + k + 8);
 
-                            c0 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0), c0);
-                            c1 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0 + 8), c1);
-                            c2 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0 + 16), c2);
-                            c3 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0 + 24), c3);
-                            c4 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0 + 32), c4);
-                            c5 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0 + 40), c5);
-                            c0 = _mm256_fmadd_ps(a1, _mm256_load_ps(pb1), c0);
-                            c1 = _mm256_fmadd_ps(a1, _mm256_load_ps(pb1 + 8), c1);
-                            c2 = _mm256_fmadd_ps(a1, _mm256_load_ps(pb1 + 16), c2);
-                            c3 = _mm256_fmadd_ps(a1, _mm256_load_ps(pb1 + 24), c3);
-                            c4 = _mm256_fmadd_ps(a1, _mm256_load_ps(pb1 + 32), c4);
-                            c5 = _mm256_fmadd_ps(a1, _mm256_load_ps(pb1 + 40), c5);
-                        }
+                            __m256 b0 = _mm256_load_ps(packed_b0_ptr + k);
+                            __m256 b1 = _mm256_load_ps(packed_b1_ptr + k);
+                            __m256 b2 = _mm256_load_ps(packed_b2_ptr + k);
+                            __m256 b3 = _mm256_load_ps(packed_b3_ptr + k);
 
-                        for (; k < k_size; ++k) {
-                            __m256 a0 = _mm256_set1_ps(a0_ptr[k]);
-                            const float *pb0 = packed_B + k * TN + j_tile;
+                            c00 = _mm256_fmadd_ps(a0, b0, c00);
+                            c10 = _mm256_fmadd_ps(a0, b1, c10);
+                            c20 = _mm256_fmadd_ps(a0, b2, c20);
+                            c30 = _mm256_fmadd_ps(a0, b3, c30);
 
-                            c0 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0), c0);
-                            c1 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0 + 8), c1);
-                            c2 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0 + 16), c2);
-                            c3 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0 + 24), c3);
-                            c4 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0 + 32), c4);
-                            c5 = _mm256_fmadd_ps(a0, _mm256_load_ps(pb0 + 40), c5);
+                            b0 = _mm256_load_ps(packed_b0_ptr + k + 8);
+                            b1 = _mm256_load_ps(packed_b1_ptr + k + 8);
+                            b2 = _mm256_load_ps(packed_b2_ptr + k + 8);
+                            b3 = _mm256_load_ps(packed_b3_ptr + k + 8);
+
+                            c01 = _mm256_fmadd_ps(a1, b0, c01);
+                            c11 = _mm256_fmadd_ps(a1, b1, c11);
+                            c21 = _mm256_fmadd_ps(a1, b2, c21);
+                            c31 = _mm256_fmadd_ps(a1, b3, c31);
                         }
                         
-                        _mm256_storeu_ps(c0_ptr + j_tile, c0);
-                        _mm256_storeu_ps(c0_ptr + j_tile + 8, c1);
-                        _mm256_storeu_ps(c0_ptr + j_tile + 16, c2);
-                        _mm256_storeu_ps(c0_ptr + j_tile + 24, c3);
-                        _mm256_storeu_ps(c0_ptr + j_tile + 32, c4);
-                        _mm256_storeu_ps(c0_ptr + j_tile + 40, c5);
-                    }
-
-                    for (; j_tile + 8 <= j_size; j_tile += 8) {
-                        const float *pb_j = packed_B + j_tile;
-                        
-                        __m256 c0 = _mm256_loadu_ps(c0_ptr + j_tile);
-                        __m256 c1 = _mm256_setzero_ps();
-                        __m256 c2 = _mm256_setzero_ps();
-                        __m256 c3 = _mm256_setzero_ps();
-
-                        size_t k = 0;
-                        for (; k + 4 <= k_size; k += 4) {
-                            __m256 b0 = _mm256_load_ps(pb_j + k * TN);
-                            __m256 b1 = _mm256_load_ps(pb_j + (k+1) * TN);
-                            __m256 b2 = _mm256_load_ps(pb_j + (k+2) * TN);
-                            __m256 b3 = _mm256_load_ps(pb_j + (k+3) * TN);
-                            __m256 a0 = _mm256_set1_ps(a0_ptr[k]);
-                            __m256 a1 = _mm256_set1_ps(a0_ptr[k+1]);
-                            __m256 a2 = _mm256_set1_ps(a0_ptr[k+2]);
-                            __m256 a3 = _mm256_set1_ps(a0_ptr[k+3]);
-
-                            c0 = _mm256_fmadd_ps(a0, b0, c0);
-                            c1 = _mm256_fmadd_ps(a1, b1, c1);
-                            c2 = _mm256_fmadd_ps(a2, b2, c2);
-                            c3 = _mm256_fmadd_ps(a3, b3, c3);
-                        }
-
-                        c2 = _mm256_add_ps(c2, c3);
-
-                        for (; k < k_size; ++k) {
-                            __m256 a0 = _mm256_set1_ps(a0_ptr[k]);
-                            const float *pb0 = packed_B + k * TN + j_tile;
-
-                            c0 = _mm256_fmadd_ps(a0, _mm256_loadu_ps(pb0), c0);
-                        }
-                        
-                        c0 = _mm256_add_ps(c0, c1);
-                        
-                        _mm256_storeu_ps(c0_ptr + j_tile, _mm256_add_ps(c0, c2));
-                    }
-
-                    for (; j_tile < j_size; ++j_tile) {
-                        float acc = c0_ptr[j_tile];
-                        for (size_t k = 0; k < k_size; ++k) {
-                            acc += a0_ptr[k] * packed_B[k * TN + j_tile];
-                        }
-                        c0_ptr[j_tile] = acc;
+                        c0_ptr[j] += add_reduce_mm_256(_mm256_add_ps(c00, c01));
+                        c0_ptr[j + 1] += add_reduce_mm_256(_mm256_add_ps(c10, c11));
+                        c0_ptr[j + 2] += add_reduce_mm_256(_mm256_add_ps(c20, c21));
+                        c0_ptr[j + 3] += add_reduce_mm_256(_mm256_add_ps(c30, c31));
                     }
                 }
             }
@@ -881,17 +886,21 @@ void fp16_avx2_kernel(
         printf("Shape of matmul FP16: M=%zu, N=%zu, K=%zu, bias=%d, B transpose=%d\n", M, N, K, (mat_bias != nullptr), mat_B_transpose);
     #endif
 
+    if (!mat_B_transpose) {
+        fp16_avx2_kernel_untranspose(mat_A, mat_B, mat_bias, mat_C, M, N, K);
+        return;
+    }
+
     if (K >= 1024 && N >= 1024 && mat_B_transpose) {
         if (M <= 64) {
             sm_M_lg_K_N_transpose(mat_A, mat_B, mat_bias, mat_C, M, N, K);
             return;
         } else {
-            lg_M_N_K_transpose(mat_A, mat_B, mat_bias, mat_C, M, N, K);
-            return;
-        }
-    } else {
-        if (M > 64) { 
-            lg_M_N_K(mat_A, mat_B, mat_bias, mat_C, M, N, K);
+            if (N % 32 == 0 && K % 64 == 0) {
+                lg_M_N_K_even_transpose<16, 256>(mat_A, mat_B, mat_bias, mat_C, M, N, K);
+            } else {
+                lg_M_N_K_transpose(mat_A, mat_B, mat_bias, mat_C, M, N, K);
+            }
             return;
         }
     }
@@ -942,4 +951,4 @@ void fp16_avx2_kernel(
         }
     }
 }
-#endif
+// #endif
