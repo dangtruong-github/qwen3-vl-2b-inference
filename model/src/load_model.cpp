@@ -362,7 +362,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
 
     state->vision_deep_stack = new Tensor({VDS, VNP_max, H});
 
-    state->vision_attn_scores = new Tensor({VNP_max, VNP_max});
+    state->vision_attn_scores = new Tensor({VNP_max});
 
     qwen_rope_precompute(
         state->cos_tensor, state->sin_tensor, config

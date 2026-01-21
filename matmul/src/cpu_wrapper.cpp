@@ -235,3 +235,26 @@ void linear(
     fprintf(stderr, "DType matmul not supported: type_b=%s, type_b_scale=%s\n", dtypeToStr(type_b), dtypeToStr(type_b_scale));
     exit(1);
 }
+
+void gemm_att(
+    const float *mat_A, const float *mat_B, float *mat_C,
+    const float scale, size_t N, size_t K, bool mat_B_transpose
+) {
+    #pragma omp parallel for schedule(static)
+    for (size_t n = 0; n < N; ++n) {
+        float sum = 0.0f;
+
+        for (size_t k = 0; k < K; ++k) {
+            if (!mat_B_transpose) {
+                // B: (K, N)
+                sum += mat_A[k] * mat_B[k * N + n];
+            } else {
+                // B: (N, K)
+                sum += mat_A[k] * mat_B[n * K + k];
+            }
+        }
+
+        sum *= scale;
+        mat_C[n] = sum;
+    }
+}

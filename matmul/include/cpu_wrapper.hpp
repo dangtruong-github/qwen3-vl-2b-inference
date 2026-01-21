@@ -14,3 +14,7 @@ void linear(
     const void *mat_bias_in, const void *mat_bias_scale,
     float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,DType::Type type_b, DType::Type type_b_scale, size_t group_size
 );
+void gemm_att(
+    const float *mat_A, const float *mat_B, float *mat_C,
+    const float scale, size_t N, size_t K, bool mat_B_transpose
+);

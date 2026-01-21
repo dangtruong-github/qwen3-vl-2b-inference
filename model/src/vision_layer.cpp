@@ -624,124 +624,202 @@ void tensor_transpose(
     Tensor *__restrict out_tensor,
     int D0, int D1, int D2
 ) {
-    const float *__restrict in = (const float *)in_tensor->ptr();
+    const float *__restrict in  = (const float *)in_tensor->ptr();
     float *__restrict out = (float *)out_tensor->ptr();
 
-    const int in_stride_0 = D1 * D2;
+    const int in_stride_0  = D1 * D2;
     const int out_stride_1 = D0 * D2;
-    
-    // Size in bytes for the contiguous D2 block
-    const size_t block_size = D2 * sizeof(float);
+    const size_t block_size = (size_t)D2 * sizeof(float);
 
-    #pragma omp parallel for collapse(2) schedule(static)
-    for (int i = 0; i < D0; ++i) {
-        for (int j = 0; j < D1; ++j) {
-            // Source: start of D2 block at (i, j)
-            const float *src = &in[(i * in_stride_0) + (j * D2)];
-            
-            // Destination: start of D2 block at (j, i)
-            float *dst = &out[(j * out_stride_1) + (i * D2)];
-            memcpy(dst, src, block_size);
+    // Tile sizes (tuneable)
+    // Rule of thumb: Ti * Tj * D2 * sizeof(float) ~ L1 or L2 size
+    const int Ti = 16;
+    const int Tj = 16;
+
+    #pragma omp parallel for schedule(static)
+    for (int ii = 0; ii < D0; ii += Ti) {
+        for (int jj = 0; jj < D1; jj += Tj) {
+
+            const int i_end = (ii + Ti < D0) ? ii + Ti : D0;
+            const int j_end = (jj + Tj < D1) ? jj + Tj : D1;
+
+            for (int i = ii; i < i_end; ++i) {
+                const float *in_i = in + i * in_stride_0;
+                for (int j = jj; j < j_end; ++j) {
+
+                    const float *src = in_i + j * D2;
+                    float *dst = out + (j * out_stride_1) + (i * D2);
+
+                    memcpy(dst, src, block_size);
+                }
+            }
         }
     }
 }
 
+void tensor_transpose_2(
+    const Tensor *__restrict in_tensor,
+    Tensor *__restrict out_tensor,
+    int D0, int D1, int D2
+) {
+    // (D0, D1, D2) -> (D1, D2, D0)
+    const float *__restrict in  = (const float *)in_tensor->ptr();
+    float *__restrict out = (float *)out_tensor->ptr();
+
+    const int in_s0  = D1 * D2;   // stride for D0
+    const int in_s1  = D2;        // stride for D1
+    const int out_s0 = D2 * D0;   // stride for D1
+    const int out_s1 = D0;        // stride for D2
+
+    // Tune this for cache (typically 16–64)
+    const int TILE_D2 = 32;
+
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (int j = 0; j < D1; ++j) {
+        for (int k0 = 0; k0 < D2; k0 += TILE_D2) {
+            int k_max = (k0 + TILE_D2 < D2) ? k0 + TILE_D2 : D2;
+
+            for (int k = k0; k < k_max; ++k) {
+                const float *__restrict src =
+                    in + j * in_s1 + k;
+
+                float *__restrict dst =
+                    out + j * out_s0 + k * out_s1;
+
+                // dst is contiguous over D0
+                #pragma omp simd
+                for (int i = 0; i < D0; ++i) {
+                    dst[i] = src[i * in_s0];
+                }
+            }
+        }
+    }
+}
+
+static inline float avx2_max(const float *arr, size_t N) {
+    size_t i = 0;
+
+    // Initialize vector accumulator with -inf
+    __m256 vmax = _mm256_set1_ps(-FLT_MAX);
+
+    // Process 8 floats at a time
+    for (; i + 7 < N; i += 8) {
+        __m256 v = _mm256_loadu_ps(arr + i);
+        vmax = _mm256_max_ps(vmax, v);
+    }
+
+    // Horizontal reduction of vmax
+    __m128 low  = _mm256_castps256_ps128(vmax);
+    __m128 high = _mm256_extractf128_ps(vmax, 1);
+    __m128 vmax128 = _mm_max_ps(low, high);
+
+    vmax128 = _mm_max_ps(vmax128, _mm_movehl_ps(vmax128, vmax128));
+    vmax128 = _mm_max_ps(vmax128, _mm_shuffle_ps(vmax128, vmax128, 0x55));
+
+    float max_val = _mm_cvtss_f32(vmax128);
+
+    // Handle remaining elements
+    for (; i < N; i++) {
+        if (arr[i] > max_val) {
+            max_val = arr[i];
+        }
+    }
+
+    return max_val;
+}
+
+static inline __m256 exp256_ps(__m256 x) {
+    // Clamp
+    const __m256 max_x = _mm256_set1_ps(88.3762626647949f);
+    const __m256 min_x = _mm256_set1_ps(-88.3762626647949f);
+    x = _mm256_min_ps(x, max_x);
+    x = _mm256_max_ps(x, min_x);
+
+    // Constants
+    const __m256 ln2      = _mm256_set1_ps(0.69314718056f);
+    const __m256 inv_ln2  = _mm256_set1_ps(1.44269504089f);
+
+    // n = floor(x / ln2)
+    __m256 fx = _mm256_mul_ps(x, inv_ln2);
+    fx = _mm256_floor_ps(fx);
+
+    __m256i emm0 = _mm256_cvttps_epi32(fx);
+
+    // g = x - n * ln2
+    __m256 g = _mm256_fnmadd_ps(fx, ln2, x);
+
+    // Polynomial approximation of exp(g)
+    // exp(g) ≈ 1 + g + g²/2 + g³/6 + g⁴/24
+    __m256 y = _mm256_set1_ps(1.0f);
+    y = _mm256_fmadd_ps(g, y, _mm256_set1_ps(1.0f));
+
+    __m256 g2 = _mm256_mul_ps(g, g);
+    y = _mm256_fmadd_ps(g2, _mm256_set1_ps(0.5f), y);
+
+    __m256 g3 = _mm256_mul_ps(g2, g);
+    y = _mm256_fmadd_ps(g3, _mm256_set1_ps(1.0f / 6.0f), y);
+
+    __m256 g4 = _mm256_mul_ps(g3, g);
+    y = _mm256_fmadd_ps(g4, _mm256_set1_ps(1.0f / 24.0f), y);
+
+    // Build 2^n
+    emm0 = _mm256_add_epi32(emm0, _mm256_set1_epi32(127));
+    emm0 = _mm256_slli_epi32(emm0, 23);
+    __m256 pow2n = _mm256_castsi256_ps(emm0);
+
+    return _mm256_mul_ps(y, pow2n);
+}
+
+static inline float avx2_sum_exp_max(float *arr, size_t T, float max_score) {
+    __m256 vsum = _mm256_setzero_ps();
+    __m256 vmax = _mm256_set1_ps(max_score);
+
+    int j = 0;
+    for (; j + 7 < T; j += 8) {
+        __m256 v = _mm256_loadu_ps(arr + j);
+        v = _mm256_sub_ps(v, vmax);
+        v = exp256_ps(v);
+        _mm256_storeu_ps(arr + j, v);
+        vsum = _mm256_add_ps(vsum, v);
+    }
+
+    __m128 lo = _mm256_castps256_ps128(vsum);
+    __m128 hi = _mm256_extractf128_ps(vsum, 1);
+    __m128 s  = _mm_add_ps(lo, hi);
+
+    s = _mm_hadd_ps(s, s);
+    s = _mm_hadd_ps(s, s);
+
+    float sum = _mm_cvtss_f32(s);
+
+    for (; j < T; j++) {
+        arr[j] = expf(arr[j] - max_score);
+        sum += arr[j];
+    }
+
+    return sum;
+}
+
 void vision_att(
-    const float *q, const float *k, const float *v, float *attn_scores,
-    float *out, int num_heads, int total_tokens, int head_dim, float scale
-) {    
-    // 1. Allocate memory for attention scores (attn_weight)
-    // Size needed is (total_tokens * total_tokens) for a single head.
-    // We will reuse this buffer for every head to save memory.
-    size_t score_size = (size_t)total_tokens * total_tokens;
-    __m256 v_scale = _mm256_set1_ps(scale);
-    
-    // Strides to move pointers to the next head
-    size_t head_stride = (size_t)total_tokens * head_dim;
+    const float *q, const float *k, const float *v, float *attn_scores, 
+    float *out, int num_heads, int T, int D, float scale, bool v_trans
+) {
+    size_t head_stride = (size_t)T * D;
 
-    // Loop over each head
     for (int h = 0; h < num_heads; h++) {
-        // Calculate pointers for the current head
-        const float *curr_q = q + (h * head_stride);
-        const float *curr_k = k + (h * head_stride);
-        const float *curr_v = v + (h * head_stride);
-        float *curr_out = out + (h * head_stride);
+        const float *qh = q + h * head_stride;
+        const float *kh = k + h * head_stride;
+        const float *vh = v + h * head_stride;
+        float *oh = out + h * head_stride;
 
-        // ---------------------------------------------------------
-        // Step 1: Query x Key^T
-        // Q shape: [total_tokens, head_dim]
-        // K shape: [total_tokens, head_dim] (transposed logic handled by linear)
-        // Result:  [total_tokens, total_tokens]
-        // M = total_tokens, N = total_tokens, K = head_dim
-        // ---------------------------------------------------------
+        for (int i = 0; i < T; i++) {
+            const float *qi = qh + i * D;
 
-        linear(
-            curr_q, curr_k, nullptr, nullptr, nullptr,
-            attn_scores, total_tokens, total_tokens, head_dim,
-            true, DType::FP32, DType::FP32, 0
-        );
-
-        // ---------------------------------------------------------
-        // Step 2: Scale Factor and Bias
-        // Python: attn_weight = ... * scale_factor + attn_bias
-        // Note: attn_bias is zeros in the python sample, so we skip adding it.
-        // We iterate manually as 'linear' does not support scalar multiplication.
-        // ---------------------------------------------------------
-        size_t i = 0;
-        // Unroll by 4: Process 32 floats per iteration
-        // (4 registers * 8 floats per register)
-        for (; i + 31 < score_size; i += 32) {
-            // Load 4 blocks of 8 floats
-            __m256 v0 = _mm256_loadu_ps(&attn_scores[i]);
-            __m256 v1 = _mm256_loadu_ps(&attn_scores[i + 8]);
-            __m256 v2 = _mm256_loadu_ps(&attn_scores[i + 16]);
-            __m256 v3 = _mm256_loadu_ps(&attn_scores[i + 24]);
-
-            // Multiply all 4 blocks independently
-            v0 = _mm256_mul_ps(v0, v_scale);
-            v1 = _mm256_mul_ps(v1, v_scale);
-            v2 = _mm256_mul_ps(v2, v_scale);
-            v3 = _mm256_mul_ps(v3, v_scale);
-
-            // Store all 4 blocks back
-            _mm256_storeu_ps(&attn_scores[i],      v0);
-            _mm256_storeu_ps(&attn_scores[i + 8],  v1);
-            _mm256_storeu_ps(&attn_scores[i + 16], v2);
-            _mm256_storeu_ps(&attn_scores[i + 24], v3);
+            gemm_att(qi, kh, attn_scores, scale, T, D, true);
+            float max_score = avx2_max(attn_scores, T);
+            float sum = avx2_sum_exp_max(attn_scores, T, max_score);
+            gemm_att(attn_scores, vh, oh + i * D, 1.0f / sum, D, T, v_trans);
         }
-
-        // Cleanup: handle remaining elements in steps of 8
-        for (; i + 7 < score_size; i += 8) {
-            __m256 v = _mm256_loadu_ps(&attn_scores[i]);
-            v = _mm256_mul_ps(v, v_scale);
-            _mm256_storeu_ps(&attn_scores[i], v);
-        }
-
-        // Final cleanup: handle remaining elements < 8
-        for (; i < score_size; i++) {
-            attn_scores[i] *= scale;
-        }
-
-        // ---------------------------------------------------------
-        // Step 3: Softmax
-        // Applied along the last dimension (rows of the score matrix)
-        // ---------------------------------------------------------
-        for (int row = 0; row < total_tokens; row++) {
-            softmax(attn_scores + (row * total_tokens), total_tokens);
-        }
-
-        // ---------------------------------------------------------
-        // Step 4: Attn_Weights x Value
-        // Weights shape: [total_tokens, total_tokens]
-        // V shape:       [total_tokens, head_dim]
-        // Result:        [total_tokens, head_dim] -> written to curr_out
-        // M = total_tokens, N = head_dim, K = total_tokens
-        // ---------------------------------------------------------
-        linear(
-            attn_scores, curr_v, nullptr, nullptr, NULL, 
-            curr_out, total_tokens, head_dim,
-            total_tokens, false, DType::FP32, DType::FP32, 0
-        );
     }
 }
 
