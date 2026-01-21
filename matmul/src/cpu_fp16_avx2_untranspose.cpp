@@ -1,6 +1,6 @@
 #include "../include/cpu_fp16_avx2_untranspose.hpp"
 
-// #if defined(__AVX2__) && defined(__FMA__)
+#if defined(__AVX2__) && defined(__FMA__)
 static inline float add_reduce_mm_256(__m256 vec) {
     // Step 1: Split into two 128-bit halves
     __m128 low  = _mm256_castps256_ps128(vec);          // lower 128 bits
@@ -449,14 +449,15 @@ void lg_M_N_K_even_tn16_tm4(
                     __m128i v1 = _mm_loadu_si128((const __m128i*)(b_ptr + 8));
 
                     // Convert and Store (256-bit each)
-                    _mm256_storeu_ps(packed_B_ptr + 0, _mm256_cvtph_ps(v0));
-                    _mm256_storeu_ps(packed_B_ptr + 8, _mm256_cvtph_ps(v1));
+                    _mm256_store_ps(packed_B_ptr + 0, _mm256_cvtph_ps(v0));
+                    _mm256_store_ps(packed_B_ptr + 8, _mm256_cvtph_ps(v1));
                 }
 
                 const float *pb0_j = packed_B;
                 const float *pb1_j = packed_B + 8;
 
                 size_t ii = 0;
+            /*
                 for (; ii + 4 <= M; ii += 4) {
                     const float *a0_ptr = mat_A + ii * K + kk;
                     const float *a1_ptr = mat_A + (ii + 1) * K + kk;
@@ -572,7 +573,7 @@ void lg_M_N_K_even_tn16_tm4(
 
                     ii += 2;
                 }
-
+            */
                 for (; ii < M; ++ii) {
                     const float *a0_ptr = mat_A + ii * K + kk;
                     float *c0_ptr = mat_C + ii * N + jj;
@@ -692,7 +693,7 @@ void lg_M_N_K_even_tn8_tm4(
                     __m128i v0 = _mm_loadu_si128((const __m128i*)(b_ptr + 0));
 
                     // Convert and Store (256-bit each)
-                    _mm256_storeu_ps(packed_B_ptr + 0, _mm256_cvtph_ps(v0));
+                    _mm256_store_ps(packed_B_ptr + 0, _mm256_cvtph_ps(v0));
                 }
 
                 size_t ii = 0;
@@ -870,4 +871,4 @@ void fp16_avx2_kernel_untranspose(
     }
 }
 
-// #endif
+#endif

@@ -690,7 +690,7 @@ void sm_M_lg_N_K_transpose(
             float sum3 = add_reduce_mm_256(c3);
 
             // Handle leftover elements (< 32)
-            for (; k < K; ++K) {
+            for (; k < K; ++k) {
                 const float a = mat_A_ptr[k];
                 sum0 += a * b0_ptr[k];
                 sum1 += a * b1_ptr[k];
