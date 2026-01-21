@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <immintrin.h>
+#include <math.h>
 #include "../../matmul/module.hpp"
 #include "../../utils/module.hpp"
 

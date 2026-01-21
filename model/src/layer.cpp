@@ -336,6 +336,8 @@ static inline __m256 exp256_ps(__m256 x) {
 }
 
 void softmax(float *__restrict x, size_t n) {
+    if (n == 0) return;
+
     size_t i = 0;
 
     // -------------------------
@@ -352,9 +354,20 @@ void softmax(float *__restrict x, size_t n) {
     _mm256_store_ps(tmp, vmax);
 
     float max_val = tmp[0];
-    for (int k = 1; k < 8; k++) max_val = fmaxf(max_val, tmp[k]);
+    for (int k = 1; k < 8; k++) {
+        max_val = fmaxf(max_val, tmp[k]);
+    }
 
-    for (; i < n; i++) max_val = fmaxf(max_val, x[i]);
+    for (; i < n; i++) {
+        max_val = fmaxf(max_val, x[i]);
+    }
+
+    // ---------- ATTENTION SAFETY ----------
+    // All values are -INF or NaN
+    if (!isfinite(max_val)) {
+        memset(x, 0, n * sizeof(float));
+        return;
+    }
 
     // -------------------------
     // 2. exp(x - max) + sum
@@ -365,28 +378,49 @@ void softmax(float *__restrict x, size_t n) {
     i = 0;
     for (; i + 8 <= n; i += 8) {
         __m256 v = _mm256_loadu_ps(x + i);
+
+        // Mask out -INF lanes BEFORE subtraction
+        __m256 mask = _mm256_cmp_ps(v, _mm256_set1_ps(-INFINITY), _CMP_GT_OQ);
+
         v = _mm256_sub_ps(v, v_max);
         v = exp256_ps(v);
+
+        // Zero masked lanes
+        v = _mm256_and_ps(v, mask);
+
         _mm256_storeu_ps(x + i, v);
         vsum = _mm256_add_ps(vsum, v);
     }
 
     _mm256_store_ps(tmp, vsum);
-    float sum = tmp[0];
-    for (int k = 1; k < 8; k++) sum += tmp[k];
+    double sum = 0.0;
+    for (int k = 0; k < 8; k++) {
+        sum += tmp[k];
+    }
 
     for (; i < n; i++) {
-        float t = x[i] - max_val;
-        // scalar fallback using same approx
+        float xi = x[i];
+        if (xi == -INFINITY) {
+            x[i] = 0.0f;
+            continue;
+        }
+
+        float t = xi - max_val;
         __m256 v = exp256_ps(_mm256_set1_ps(t));
         _mm_store_ss(&x[i], _mm256_castps256_ps128(v));
         sum += x[i];
     }
 
+    // ---------- ATTENTION SAFETY ----------
+    if (!(sum > 0.0) || !isfinite(sum)) {
+        memset(x, 0, n * sizeof(float));
+        return;
+    }
+
     // -------------------------
     // 3. normalize
     // -------------------------
-    float inv_sum = 1.0f / sum;
+    float inv_sum = (float)(1.0 / sum);
     __m256 v_inv_sum = _mm256_set1_ps(inv_sum);
 
     i = 0;
@@ -396,7 +430,9 @@ void softmax(float *__restrict x, size_t n) {
         _mm256_storeu_ps(x + i, v);
     }
 
-    for (; i < n; i++) x[i] *= inv_sum;
+    for (; i < n; i++) {
+        x[i] *= inv_sum;
+    }
 }
 #else
 void softmax(float *__restrict x, size_t n) {

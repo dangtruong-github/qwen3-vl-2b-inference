@@ -360,7 +360,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     
     state->vision_mlp_out = new Tensor({VNP_max, VI});
 
-    state->vision_deep_stack = new Tensor({VDS, VNP, H});
+    state->vision_deep_stack = new Tensor({VDS, VNP_max, H});
 
     state->vision_attn_scores = new Tensor({VNP_max, VNP_max});
 

@@ -210,40 +210,29 @@ void lg_M_N_K_even_tn32(
     alignas(32) float local_bias[N];
     
     if (mat_bias) {
-        // Step 1: Convert the bias chunk for this TN block ONCE
-
         size_t jb = 0;
         for (; jb + 31 < N; jb += 32) {
-            // 1. Load 4 chunks of 128-bit FP16 (8 elements each)
             __m128i v16_0 = _mm_loadu_si128((const __m128i*)(mat_bias + jb));
             __m128i v16_1 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 8));
             __m128i v16_2 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 16));
             __m128i v16_3 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 24));
 
-            // 2. Convert to FP32 vectors
             __m256 v32_0 = _mm256_cvtph_ps(v16_0);
             __m256 v32_1 = _mm256_cvtph_ps(v16_1);
             __m256 v32_2 = _mm256_cvtph_ps(v16_2);
             __m256 v32_3 = _mm256_cvtph_ps(v16_3);
 
-            // 3. Store (Use storeu unless local_bias is 32-byte aligned)
             _mm256_store_ps(local_bias + jb,      v32_0);
             _mm256_store_ps(local_bias + jb + 8,  v32_1);
             _mm256_store_ps(local_bias + jb + 16, v32_2);
             _mm256_store_ps(local_bias + jb + 24, v32_3);
         }
-        /*
-        for (; jb < N; ++jb) {
-            local_bias[jb] = static_cast<float>(mat_bias[jb]);
-        }
-        */
     } else {
         memset(local_bias, 0, N * sizeof(float));
     }
     
     #pragma omp parallel
     {
-        // thread-private packed_B
         alignas(32) float packed_B[TK * TN];
         
         for (size_t kk = 0; kk < K; kk += TK) {
@@ -398,33 +387,23 @@ void lg_M_N_K_even_tn16_tm4(
     alignas(32) float local_bias[N];
     
     if (mat_bias) {
-        // Step 1: Convert the bias chunk for this TN block ONCE
-
         size_t jb = 0;
         for (; jb + 31 < N; jb += 32) {
-            // 1. Load 4 chunks of 128-bit FP16 (8 elements each)
             __m128i v16_0 = _mm_loadu_si128((const __m128i*)(mat_bias + jb));
             __m128i v16_1 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 8));
             __m128i v16_2 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 16));
             __m128i v16_3 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 24));
 
-            // 2. Convert to FP32 vectors
             __m256 v32_0 = _mm256_cvtph_ps(v16_0);
             __m256 v32_1 = _mm256_cvtph_ps(v16_1);
             __m256 v32_2 = _mm256_cvtph_ps(v16_2);
             __m256 v32_3 = _mm256_cvtph_ps(v16_3);
 
-            // 3. Store (Use storeu unless local_bias is 32-byte aligned)
             _mm256_store_ps(local_bias + jb,      v32_0);
             _mm256_store_ps(local_bias + jb + 8,  v32_1);
             _mm256_store_ps(local_bias + jb + 16, v32_2);
             _mm256_store_ps(local_bias + jb + 24, v32_3);
         }
-        /*
-        for (; jb < N; ++jb) {
-            local_bias[jb] = static_cast<float>(mat_bias[jb]);
-        }
-        */
     } else {
         memset(local_bias, 0, N * sizeof(float));
     }
@@ -457,7 +436,6 @@ void lg_M_N_K_even_tn16_tm4(
                 const float *pb1_j = packed_B + 8;
 
                 size_t ii = 0;
-            /*
                 for (; ii + 4 <= M; ii += 4) {
                     const float *a0_ptr = mat_A + ii * K + kk;
                     const float *a1_ptr = mat_A + (ii + 1) * K + kk;
@@ -573,8 +551,8 @@ void lg_M_N_K_even_tn16_tm4(
 
                     ii += 2;
                 }
-            */
-                for (; ii < M; ++ii) {
+
+                if (M > ii) {
                     const float *a0_ptr = mat_A + ii * K + kk;
                     float *c0_ptr = mat_C + ii * N + jj;
                     
@@ -643,33 +621,23 @@ void lg_M_N_K_even_tn8_tm4(
     alignas(32) float local_bias[N];
     
     if (mat_bias) {
-        // Step 1: Convert the bias chunk for this TN block ONCE
-
         size_t jb = 0;
         for (; jb + 31 < N; jb += 32) {
-            // 1. Load 4 chunks of 128-bit FP16 (8 elements each)
             __m128i v16_0 = _mm_loadu_si128((const __m128i*)(mat_bias + jb));
             __m128i v16_1 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 8));
             __m128i v16_2 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 16));
             __m128i v16_3 = _mm_loadu_si128((const __m128i*)(mat_bias + jb + 24));
 
-            // 2. Convert to FP32 vectors
             __m256 v32_0 = _mm256_cvtph_ps(v16_0);
             __m256 v32_1 = _mm256_cvtph_ps(v16_1);
             __m256 v32_2 = _mm256_cvtph_ps(v16_2);
             __m256 v32_3 = _mm256_cvtph_ps(v16_3);
 
-            // 3. Store (Use storeu unless local_bias is 32-byte aligned)
             _mm256_store_ps(local_bias + jb,      v32_0);
             _mm256_store_ps(local_bias + jb + 8,  v32_1);
             _mm256_store_ps(local_bias + jb + 16, v32_2);
             _mm256_store_ps(local_bias + jb + 24, v32_3);
         }
-        /*
-        for (; jb < N; ++jb) {
-            local_bias[jb] = static_cast<float>(mat_bias[jb]);
-        }
-        */
     } else {
         memset(local_bias, 0, N * sizeof(float));
     }
@@ -870,5 +838,4 @@ void fp16_avx2_kernel_untranspose(
         }
     }
 }
-
 #endif
