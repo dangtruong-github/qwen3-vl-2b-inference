@@ -11,9 +11,11 @@
 #include "cpu_att_fp32_full_avx2.hpp"
 
 void linear(
-    const float *mat_A, const void *mat_B_in, const void *mat_B_scale,
+    const void *mat_A, const void *mat_B_in, const void *mat_B_scale,
     const void *mat_bias_in, const void *mat_bias_scale,
-    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,DType::Type type_b, DType::Type type_b_scale, size_t group_size
+    void *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,
+    DType::Type type_a, DType::Type type_b, DType::Type type_b_scale,
+    DType::Type type_c, size_t group_size
 );
 void gemm_att(
     const float *mat_A, const float *mat_B, float *mat_C,

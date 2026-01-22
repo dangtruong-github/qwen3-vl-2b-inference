@@ -197,42 +197,51 @@ void linear_f32a_i8f32sb_f32c(
 }
 
 void linear(
-    const float *mat_A, const void *mat_B_in, const void *mat_B_scale,
+    const void *mat_A, const void *mat_B_in, const void *mat_B_scale,
     const void *mat_bias_in, const void *mat_bias_scale,
-    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,DType::Type type_b, DType::Type type_b_scale, size_t group_size
+    void *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,
+    DType::Type type_a, DType::Type type_b, DType::Type type_b_scale,
+    DType::Type type_c, size_t group_size
 ) {
     #ifdef CPU_TIME
         CPUTimer timer("linear");
         printf("Shape of matmul w/ precision %s: M=%zu, N=%zu, K=%zu, bias=%d, B transpose=%d\n", dtypeToStr(type_b), M, N, K, (mat_bias_in != nullptr), mat_B_transpose);
     #endif
 
-    if (type_b == DType::FP16) {
-        linear_f32a_f16b_f32c(
-            mat_A,
-            static_cast<const half_cpu*>(mat_B_in), 
-            static_cast<const half_cpu*>(mat_bias_in),
-            mat_C, M, N, K, mat_B_transpose 
-        );
-        return;
-    } else if (type_b == DType::FP32) {
-        linear_fp32_full(
-            mat_A, (const float *)mat_B_in, (const float *)mat_bias_in,
-            mat_C, M, N, K, mat_B_transpose
-        );
-        return;
-    } else if (type_b == DType::INT8 && type_b_scale == DType::FP32)  {
-        linear_f32a_i8f32sb_f32c(
-            mat_A,
-            static_cast<const int8_t*>(mat_B_in),
-            static_cast<const float*>(mat_B_scale),
-            static_cast<const int8_t*>(mat_bias_in),
-            static_cast<const float*>(mat_bias_scale),
-            mat_C, M, N, K, mat_B_transpose, group_size
-        );
-        return;
+    if (type_a == DType::FP32 && type_c == DType::FP32) {
+        if (type_b == DType::FP16) {
+            linear_f32a_f16b_f32c(
+                static_cast<const float*>(mat_A),
+                static_cast<const half_cpu*>(mat_B_in), 
+                static_cast<const half_cpu*>(mat_bias_in),
+                static_cast<float*>(mat_C),
+                M, N, K, mat_B_transpose 
+            );
+            return;
+        } else if (type_b == DType::FP32) {
+            linear_fp32_full(
+                static_cast<const float*>(mat_A),
+                static_cast<const float*>(mat_B_in),
+                static_cast<const float*>(mat_bias_in),
+                static_cast<float*>(mat_C),
+                M, N, K, mat_B_transpose
+            );
+            return;
+        } else if (type_b == DType::INT8 && type_b_scale == DType::FP32)  {
+            linear_f32a_i8f32sb_f32c(
+                static_cast<const float*>(mat_A),
+                static_cast<const int8_t*>(mat_B_in),
+                static_cast<const float*>(mat_B_scale),
+                static_cast<const int8_t*>(mat_bias_in),
+                static_cast<const float*>(mat_bias_scale),
+                static_cast<float*>(mat_C),
+                M, N, K, mat_B_transpose, group_size
+            );
+            return;
+        }
     }
 
-    fprintf(stderr, "DType matmul not supported: type_b=%s, type_b_scale=%s\n", dtypeToStr(type_b), dtypeToStr(type_b_scale));
+    fprintf(stderr, "DType matmul not supported: type_a=%s, type_b=%s, type_b_scale=%s, type_c=%s\n", dtypeToStr(type_a), dtypeToStr(type_b), dtypeToStr(type_b_scale), dtypeToStr(type_c));
     exit(1);
 }
 
