@@ -1,4 +1,4 @@
-#include "../include/cpu_int8_fp32s_avx2_kernel.hpp"
+#include "../include/cpu_f32a_i8f32sb_f32c_avx2.hpp"
 
 #if defined(__AVX2__) && defined(__FMA__)
 static inline float add_reduce_m256(__m256 vec) {
@@ -673,7 +673,7 @@ void linear_int8_fp32s_int32acc_transpose(
     }
 }
 
-void linear_int8_fp32s_avx2_kernel(
+void f32a_i8f32sb_f32c_avx2_kernel(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,

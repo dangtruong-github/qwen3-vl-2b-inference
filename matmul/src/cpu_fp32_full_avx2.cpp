@@ -1,4 +1,4 @@
-#include "../include/cpu_fp32_avx2_kernel.hpp"
+#include "../include/cpu_fp32_full_avx2.hpp"
 
 #if defined(__AVX2__) && defined(__FMA__)
 static inline float add_reduce_mm_256(__m256 vec) {
@@ -1029,7 +1029,7 @@ void linear_normal(
     }
 }
 
-void fp32_avx2_kernel(
+void fp32_full_avx2_kernel(
     const float *mat_A, const float *mat_B, const float *mat_bias,
     float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 ) {

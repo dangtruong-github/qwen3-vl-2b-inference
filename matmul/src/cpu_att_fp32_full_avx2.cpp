@@ -1,4 +1,4 @@
-#include "../include/cpu_gemm_att.hpp"
+#include "../include/cpu_att_fp32_full_avx2.hpp"
 
 // #if defined(__AVX2__) && defined(__FMA__)
 void gemm_att_transpose_k64(
@@ -126,7 +126,7 @@ void gemm_att_n64(
                          _mm256_mul_ps(acc[i], vscale));
 }
 
-void fp32_gemm_att_avx2_kernel(
+void att_fp32_full_avx2_kernel(
     const float *mat_A, const float *mat_B, float *mat_C,
     const float scale, size_t N, size_t K, bool mat_B_transpose
 ) {

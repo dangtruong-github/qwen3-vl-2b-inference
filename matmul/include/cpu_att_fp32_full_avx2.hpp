@@ -7,8 +7,8 @@
 #include "../../utils/module.hpp"
 
 #if defined(__AVX2__) && defined(__FMA__)
-void fp32_avx2_kernel(
-    const float *mat_A, const float *mat_B, const float *mat_bias,
-    float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
+void att_fp32_full_avx2_kernel(
+    const float *mat_A, const float *mat_B, float *mat_C,
+    const float scale, size_t N, size_t K, bool mat_B_transpose
 );
 #endif

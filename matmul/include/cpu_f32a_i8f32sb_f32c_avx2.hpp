@@ -9,7 +9,7 @@
 #define VERY_LARGE_N 65536
 
 #if defined(__AVX2__) && defined(__FMA__)
-void linear_int8_fp32s_avx2_kernel(
+void f32a_i8f32sb_f32c_avx2_kernel(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,

@@ -1,6 +1,6 @@
 #include "../include/cpu_wrapper.hpp"
 
-void linear_fp16(
+void linear_f32a_f16b_f32c(
     const float *mat_A /* fp32 */, 
     const half_cpu *mat_B /* fp16 */, 
     const half_cpu *mat_bias /* fp16 */,
@@ -10,9 +10,9 @@ void linear_fp16(
 ) {
     #if defined(__AVX512F__) && defined(__AVX512DQ__)
         // Must implement AVX512
-        fp16_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
+        f32a_f16b_f32c_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
     #elif defined(__AVX2__) && defined(__FMA__)
-        fp16_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
+        f32a_f16b_f32c_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
     #else
         // 1. Initialize mat_C with fp16 bias (expanded to fp32) or zeros
         #pragma omp parallel for collapse(2)
@@ -62,15 +62,15 @@ void linear_fp16(
     #endif
 }
 
-void linear_fp32(
+void linear_fp32_full(
     const float *mat_A, const float *mat_B, const float *mat_bias,
     float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 ) {
     #if defined(__AVX512F__) && defined(__AVX512DQ__)
         // Must implement AVX512
-        fp32_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
+        fp32_full_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
     #elif defined(__AVX2__) && defined(__FMA__)
-        fp32_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
+        fp32_full_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
     #else
         if (mat_bias != nullptr) {
             #pragma omp parallel for
@@ -124,7 +124,7 @@ void linear_fp32(
     #endif
 }
 
-void linear_int8_fp32s(
+void linear_f32a_i8f32sb_f32c(
     const float* mat_A,          // [M, K] FP32
     const int8_t* mat_B_in,      // [N, K] or [K, N] INT8
     const float* mat_B_scales,   // groupwise scales over linear B storage
@@ -139,12 +139,12 @@ void linear_int8_fp32s(
 ) {
     #if defined(__AVX512F__) && defined(__AVX512DQ__)
         // Must implement AVX512
-        linear_int8_fp32s_avx2_kernel(
+        f32a_i8f32sb_f32c_avx2_kernel(
             mat_A, mat_B_in, mat_B_scales, mat_bias_in, mat_bias_scale,
             mat_C, M, N, K, mat_B_transpose, group_size
         );
     #elif defined(__AVX2__) && defined(__FMA__)
-        linear_int8_fp32s_avx2_kernel(
+        f32a_i8f32sb_f32c_avx2_kernel(
             mat_A, mat_B_in, mat_B_scales, mat_bias_in, mat_bias_scale,
             mat_C, M, N, K, mat_B_transpose, group_size
         );
@@ -207,7 +207,7 @@ void linear(
     #endif
 
     if (type_b == DType::FP16) {
-        linear_fp16(
+        linear_f32a_f16b_f32c(
             mat_A,
             static_cast<const half_cpu*>(mat_B_in), 
             static_cast<const half_cpu*>(mat_bias_in),
@@ -215,13 +215,13 @@ void linear(
         );
         return;
     } else if (type_b == DType::FP32) {
-        linear_fp32(
+        linear_fp32_full(
             mat_A, (const float *)mat_B_in, (const float *)mat_bias_in,
             mat_C, M, N, K, mat_B_transpose
         );
         return;
     } else if (type_b == DType::INT8 && type_b_scale == DType::FP32)  {
-        linear_int8_fp32s(
+        linear_f32a_i8f32sb_f32c(
             mat_A,
             static_cast<const int8_t*>(mat_B_in),
             static_cast<const float*>(mat_B_scale),
@@ -241,7 +241,7 @@ void gemm_att(
     const float scale, size_t N, size_t K, bool mat_B_transpose
 ) {
     #if defined(__AVX2__) && defined(__FMA__)
-        fp32_gemm_att_avx2_kernel(mat_A, mat_B, mat_C, scale, N, K, mat_B_transpose);
+        att_fp32_full_avx2_kernel(mat_A, mat_B, mat_C, scale, N, K, mat_B_transpose);
     #else
         #pragma omp parallel for schedule(static)
         for (size_t n = 0; n < N; ++n) {

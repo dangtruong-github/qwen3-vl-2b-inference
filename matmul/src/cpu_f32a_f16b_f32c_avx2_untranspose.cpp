@@ -1,4 +1,4 @@
-#include "../include/cpu_fp16_avx2_untranspose.hpp"
+#include "../include/cpu_f32a_f16b_f32c_avx2_untranspose.hpp"
 
 #if defined(__AVX2__) && defined(__FMA__)
 static inline float add_reduce_mm_256(__m256 vec) {
@@ -793,7 +793,7 @@ void lg_M_N_K_even_tn8_tm4(
     }
 }
 
-void fp16_avx2_kernel_untranspose(
+void f32a_f16b_f32c_avx2_kernel_untranspose(
     const float *__restrict mat_A,
     const half_cpu *__restrict mat_B,
     const half_cpu *__restrict mat_bias,
