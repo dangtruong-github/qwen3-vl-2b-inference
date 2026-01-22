@@ -8,6 +8,7 @@
 #include "cpu_fp32_avx2_kernel.hpp"
 #include "cpu_fp16_avx2_kernel.hpp"
 #include "cpu_int8_fp32s_avx2_kernel.hpp"
+#include "cpu_gemm_att.hpp"
 
 void linear(
     const float *mat_A, const void *mat_B_in, const void *mat_B_scale,

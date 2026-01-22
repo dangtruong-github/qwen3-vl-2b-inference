@@ -45,13 +45,8 @@ void tensor_transpose(
     Tensor *__restrict out,
     int D0, int D1, int D2
 );
-void tensor_transpose_2(
-    const Tensor *__restrict in,
-    Tensor *__restrict out,
-    int D0, int D1, int D2
-);
 void vision_att(
     const float *q, const float *k, const float *v, float *attn_scores, 
-    float *out, int num_heads, int T, int D, float scale, bool v_trans
+    float *out, int num_heads, int T, int D, float scale
 );
 void gelu_tanh(Tensor *x, size_t x_size);

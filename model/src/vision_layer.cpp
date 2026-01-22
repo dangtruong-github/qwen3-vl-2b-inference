@@ -657,45 +657,6 @@ void tensor_transpose(
     }
 }
 
-void tensor_transpose_2(
-    const Tensor *__restrict in_tensor,
-    Tensor *__restrict out_tensor,
-    int D0, int D1, int D2
-) {
-    // (D0, D1, D2) -> (D1, D2, D0)
-    const float *__restrict in  = (const float *)in_tensor->ptr();
-    float *__restrict out = (float *)out_tensor->ptr();
-
-    const int in_s0  = D1 * D2;   // stride for D0
-    const int in_s1  = D2;        // stride for D1
-    const int out_s0 = D2 * D0;   // stride for D1
-    const int out_s1 = D0;        // stride for D2
-
-    // Tune this for cache (typically 16–64)
-    const int TILE_D2 = 32;
-
-    #pragma omp parallel for collapse(2) schedule(static)
-    for (int j = 0; j < D1; ++j) {
-        for (int k0 = 0; k0 < D2; k0 += TILE_D2) {
-            int k_max = (k0 + TILE_D2 < D2) ? k0 + TILE_D2 : D2;
-
-            for (int k = k0; k < k_max; ++k) {
-                const float *__restrict src =
-                    in + j * in_s1 + k;
-
-                float *__restrict dst =
-                    out + j * out_s0 + k * out_s1;
-
-                // dst is contiguous over D0
-                #pragma omp simd
-                for (int i = 0; i < D0; ++i) {
-                    dst[i] = src[i * in_s0];
-                }
-            }
-        }
-    }
-}
-
 static inline float avx2_max(const float *arr, size_t N) {
     size_t i = 0;
 
@@ -720,6 +681,42 @@ static inline float avx2_max(const float *arr, size_t N) {
 
     // Handle remaining elements
     for (; i < N; i++) {
+        if (arr[i] > max_val) {
+            max_val = arr[i];
+        }
+    }
+
+    return max_val;
+}
+
+static inline float avx2_max_and_scale(float *arr, size_t N, float scale) {
+    size_t i = 0;
+
+    // Initialize vector accumulator with -inf
+    __m256 vmax = _mm256_set1_ps(-FLT_MAX);
+    __m256 v_scale = _mm256_set1_ps(scale);
+
+    // Process 8 floats at a time
+    for (; i + 7 < N; i += 8) {
+        __m256 v = _mm256_loadu_ps(arr + i);
+        v = _mm256_mul_ps(v, v_scale);
+        vmax = _mm256_max_ps(vmax, v);
+        _mm256_storeu_ps(arr + i, v);
+    }
+
+    // Horizontal reduction of vmax
+    __m128 low  = _mm256_castps256_ps128(vmax);
+    __m128 high = _mm256_extractf128_ps(vmax, 1);
+    __m128 vmax128 = _mm_max_ps(low, high);
+
+    vmax128 = _mm_max_ps(vmax128, _mm_movehl_ps(vmax128, vmax128));
+    vmax128 = _mm_max_ps(vmax128, _mm_shuffle_ps(vmax128, vmax128, 0x55));
+
+    float max_val = _mm_cvtss_f32(vmax128);
+
+    // Handle remaining elements
+    for (; i < N; i++) {
+        arr[i] *= scale;
         if (arr[i] > max_val) {
             max_val = arr[i];
         }
@@ -802,8 +799,13 @@ static inline float avx2_sum_exp_max(float *arr, size_t T, float max_score) {
 
 void vision_att(
     const float *q, const float *k, const float *v, float *attn_scores, 
-    float *out, int num_heads, int T, int D, float scale, bool v_trans
+    float *out, int num_heads, int T, int D, float scale
 ) {
+    #ifdef CPU_TIME_GEMM
+        CPUTimer timer("gemm_att");
+        printf("Shape of gemm att w/ precision FP32: T=%zu, D=%zu\n", T, D);
+    #endif
+
     size_t head_stride = (size_t)T * D;
 
     for (int h = 0; h < num_heads; h++) {
@@ -817,8 +819,9 @@ void vision_att(
 
             gemm_att(qi, kh, attn_scores, scale, T, D, true);
             float max_score = avx2_max(attn_scores, T);
+            // float max_score = avx2_max_and_scale(attn_scores, T, scale);
             float sum = avx2_sum_exp_max(attn_scores, T, max_score);
-            gemm_att(attn_scores, vh, oh + i * D, 1.0f / sum, D, T, v_trans);
+            gemm_att(attn_scores, vh, oh + i * D, 1.0f / sum, D, T, false);
         }
     }
 }

@@ -197,57 +197,27 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
-        {
-            CPUTimer timer("transpose v");
+        tensor_transpose(
+            state->vision_mlp_out, state->vision_t, total_tokens, VNH, VHD
+        );
 
-            tensor_transpose_2(
-                state->vision_mlp_out, state->vision_t, total_tokens, VNH, VHD
-            );
+        #ifdef PRINT_LOGITS
+            state->vision_t->printDebug("vision_t");
+        #endif
 
-            #ifdef PRINT_LOGITS
-                state->vision_t->printDebug("vision_t");
-            #endif
-
-            #ifdef PRINT_LOGITS_2
-                state->vision_t->printDebug("vision_t");
-            #endif
-            
-            vision_att(
-                (const float *)state->vision_q->ptr(),
-                (const float *)state->vision_k->ptr(),
-                (const float *)state->vision_t->ptr(),
-                (float *)state->vision_attn_scores->ptr(),
-                (float *)state->vision_mlp_out->ptr(), 
-                VNH, total_tokens, VHD, vision_scale, true
-            );
-        }
-
-    /*
-        {
-            CPUTimer timer("no transpose v");
-
-            tensor_transpose(
-                state->vision_mlp_out, state->vision_t, total_tokens, VNH, VHD
-            );
-
-            #ifdef PRINT_LOGITS
-                state->vision_t->printDebug("vision_t");
-            #endif
-
-            #ifdef PRINT_LOGITS_2
-                state->vision_t->printDebug("vision_t");
-            #endif
-            
-            vision_att(
-                (const float *)state->vision_q->ptr(),
-                (const float *)state->vision_k->ptr(),
-                (const float *)state->vision_t->ptr(),
-                (float *)state->vision_attn_scores->ptr(),
-                (float *)state->vision_mlp_out->ptr(), 
-                VNH, total_tokens, VHD, vision_scale, false
-            );
-        }
-    */
+        #ifdef PRINT_LOGITS_2
+            state->vision_t->printDebug("vision_t");
+        #endif
+        
+        vision_att(
+            (const float *)state->vision_q->ptr(),
+            (const float *)state->vision_k->ptr(),
+            (const float *)state->vision_t->ptr(),
+            (float *)state->vision_attn_scores->ptr(),
+            (float *)state->vision_mlp_out->ptr(), 
+            VNH, total_tokens, VHD, vision_scale
+        );
+        
         #ifdef PRINT_LOGITS
             state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
