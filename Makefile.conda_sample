@@ -8,7 +8,7 @@ NVCCFLAGS := -std=c++17 -O3 -Xcompiler "-fopenmp -march=native"
 CONDA_PATH := /path/to/conda
 
 # === Manually list top-level modules ===
-MODULES := tokenizer model utils matmul
+MODULES := tokenizer model utils matmul layers
 
 # === Automatically derived directories ===
 SRC_DIRS := $(foreach m,$(MODULES),$(m)/src)

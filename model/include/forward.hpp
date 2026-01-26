@@ -8,8 +8,7 @@
 #include <cmath>
 
 #include "../config.hpp"
-#include "layer.hpp"
-#include "vision_layer.hpp"
+#include "../../layers/module.hpp"
 
 // ================================================================
 // Forward Functions

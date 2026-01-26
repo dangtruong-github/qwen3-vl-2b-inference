@@ -8,7 +8,7 @@
 #include <immintrin.h>
 #include "../../matmul/module.hpp"
 #include "../../utils/module.hpp"
-#include "layer.hpp"
+#include "text_layer.hpp"
 
 // #define DEBUG
 #define max(a, b) ((a) > (b) ? (a) : (b))

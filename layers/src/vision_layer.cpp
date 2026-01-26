@@ -13,95 +13,204 @@ void conv_3d(
     PtrPair conv_w_ptr = conv_w->ptr_all();
     PtrPair conv_b_ptr = conv_b->ptr_all();
 
-    float *__restrict out_img = (float *)out_img_tensor->ptr();
+    DType::Type out_img_type = out_img_tensor->dtype;
 
-    if (conv_w->dtype == DType::FP32) {
-        const float *__restrict conv_b_buf = (const float *)(conv_b_ptr.buf);
+    if (out_img_type == DType::FP32) {
+        float *__restrict out_img = (float *)out_img_tensor->ptr();
 
-        // --- Outer loop: Iterate over the 'batch' dimension (img_h) ---
-        for (long i = 0; i < img_h; ++i) {
-            // Pointer to the current feature block in the input
-            const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
+        if (conv_w->dtype == DType::FP32) {
+            const float *__restrict conv_b_buf = (const float *)(conv_b_ptr.buf);
 
-            // --- Second loop: Iterate over the output channels (VH) ---
-            for (size_t h = 0; h < VH; ++h) {
-                float accumulator = 0.0f;
+            // --- Outer loop: Iterate over the 'batch' dimension (img_h) ---
+            for (long i = 0; i < img_h; ++i) {
+                // Pointer to the current feature block in the input
+                const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
 
-                // Pointer to the current kernel slice (VC * VTP * VP * VP) for this output channel
-                const float *kernel_slice_ptr = (const float *)conv_w->ptr({h});
+                // --- Second loop: Iterate over the output channels (VH) ---
+                for (size_t h = 0; h < VH; ++h) {
+                    float accumulator = 0.0f;
 
-                // --- Innermost loop: Perform the dot product (contraction) ---
-                // This loop iterates over the flattened feature block (VC * VTP * VP * VP)
-                for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
-                    accumulator += input_block_ptr[c] * kernel_slice_ptr[c];
+                    // Pointer to the current kernel slice (VC * VTP * VP * VP) for this output channel
+                    const float *kernel_slice_ptr = (const float *)conv_w->ptr({h});
+
+                    // --- Innermost loop: Perform the dot product (contraction) ---
+                    // This loop iterates over the flattened feature block (VC * VTP * VP * VP)
+                    for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
+                        accumulator += input_block_ptr[c] * kernel_slice_ptr[c];
+                    }
+
+                    // Add the bias and store the result
+                    // Output index: i * VH + h
+                    out_img[i * VH + h] = accumulator + conv_b_buf[h];
                 }
+            }
+        } else if (conv_w->dtype == DType::FP16) {
+            // Cast bias to fp16 type
+            const half_cpu *__restrict conv_b_buf = static_cast<const half_cpu*>(conv_b_ptr.buf);
 
-                // Add the bias and store the result
-                // Output index: i * VH + h
-                out_img[i * VH + h] = accumulator + conv_b_buf[h];
+            // Parallelize across the batch (img_h) and output channels (VH)
+            #pragma omp parallel for collapse(2)
+            for (long i = 0; i < img_h; ++i) {
+                for (size_t h = 0; h < VH; ++h) {
+                    float accumulator = 0.0f;
+
+                    const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
+                    // Weights for this specific output channel
+                    const half_cpu *kernel_slice_ptr = static_cast<const half_cpu*>(conv_w->ptr({h}));
+
+                    // Vectorized dot product (Contraction)
+                    #pragma omp simd reduction(+:accumulator)
+                    for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
+                        // F16C expands kernel_slice_ptr[c] to fp32 for the FMA
+                        accumulator += input_block_ptr[c] * static_cast<float>(kernel_slice_ptr[c]);
+                    }
+
+                    // Expand fp16 bias to fp32 and store result
+                    out_img[i * VH + h] = accumulator + static_cast<float>(conv_b_buf[h]);
+                }
+            }
+        } else {
+            // Quantized Weights and Scales
+            const int8_t *w_q = static_cast<const int8_t*>(conv_w_ptr.buf);
+            const float *w_scales = static_cast<const float*>(conv_w_ptr.scale);
+            
+            // Quantized Bias and Scales
+            const int8_t *b_q = static_cast<const int8_t*>(conv_b_ptr.buf);
+            const float *b_scales = static_cast<const float*>(conv_b_ptr.scale);
+
+            const size_t group_size = conv_w->group_size;
+            const size_t b_group_size = conv_b->group_size;
+
+            #pragma omp parallel for collapse(2)
+            for (long i = 0; i < img_h; ++i) {
+                for (size_t h = 0; h < VH; ++h) {
+                    float accumulator = 0.0f;
+
+                    const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
+                    
+                    // Offset weights to the h-th output channel
+                    // Each channel has FEATURE_BLOCK_SIZE weights
+                    const int8_t *kernel_q_slice = w_q + (h * FEATURE_BLOCK_SIZE);
+                    // Each channel has (FEATURE_BLOCK_SIZE / group_size) scales
+                    const float *kernel_scales_slice = w_scales + (h * FEATURE_BLOCK_SIZE / group_size);
+
+                    // Inner dot product
+                    for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
+                        float scale = kernel_scales_slice[c / group_size];
+                        float weight = static_cast<float>(kernel_q_slice[c]) * scale;
+                        accumulator += input_block_ptr[c] * weight;
+                    }
+
+                    // Dequantize bias: bias[h] = b_q[h] * b_scale[h / b_group_size]
+                    float bias = static_cast<float>(b_q[h]) * b_scales[h / b_group_size];
+                    
+                    out_img[i * VH + h] = accumulator + bias;
+                }
             }
         }
-    } else if (conv_w->dtype == DType::FP16) {
-        // Cast bias to fp16 type
-        const half_cpu *__restrict conv_b_buf = static_cast<const half_cpu*>(conv_b_ptr.buf);
+    } else if (out_img_type == DType::FP16) {
+        half_cpu *__restrict out_img =
+            static_cast<half_cpu *>(out_img_tensor->ptr());
 
-        // Parallelize across the batch (img_h) and output channels (VH)
-        #pragma omp parallel for collapse(2)
-        for (long i = 0; i < img_h; ++i) {
-            for (size_t h = 0; h < VH; ++h) {
-                float accumulator = 0.0f;
+        /* ================= FP32 weights ================= */
+        if (conv_w->dtype == DType::FP32) {
+            const float *__restrict conv_b_buf =
+                static_cast<const float *>(conv_b_ptr.buf);
+            const float *__restrict w_buf =
+                static_cast<const float *>(conv_w_ptr.buf);
 
-                const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
-                // Weights for this specific output channel
-                const half_cpu *kernel_slice_ptr = static_cast<const half_cpu*>(conv_w->ptr({h}));
+            #pragma omp parallel for collapse(2)
+            for (long i = 0; i < img_h; ++i) {
+                for (size_t h = 0; h < VH; ++h) {
+                    float acc = 0.0f;
 
-                // Vectorized dot product (Contraction)
-                #pragma omp simd reduction(+:accumulator)
-                for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
-                    // F16C expands kernel_slice_ptr[c] to fp32 for the FMA
-                    accumulator += input_block_ptr[c] * static_cast<float>(kernel_slice_ptr[c]);
+                    const float *input_block_ptr =
+                        in_img + i * FEATURE_BLOCK_SIZE;
+                    const float *kernel_slice_ptr =
+                        w_buf + h * FEATURE_BLOCK_SIZE;
+
+                    #pragma omp simd reduction(+:acc)
+                    for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
+                        acc += input_block_ptr[c] * kernel_slice_ptr[c];
+                    }
+
+                    acc += conv_b_buf[h];
+                    out_img[i * VH + h] = static_cast<half_cpu>(acc);
                 }
-
-                // Expand fp16 bias to fp32 and store result
-                out_img[i * VH + h] = accumulator + static_cast<float>(conv_b_buf[h]);
             }
-        }
-    } else {
-        // Quantized Weights and Scales
-        const int8_t *w_q = static_cast<const int8_t*>(conv_w_ptr.buf);
-        const float *w_scales = static_cast<const float*>(conv_w_ptr.scale);
-        
-        // Quantized Bias and Scales
-        const int8_t *b_q = static_cast<const int8_t*>(conv_b_ptr.buf);
-        const float *b_scales = static_cast<const float*>(conv_b_ptr.scale);
 
-        const size_t group_size = conv_w->group_size;
-        const size_t b_group_size = conv_b->group_size;
+        /* ================= FP16 weights ================= */
+        } else if (conv_w->dtype == DType::FP16) {
+            const half_cpu *__restrict conv_b_buf =
+                static_cast<const half_cpu *>(conv_b_ptr.buf);
+            const half_cpu *__restrict w_buf =
+                static_cast<const half_cpu *>(conv_w_ptr.buf);
 
-        #pragma omp parallel for collapse(2)
-        for (long i = 0; i < img_h; ++i) {
-            for (size_t h = 0; h < VH; ++h) {
-                float accumulator = 0.0f;
+            #pragma omp parallel for collapse(2)
+            for (long i = 0; i < img_h; ++i) {
+                for (size_t h = 0; h < VH; ++h) {
+                    float acc = 0.0f;
 
-                const float *input_block_ptr = in_img + i * FEATURE_BLOCK_SIZE;
-                
-                // Offset weights to the h-th output channel
-                // Each channel has FEATURE_BLOCK_SIZE weights
-                const int8_t *kernel_q_slice = w_q + (h * FEATURE_BLOCK_SIZE);
-                // Each channel has (FEATURE_BLOCK_SIZE / group_size) scales
-                const float *kernel_scales_slice = w_scales + (h * FEATURE_BLOCK_SIZE / group_size);
+                    const float *input_block_ptr =
+                        in_img + i * FEATURE_BLOCK_SIZE;
+                    const half_cpu *kernel_slice_ptr =
+                        w_buf + h * FEATURE_BLOCK_SIZE;
 
-                // Inner dot product
-                for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
-                    float scale = kernel_scales_slice[c / group_size];
-                    float weight = static_cast<float>(kernel_q_slice[c]) * scale;
-                    accumulator += input_block_ptr[c] * weight;
+                    #pragma omp simd reduction(+:acc)
+                    for (long c = 0; c < FEATURE_BLOCK_SIZE; ++c) {
+                        acc += input_block_ptr[c] *
+                            static_cast<float>(kernel_slice_ptr[c]);
+                    }
+
+                    acc += static_cast<float>(conv_b_buf[h]);
+                    out_img[i * VH + h] = static_cast<half_cpu>(acc);
                 }
+            }
 
-                // Dequantize bias: bias[h] = b_q[h] * b_scale[h / b_group_size]
-                float bias = static_cast<float>(b_q[h]) * b_scales[h / b_group_size];
-                
-                out_img[i * VH + h] = accumulator + bias;
+        /* ================= INT8 weights ================= */
+        } else {
+            const int8_t *__restrict w_q =
+                static_cast<const int8_t *>(conv_w_ptr.buf);
+            const float *__restrict w_scales =
+                static_cast<const float *>(conv_w_ptr.scale);
+
+            const int8_t *__restrict b_q =
+                static_cast<const int8_t *>(conv_b_ptr.buf);
+            const float *__restrict b_scales =
+                static_cast<const float *>(conv_b_ptr.scale);
+
+            const size_t group_size = conv_w->group_size;
+            const size_t b_group_size = conv_b->group_size;
+
+            #pragma omp parallel for collapse(2)
+            for (long i = 0; i < img_h; ++i) {
+                for (size_t h = 0; h < VH; ++h) {
+                    float acc = 0.0f;
+
+                    const float *input_block_ptr =
+                        in_img + i * FEATURE_BLOCK_SIZE;
+
+                    const int8_t *kernel_q_slice =
+                        w_q + h * FEATURE_BLOCK_SIZE;
+                    const float *kernel_scales_slice =
+                        w_scales + (h * FEATURE_BLOCK_SIZE / group_size);
+
+                    // scale-hoisted loop
+                    for (long g = 0; g < FEATURE_BLOCK_SIZE; g += group_size) {
+                        float scale = kernel_scales_slice[g / group_size];
+                        for (long c = g; c < g + group_size; ++c) {
+                            acc += input_block_ptr[c] *
+                                (static_cast<float>(kernel_q_slice[c]) * scale);
+                        }
+                    }
+
+                    float bias =
+                        static_cast<float>(b_q[h]) *
+                        b_scales[h / b_group_size];
+
+                    out_img[i * VH + h] =
+                        static_cast<half_cpu>(acc + bias);
+                }
             }
         }
     }
@@ -115,7 +224,16 @@ void vision_pos_embed(
         return;
     }
 
-    float *__restrict x_embed = (float *)x_tensor->ptr();
+    bool x_is_fp16 = (x_tensor->dtype == DType::FP16);
+
+    float *x_embed_fp32 = nullptr;
+    half_cpu *x_embed_fp16 = nullptr;
+
+    if (x_is_fp16) {
+        x_embed_fp16 = static_cast<half_cpu *>(x_tensor->ptr());
+    } else {
+        x_embed_fp32 = static_cast<float *>(x_tensor->ptr());
+    }
 
     size_t total_elements = (size_t)grid_h * (size_t)grid_w;
     
@@ -364,11 +482,17 @@ void vision_pos_embed(
                         // Contribution of W_intra
                         dest_flat_idx += (size_t)iw_intra * (VH);
 
-                        float *dest_ptr = x_embed + dest_flat_idx;
-                        
-                        // --- 3. Copy the token (D elements) ---
-                        // Copy the D-dimensional token vector from source to destination
-                        memcpy(dest_ptr, source_ptr, token_size * sizeof(float));
+                        if (!x_is_fp16) {
+                            float *dest_ptr = x_embed_fp32 + dest_flat_idx;
+                            memcpy(dest_ptr, source_ptr, token_size * sizeof(float));
+                        } else {
+                            half_cpu *dest_ptr = x_embed_fp16 + dest_flat_idx;
+
+                            #pragma omp simd
+                            for (int j = 0; j < VH; ++j) {
+                                dest_ptr[j] = static_cast<half_cpu>(source_ptr[j]);
+                            }
+                        }
                     }
                 }
             }
@@ -384,50 +508,113 @@ void vision_rot_pos_emb(
     const Tensor *__restrict cos_total, const Tensor *__restrict sin_total,
     int grid_h, int grid_w, int merge_size, int head_dim
 ) {
-    float *pos_emb_out_cos = (float *)pe_cos->ptr();
-    float *pos_emb_out_sin = (float *)pe_sin->ptr();
-    const float *cos_tensor = (const float *)cos_total->ptr();
-    const float *sin_tensor = (const float *)sin_total->ptr();
-
+    // check if pe_cos->dtype == pe_sin->dtype == cos_total->dtype == sin_total->dtype
     int max_hw = max(grid_h, grid_w);
     int total_tokens = grid_h * grid_w;
     int freqs_depth_dim = head_dim / 4;
-    size_t size_copy = freqs_depth_dim * sizeof(float);
 
     // --- 1. Generate Coordinates (as completed previously) ---
     int merged_h = grid_h / merge_size;
     int merged_w = grid_w / merge_size;
-    int k = 0; 
-    for (int block_row = 0; block_row < merged_h; block_row++) {
-        int start_row = block_row * merge_size;
-        for (int block_col = 0; block_col < merged_w; block_col++) {
-            int start_col = block_col * merge_size;
-            for (int intra_row = 0; intra_row < merge_size; intra_row++) {
-                int row_idx = start_row + intra_row;
-                for (int intra_col = 0; intra_col < merge_size; intra_col++) {
-                    int col_idx = start_col + intra_col;
-                    if (k < total_tokens) {
-                        // cos
-                        const float *row_freqs_cos = cos_tensor + (row_idx * freqs_depth_dim); 
-                        const float *col_freqs_cos = cos_tensor + (col_idx * freqs_depth_dim);
-                        float *out_cos = pos_emb_out_cos + (k * head_dim);
 
-                        memcpy(out_cos, row_freqs_cos, size_copy);
-                        memcpy(out_cos + 2 * freqs_depth_dim, row_freqs_cos, size_copy);
-                        memcpy(out_cos + freqs_depth_dim, col_freqs_cos, size_copy);
-                        memcpy(out_cos + 3 * freqs_depth_dim, col_freqs_cos, size_copy);
+    if (pe_cos->dtype == DType::FP16) {
+        half_cpu *pos_emb_out_cos = (half_cpu *)pe_cos->ptr();
+        half_cpu *pos_emb_out_sin = (half_cpu *)pe_sin->ptr();
+        const half_cpu *cos_tensor = (const half_cpu *)cos_total->ptr();
+        const half_cpu *sin_tensor = (const half_cpu *)sin_total->ptr();
 
-                        // sin
-                        const float *row_freqs_sin = sin_tensor + (row_idx * freqs_depth_dim); 
-                        const float *col_freqs_sin = sin_tensor + (col_idx * freqs_depth_dim);
-                        float *out_sin = pos_emb_out_sin + (k * head_dim);
+        size_t size_copy = freqs_depth_dim * sizeof(half_cpu);
 
-                        memcpy(out_sin, row_freqs_sin, size_copy);
-                        memcpy(out_sin + 2 * freqs_depth_dim, row_freqs_sin, size_copy);
-                        memcpy(out_sin + freqs_depth_dim, col_freqs_sin, size_copy);
-                        memcpy(out_sin + 3 * freqs_depth_dim, col_freqs_sin, size_copy);
-                        
-                        k++;
+        int k = 0;
+        for (int block_row = 0; block_row < merged_h; block_row++) {
+            int start_row = block_row * merge_size;
+            for (int block_col = 0; block_col < merged_w; block_col++) {
+                int start_col = block_col * merge_size;
+                for (int intra_row = 0; intra_row < merge_size; intra_row++) {
+                    int row_idx = start_row + intra_row;
+                    for (int intra_col = 0; intra_col < merge_size; intra_col++) {
+                        int col_idx = start_col + intra_col;
+
+                        if (k < total_tokens) {
+                            // cos
+                            const half_cpu *row_freqs_cos =
+                                cos_tensor + row_idx * freqs_depth_dim;
+                            const half_cpu *col_freqs_cos =
+                                cos_tensor + col_idx * freqs_depth_dim;
+                            half_cpu *out_cos =
+                                pos_emb_out_cos + k * head_dim;
+
+                            memcpy(out_cos, row_freqs_cos, size_copy);
+                            memcpy(out_cos + freqs_depth_dim,
+                                col_freqs_cos, size_copy);
+                            memcpy(out_cos + 2 * freqs_depth_dim,
+                                row_freqs_cos, size_copy);
+                            memcpy(out_cos + 3 * freqs_depth_dim,
+                                col_freqs_cos, size_copy);
+
+                            // sin
+                            const half_cpu *row_freqs_sin =
+                                sin_tensor + row_idx * freqs_depth_dim;
+                            const half_cpu *col_freqs_sin =
+                                sin_tensor + col_idx * freqs_depth_dim;
+                            half_cpu *out_sin =
+                                pos_emb_out_sin + k * head_dim;
+
+                            memcpy(out_sin, row_freqs_sin, size_copy);
+                            memcpy(out_sin + freqs_depth_dim,
+                                col_freqs_sin, size_copy);
+                            memcpy(out_sin + 2 * freqs_depth_dim,
+                                row_freqs_sin, size_copy);
+                            memcpy(out_sin + 3 * freqs_depth_dim,
+                                col_freqs_sin, size_copy);
+
+                            k++;
+                        }
+                    }
+                }
+            }
+        }
+
+        return;
+    } else {
+        float *pos_emb_out_cos = (float *)pe_cos->ptr();
+        float *pos_emb_out_sin = (float *)pe_sin->ptr();
+        const float *cos_tensor = (const float *)cos_total->ptr();
+        const float *sin_tensor = (const float *)sin_total->ptr();
+
+        size_t size_copy = freqs_depth_dim * sizeof(float);
+        int k = 0; 
+        for (int block_row = 0; block_row < merged_h; block_row++) {
+            int start_row = block_row * merge_size;
+            for (int block_col = 0; block_col < merged_w; block_col++) {
+                int start_col = block_col * merge_size;
+                for (int intra_row = 0; intra_row < merge_size; intra_row++) {
+                    int row_idx = start_row + intra_row;
+                    for (int intra_col = 0; intra_col < merge_size; intra_col++) {
+                        int col_idx = start_col + intra_col;
+                        if (k < total_tokens) {
+                            // cos
+                            const float *row_freqs_cos = cos_tensor + (row_idx * freqs_depth_dim); 
+                            const float *col_freqs_cos = cos_tensor + (col_idx * freqs_depth_dim);
+                            float *out_cos = pos_emb_out_cos + (k * head_dim);
+
+                            memcpy(out_cos, row_freqs_cos, size_copy);
+                            memcpy(out_cos + 2 * freqs_depth_dim, row_freqs_cos, size_copy);
+                            memcpy(out_cos + freqs_depth_dim, col_freqs_cos, size_copy);
+                            memcpy(out_cos + 3 * freqs_depth_dim, col_freqs_cos, size_copy);
+
+                            // sin
+                            const float *row_freqs_sin = sin_tensor + (row_idx * freqs_depth_dim); 
+                            const float *col_freqs_sin = sin_tensor + (col_idx * freqs_depth_dim);
+                            float *out_sin = pos_emb_out_sin + (k * head_dim);
+
+                            memcpy(out_sin, row_freqs_sin, size_copy);
+                            memcpy(out_sin + 2 * freqs_depth_dim, row_freqs_sin, size_copy);
+                            memcpy(out_sin + freqs_depth_dim, col_freqs_sin, size_copy);
+                            memcpy(out_sin + 3 * freqs_depth_dim, col_freqs_sin, size_copy);
+                            
+                            k++;
+                        }
                     }
                 }
             }

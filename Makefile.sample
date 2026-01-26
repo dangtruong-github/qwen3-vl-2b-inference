@@ -9,7 +9,7 @@ OPENCV_CFLAGS := $(shell pkg-config --cflags opencv4)
 OPENCV_LIBS   := $(shell pkg-config --libs opencv4)
 
 # === Manually list top-level modules ===
-MODULES := tokenizer model utils matmul
+MODULES := tokenizer model utils matmul layers
 
 # === Automatically derived directories ===
 SRC_DIRS := $(foreach m,$(MODULES),$(m)/src)

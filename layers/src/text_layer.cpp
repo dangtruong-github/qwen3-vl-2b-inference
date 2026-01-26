@@ -1,4 +1,4 @@
-#include "../include/layer.hpp"
+#include "../include/text_layer.hpp"
 
 void embedding_lookup(
     const Tensor *__restrict embedding /*[vocab, hidden]*/, 
