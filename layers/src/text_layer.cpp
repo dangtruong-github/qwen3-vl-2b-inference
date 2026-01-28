@@ -250,28 +250,100 @@ void add_vector(
     if (size_vec == 0) {
         size_vec = add_to->num_elem();
     }
-    float *__restrict add_to_buf = (float *)add_to->ptr();
-    const float *__restrict add_from_buf = (const float *)add_from->ptr();
 
-    #pragma omp parallel for simd
-    for (size_t i = 0; i < size_vec; ++i) {
-        add_to_buf[i] += add_from_buf[i];
+    const DType::Type to_dtype   = add_to->dtype;
+    const DType::Type from_dtype = add_from->dtype;
+
+    if (to_dtype == DType::FP32 && from_dtype == DType::FP32) {
+        float *__restrict to   = (float *)add_to->ptr();
+        const float *__restrict from = (const float *)add_from->ptr();
+
+        #pragma omp parallel for simd
+        for (size_t i = 0; i < size_vec; ++i) {
+            to[i] += from[i];
+        }
+        return;
+    } else if (to_dtype == DType::FP32 && from_dtype == DType::FP16) {
+        float *__restrict to = (float *)add_to->ptr();
+        const half_cpu *__restrict from = (const half_cpu *)add_from->ptr();
+
+        #pragma omp parallel for simd
+        for (size_t i = 0; i < size_vec; ++i) {
+            to[i] += (float)from[i];
+        }
+        return;
+    } else if (to_dtype == DType::FP16 && from_dtype == DType::FP16) {
+        half_cpu *__restrict to = (half_cpu *)add_to->ptr();
+        const half_cpu *__restrict from = (const half_cpu *)add_from->ptr();
+
+        #pragma omp parallel for simd
+        for (size_t i = 0; i < size_vec; ++i) {
+            float acc = (float)to[i] + (float)from[i];
+            to[i] = (half_cpu)acc;
+        }
+        return;
+    } else if (to_dtype == DType::FP16 && from_dtype == DType::FP32) {
+        half_cpu *__restrict to = (half_cpu *)add_to->ptr();
+        const float *__restrict from = (const float *)add_from->ptr();
+
+        #pragma omp parallel for simd
+        for (size_t i = 0; i < size_vec; ++i) {
+            float acc = (float)to[i] + from[i];  // FP32 accumulate
+            to[i] = (half_cpu)acc;               // cast back
+        }
+        return;
     }
 }
 
 void add_vector(
     Tensor *__restrict add_to,
-    const float *__restrict add_from,
-    size_t size_vec
+    const void *__restrict add_from,
+    DType::Type add_from_type, size_t size_vec
 ) {
     if (size_vec == 0) {
         size_vec = add_to->num_elem();
     }
-    float *__restrict add_to_buf = (float *)add_to->ptr();
-    
-    #pragma omp parallel for simd
-    for (size_t i = 0; i < size_vec; ++i) {
-        add_to_buf[i] += add_from[i];
+
+    const DType::Type to_dtype   = add_to->dtype;
+
+    if (to_dtype == DType::FP32 && add_from_type == DType::FP32) {
+        float *__restrict to   = (float *)add_to->ptr();
+        const float *__restrict from = (const float *)add_from;
+
+        #pragma omp parallel for simd
+        for (size_t i = 0; i < size_vec; ++i) {
+            to[i] += from[i];
+        }
+        return;
+    } else if (to_dtype == DType::FP32 && add_from_type == DType::FP16) {
+        float *__restrict to = (float *)add_to->ptr();
+        const half_cpu *__restrict from = (const half_cpu *)add_from;
+
+        #pragma omp parallel for simd
+        for (size_t i = 0; i < size_vec; ++i) {
+            to[i] += (float)from[i];
+        }
+        return;
+    } else if (to_dtype == DType::FP16 && add_from_type == DType::FP16) {
+        half_cpu *__restrict to = (half_cpu *)add_to->ptr();
+        const half_cpu *__restrict from = (const half_cpu *)add_from;
+
+        #pragma omp parallel for simd
+        for (size_t i = 0; i < size_vec; ++i) {
+            float acc = (float)to[i] + (float)from[i];
+            to[i] = (half_cpu)acc;
+        }
+        return;
+    } else if (to_dtype == DType::FP16 && add_from_type == DType::FP32) {
+        half_cpu *__restrict to = (half_cpu *)add_to->ptr();
+        const float *__restrict from = (const float *)add_from;
+
+        #pragma omp parallel for simd
+        for (size_t i = 0; i < size_vec; ++i) {
+            float acc = (float)to[i] + from[i];  // FP32 accumulate
+            to[i] = (half_cpu)acc;               // cast back
+        }
+        return;
     }
 }
 
@@ -292,48 +364,6 @@ void swiglu(
 }
 
 #if defined(__AVX2__) && defined(__FMA__)
-static inline __m256 exp256_ps(__m256 x) {
-    // Clamp
-    const __m256 max_x = _mm256_set1_ps(88.3762626647949f);
-    const __m256 min_x = _mm256_set1_ps(-88.3762626647949f);
-    x = _mm256_min_ps(x, max_x);
-    x = _mm256_max_ps(x, min_x);
-
-    // Constants
-    const __m256 ln2      = _mm256_set1_ps(0.69314718056f);
-    const __m256 inv_ln2  = _mm256_set1_ps(1.44269504089f);
-
-    // n = floor(x / ln2)
-    __m256 fx = _mm256_mul_ps(x, inv_ln2);
-    fx = _mm256_floor_ps(fx);
-
-    __m256i emm0 = _mm256_cvttps_epi32(fx);
-
-    // g = x - n * ln2
-    __m256 g = _mm256_fnmadd_ps(fx, ln2, x);
-
-    // Polynomial approximation of exp(g)
-    // exp(g) ≈ 1 + g + g²/2 + g³/6 + g⁴/24
-    __m256 y = _mm256_set1_ps(1.0f);
-    y = _mm256_fmadd_ps(g, y, _mm256_set1_ps(1.0f));
-
-    __m256 g2 = _mm256_mul_ps(g, g);
-    y = _mm256_fmadd_ps(g2, _mm256_set1_ps(0.5f), y);
-
-    __m256 g3 = _mm256_mul_ps(g2, g);
-    y = _mm256_fmadd_ps(g3, _mm256_set1_ps(1.0f / 6.0f), y);
-
-    __m256 g4 = _mm256_mul_ps(g3, g);
-    y = _mm256_fmadd_ps(g4, _mm256_set1_ps(1.0f / 24.0f), y);
-
-    // Build 2^n
-    emm0 = _mm256_add_epi32(emm0, _mm256_set1_epi32(127));
-    emm0 = _mm256_slli_epi32(emm0, 23);
-    __m256 pow2n = _mm256_castsi256_ps(emm0);
-
-    return _mm256_mul_ps(y, pow2n);
-}
-
 void softmax(float *__restrict x, size_t n) {
     if (n == 0) return;
 
@@ -471,22 +501,6 @@ void softmax(float *__restrict x, size_t n) {
     }
 }
 #endif
-
-static inline float add_reduce_mm_256(__m256 vec) {
-    // Step 1: Split into two 128-bit halves
-    __m128 low  = _mm256_castps256_ps128(vec);          // lower 128 bits
-    __m128 high = _mm256_extractf128_ps(vec, 1);        // upper 128 bits
-
-    // Step 2: Add the halves together
-    __m128 sum128 = _mm_add_ps(low, high);
-
-    // Step 3: Horizontal add within 128-bit register
-    sum128 = _mm_hadd_ps(sum128, sum128);               // pairwise add
-    sum128 = _mm_hadd_ps(sum128, sum128);               // final reduction
-
-    // Step 4: Extract scalar result
-    return _mm_cvtss_f32(sum128);
-}
 
 void attn_scores_all_heads(
     const float *__restrict key_cache,

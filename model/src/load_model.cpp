@@ -347,20 +347,19 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->value_cache = new Tensor({BATCH_SIZE, L, NKV, S, D});
 
     // -- Vision states --
-    state->vision_x = new Tensor({VNP_max, VH});
-    state->vision_t = new Tensor({VNP_max, VH});
-    state->vision_q = new Tensor({VNP_max, VH});
-    state->vision_k = new Tensor({VNP_max, VH});
+    state->vision_x = new Tensor({VNP_max, VH}); //, DType::FP16);
+    state->vision_t = new Tensor({VNP_max, VH}); //, DType::FP16);
+    state->vision_q = new Tensor({VNP_max, VH}); //, DType::FP16);
+    state->vision_k = new Tensor({VNP_max, VH}); //, DType::FP16);
 
-    state->vision_cos_tensor = new Tensor({VNP_max, VD / 4});
-    state->vision_sin_tensor = new Tensor({VNP_max, VD / 4});
+    state->vision_cos_tensor = new Tensor({VNP_max, VD / 4});    state->vision_sin_tensor = new Tensor({VNP_max, VD / 4}); 
 
-    state->vision_pe_cos = new Tensor({VNP_max, VD});
+    state->vision_pe_cos = new Tensor({VNP_max, VD}); 
     state->vision_pe_sin = new Tensor({VNP_max, VD});
     
-    state->vision_mlp_out = new Tensor({VNP_max, VI});
+    state->vision_mlp_out = new Tensor({VNP_max, VI}); //, DType::FP16);
 
-    state->vision_deep_stack = new Tensor({VDS, VNP_max, H});
+    state->vision_deep_stack = new Tensor({VDS, VNP_max, H}, DType::FP16);
 
     state->vision_attn_scores = new Tensor({VNP_max});
 
@@ -497,8 +496,19 @@ void qwen_vision_rope_precompute(
     int half_dim = dim / 2;
     float theta = config->vision_theta;
 
-    float *cos_buf = (float *)cos_tensor->ptr();
-    float *sin_buf = (float *)sin_tensor->ptr();
+    float *cos_fp32_buf = nullptr;
+    float *sin_fp32_buf = nullptr;
+
+    half_cpu *cos_fp16_buf = nullptr;
+    half_cpu *sin_fp16_buf = nullptr;
+
+    if (cos_tensor->dtype == DType::FP32) {
+        cos_fp32_buf = (float *)cos_tensor->ptr();
+        sin_fp32_buf = (float *)sin_tensor->ptr();
+    } else {
+        cos_fp16_buf = (half_cpu *)cos_tensor->ptr();
+        sin_fp16_buf = (half_cpu *)sin_tensor->ptr();
+    }
 
     /* Allocate inv_freq (same as register_buffer in PyTorch) */
     float *inv_freq = (float *)malloc(sizeof(float) * half_dim);
@@ -510,11 +520,21 @@ void qwen_vision_rope_precompute(
     }
 
     /* Compute outer product: seq ⊗ inv_freq */
-    for (int s = 0; s < max_seq_len; ++s) {
-        for (int i = 0; i < half_dim; ++i) {
-            const float freq_val = (float)s * inv_freq[i];
-            cos_buf[s * half_dim + i] = cosf(freq_val);
-            sin_buf[s * half_dim + i] = sinf(freq_val);
+    if (cos_tensor->dtype == DType::FP32) {
+        for (int s = 0; s < max_seq_len; ++s) {
+            for (int i = 0; i < half_dim; ++i) {
+                const float freq_val = (float)s * inv_freq[i];
+                cos_fp32_buf[s * half_dim + i] = cosf(freq_val);
+                sin_fp32_buf[s * half_dim + i] = sinf(freq_val);
+            }
+        }
+    } else {
+        for (int s = 0; s < max_seq_len; ++s) {
+            for (int i = 0; i < half_dim; ++i) {
+                const float freq_val = (float)s * inv_freq[i];
+                cos_fp16_buf[s * half_dim + i] = (half_cpu)(cosf(freq_val));
+                sin_fp16_buf[s * half_dim + i] = (half_cpu)(sinf(freq_val));
+            }
         }
     }
 

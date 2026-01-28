@@ -629,178 +629,147 @@ void layer_norm(
     Tensor *__restrict out,               /* [batches, hidden] */
     float eps, size_t batches, size_t layer_offset
 ) {
-    // 1. Pointers to current layer's weights
     const size_t hidden_size = scale->shape[scale->ndim - 1];
-    const float *x_buf = (float *)x->ptr();
-    float *out_buf = (float *)out->ptr();
 
-    if (scale->dtype == DType::FP32) {
-        const float *scale_buf = (const float *)scale->ptr({layer_offset});
-        const float *bias_buf = (const float *)bias->ptr({layer_offset});
+    const void *x_buf = x->ptr();
+    void *out_buf = out->ptr();
 
-        for (size_t i = 0; i < batches; i++) {
-            // 2. Calculate Mean
-            float mean = 0.0f;
-            #pragma omp simd reduction(+:mean)
-            for (size_t j = 0; j < hidden_size; j++) {
-                mean += x_buf[j];
-            }
-            mean /= hidden_size;
+    const DType::Type x_dtype   = x->dtype;
+    const DType::Type out_dtype = out->dtype;
+    const DType::Type p_dtype   = scale->dtype;
 
-            // 3. Calculate Variance (Sum of Squared Differences)
-            float variance = 0.0f;
-            #pragma omp simd reduction(+:variance)
-            for (size_t j = 0; j < hidden_size; j++) {
-                float diff = x_buf[j] - mean;
-                variance += diff * diff;
-            }
-            variance /= hidden_size;
+    const float inv_hs = 1.0f / hidden_size;
 
-            // 4. Calculate Inverse Standard Deviation
-            // nn.LayerNorm uses sqrt(variance + eps)
-            float inv_std = 1.0f / sqrt(variance + eps);
+    /* ===== Load parameter pointers ===== */
+    const float *scale_f32 = nullptr;
+    const float *bias_f32  = nullptr;
 
-            // 5. Normalize and Apply Affine Transform
-            #pragma omp simd
-            for (size_t j = 0; j < hidden_size; j++) {
-                // (x - mean) * inv_std * gamma + beta
-                out_buf[j] = (x_buf[j] - mean) * inv_std * scale_buf[j] + bias_buf[j];
-            }
+    const half_cpu *scale_f16 = nullptr;
+    const half_cpu *bias_f16  = nullptr;
 
-            x_buf += hidden_size;
-            out_buf += hidden_size;
+    const int8_t *scale_q = nullptr;
+    const int8_t *bias_q  = nullptr;
+    const float *scale_scales = nullptr;
+    const float *bias_scales  = nullptr;
+
+    size_t scale_gs = 0, bias_gs = 0;
+
+    if (p_dtype == DType::FP32) {
+        scale_f32 = static_cast<const float*>(scale->ptr({layer_offset}));
+        bias_f32  = static_cast<const float*>(bias->ptr({layer_offset}));
+    } else if (p_dtype == DType::FP16) {
+        scale_f16 = static_cast<const half_cpu*>(scale->ptr({layer_offset}));
+        bias_f16  = static_cast<const half_cpu*>(bias->ptr({layer_offset}));
+    } else { // INT8 + FP32 scales
+        PtrPair s = scale->ptr_all({layer_offset});
+        PtrPair b = bias->ptr_all({layer_offset});
+
+        scale_q = static_cast<const int8_t*>(s.buf);
+        bias_q  = static_cast<const int8_t*>(b.buf);
+
+        scale_scales = static_cast<const float*>(s.scale);
+        bias_scales  = static_cast<const float*>(b.scale);
+
+        scale_gs = scale->group_size;
+        bias_gs  = bias->group_size;
+    }
+
+    /* ===== Main kernel ===== */
+    #pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < batches; i++) {
+        const size_t base = i * hidden_size;
+
+        /* ---- mean ---- */
+        float mean = 0.0f;
+        #pragma omp simd reduction(+:mean)
+        for (size_t j = 0; j < hidden_size; j++) {
+            mean += load_x(x_buf, x_dtype, base + j);
         }
-    } else if (scale->dtype == DType::FP16) {
-        const half_cpu *scale_buf = static_cast<const half_cpu*>(scale->ptr({layer_offset}));
-        const half_cpu *bias_buf = static_cast<const half_cpu*>(bias->ptr({layer_offset}));
+        mean *= inv_hs;
 
-        const float inv_hs = 1.0f / (float)(hidden_size);
-        
-        #pragma omp parallel for schedule(static)
-        for (size_t i = 0; i < batches; i++) {
-            const float *x_buf_ptr = x_buf + i * hidden_size;
-            float *out_buf_ptr = out_buf + i * hidden_size;
-
-            // 1. Calculate Mean (Vectorized Reduction)
-            float mean = 0.0f;
-            #pragma omp simd reduction(+:mean)
-            for (size_t j = 0; j < hidden_size; j++) {
-                mean += x_buf_ptr[j];
-            }
-            mean *= inv_hs;
-
-            // 2. Calculate Variance
-            float variance = 0.0f;
-            #pragma omp simd reduction(+:variance)
-            for (size_t j = 0; j < hidden_size; j++) {
-                float diff = x_buf_ptr[j] - mean;
-                variance += diff * diff;
-            }
-            variance *= inv_hs;
-
-            // 3. Normalization Factor
-            float inv_std = 1.0f / sqrtf(variance + eps);
-
-            // 4. Normalize and Apply Affine Transform (Mixed Precision)
-            #pragma omp simd
-            for (size_t j = 0; j < hidden_size; j++) {
-                // scale_buf and bias_buf are fp16, converted via F16C during load
-                float gamma = static_cast<float>(scale_buf[j]);
-                float beta  = static_cast<float>(bias_buf[j]);
-                
-                out_buf_ptr[j] = (x_buf_ptr[j] - mean) * inv_std * gamma + beta;
-            }
+        /* ---- variance ---- */
+        float var = 0.0f;
+        #pragma omp simd reduction(+:var)
+        for (size_t j = 0; j < hidden_size; j++) {
+            float v = load_x(x_buf, x_dtype, base + j) - mean;
+            var += v * v;
         }
-    } else {
-        PtrPair scale_ptr = scale->ptr_all({layer_offset});
-        PtrPair bias_ptr = bias->ptr_all({layer_offset});
-        // Quantized scale (gamma) and its FP32 scales
-        const int8_t *scale_q = static_cast<const int8_t*>(scale_ptr.buf);
-        const float *scale_scales = static_cast<const float*>(scale_ptr.scale);
-        
-        // Quantized bias (beta) and its FP32 scales
-        const int8_t *bias_q = static_cast<const int8_t*>(bias_ptr.buf);
-        const float *bias_scales = static_cast<const float*>(bias_ptr.scale);
+        var *= inv_hs;
 
-        const size_t group_size = scale->group_size;
-        const size_t b_group_size = bias->group_size;
+        const float inv_std = 1.0f / sqrtf(var + eps);
 
-        for (size_t i = 0; i < batches; i++) {
-            // 1. Calculate Mean
-            float mean = 0.0f;
-            #pragma omp simd reduction(+:mean)
-            for (size_t j = 0; j < hidden_size; j++) {
-                mean += x_buf[j];
-            }
-            mean /= hidden_size;
+        /* ---- normalize + affine ---- */
+        #pragma omp simd
+        for (size_t j = 0; j < hidden_size; j++) {
+            float xval = load_x(x_buf, x_dtype, base + j);
 
-            // 2. Calculate Variance
-            float variance = 0.0f;
-            #pragma omp simd reduction(+:variance)
-            for (size_t j = 0; j < hidden_size; j++) {
-                float diff = x_buf[j] - mean;
-                variance += diff * diff;
-            }
-            variance /= hidden_size;
-
-            // 3. Normalization Factor
-            float inv_std = 1.0f / sqrtf(variance + eps);
-
-            // 4. Normalize and Apply Dequantized Affine Transform
-            #pragma omp simd
-            for (size_t j = 0; j < hidden_size; j++) {
-                // Dequantize gamma (scale)
-                float gamma = static_cast<float>(scale_q[j]) * scale_scales[j / group_size];
-                // Dequantize beta (bias)
-                float beta = static_cast<float>(bias_q[j]) * bias_scales[j / b_group_size];
-                
-                out_buf[j] = (x_buf[j] - mean) * inv_std * gamma + beta;
+            float gamma, beta;
+            if (p_dtype == DType::FP32) {
+                gamma = scale_f32[j];
+                beta  = bias_f32[j];
+            } else if (p_dtype == DType::FP16) {
+                gamma = static_cast<float>(scale_f16[j]);
+                beta  = static_cast<float>(bias_f16[j]);
+            } else { // INT8
+                gamma = static_cast<float>(scale_q[j]) *
+                        scale_scales[j / scale_gs];
+                beta  = static_cast<float>(bias_q[j]) *
+                        bias_scales[j / bias_gs];
             }
 
-            x_buf += hidden_size;
-            out_buf += hidden_size;
+            float y = (xval - mean) * inv_std * gamma + beta;
+            store_out(out_buf, out_dtype, base + j, y);
         }
     }
 }
 
 void vision_apply_rotary_inplace(
-    const Tensor *__restrict cos_total, // shape (T, HD)
-    const Tensor *__restrict sin_total, // shape (T, HD)
-    Tensor *__restrict tensor_buffer,   // shape (T, NH, HD)
+    const Tensor *__restrict cos_total, // (T, HD)
+    const Tensor *__restrict sin_total, // (T, HD)
+    Tensor *__restrict tensor_buffer,   // (T, NH, HD)
     long total_tokens, int num_heads, int head_dim
 ) {
-    const float *__restrict cos_tensor = (const float *)cos_total->ptr();
-    const float *__restrict sin_tensor = (const float *)sin_total->ptr();
-    float *__restrict buffer = (float *)tensor_buffer->ptr();
-    const int half_dim = head_dim / 2;
+    const void *__restrict cos_buf = cos_total->ptr();
+    const void *__restrict sin_buf = sin_total->ptr();
+    void *__restrict buf = tensor_buffer->ptr();
 
-    // Parallelize across tokens - this is usually the largest dimension
+    const DType::Type cs_dtype  = cos_total->dtype;
+    const DType::Type x_dtype   = tensor_buffer->dtype;
+
+    const int half_dim = head_dim >> 1;
+    const size_t head_stride  = head_dim;
+    const size_t token_stride = (size_t)num_heads * head_dim;
+
     #pragma omp parallel for schedule(static)
     for (long t = 0; t < total_tokens; ++t) {
-        
-        // Pre-calculate the cos/sin row for this specific token
-        const float *c_ptr = cos_tensor + (t * head_dim);
-        const float *s_ptr = sin_tensor + (t * head_dim);
+        const size_t cs_base = (size_t)t * head_dim;
+        const size_t x_base  = (size_t)t * token_stride;
 
         for (int h = 0; h < num_heads; ++h) {
-            // Calculate the start of the current head's data
-            float *current_x1 = buffer + (t * num_heads * head_dim) + (h * head_dim);
-            float *current_x2 = current_x1 + half_dim;
+            const size_t head_base = x_base + (size_t)h * head_stride;
 
-            // Use pragma simd to tell the compiler to use AVX2/AVX-512 automatically
             #pragma omp simd
             for (int m = 0; m < half_dim; ++m) {
-                float x1_val = current_x1[m];
-                float x2_val = current_x2[m];
-                
-                float c1 = c_ptr[m];
-                float s1 = s_ptr[m];
-                float c2 = c_ptr[m + half_dim];
-                float s2 = s_ptr[m + half_dim];
+                const size_t i1 = head_base + m;
+                const size_t i2 = head_base + m + half_dim;
 
-                // Rotation math
-                current_x1[m] = (x1_val * c1) - (x2_val * s1);
-                current_x2[m] = (x2_val * c2) + (x1_val * s2);
+                // Load x
+                float x1 = load_x(buf, x_dtype, i1);
+                float x2 = load_x(buf, x_dtype, i2);
+
+                // Load cos/sin (same dtype for both)
+                float c1 = load_x(cos_buf, cs_dtype, cs_base + m);
+                float s1 = load_x(sin_buf, cs_dtype, cs_base + m);
+                float c2 = load_x(cos_buf, cs_dtype, cs_base + m + half_dim);
+                float s2 = load_x(sin_buf, cs_dtype, cs_base + m + half_dim);
+
+                // Rotary
+                float y1 = (x1 * c1) - (x2 * s1);
+                float y2 = (x2 * c2) + (x1 * s2);
+
+                // Store back
+                store_out(buf, x_dtype, i1, y1);
+                store_out(buf, x_dtype, i2, y2);
             }
         }
     }
@@ -811,15 +780,19 @@ void tensor_transpose(
     Tensor *__restrict out_tensor,
     int D0, int D1, int D2
 ) {
-    const float *__restrict in  = (const float *)in_tensor->ptr();
-    float *__restrict out = (float *)out_tensor->ptr();
+    if (in_tensor->dtype != out_tensor->dtype) {
+        fprintf(stderr, "Wrong dtype b/w in_tensor %s and out_tensor %s\n", dtypeToStr(in_tensor->dtype), dtypeToStr(out_tensor->dtype));
+        exit(1);
+    }
+    const void *__restrict in  = in_tensor->ptr();
+    void *__restrict out = out_tensor->ptr();
+
+    const size_t elem_size = in_tensor->get_dtype_size(); // 2 for FP16, 4 for FP32
+    const size_t block_size = (size_t)D2 * elem_size;
 
     const int in_stride_0  = D1 * D2;
     const int out_stride_1 = D0 * D2;
-    const size_t block_size = (size_t)D2 * sizeof(float);
 
-    // Tile sizes (tuneable)
-    // Rule of thumb: Ti * Tj * D2 * sizeof(float) ~ L1 or L2 size
     const int Ti = 16;
     const int Tj = 16;
 
@@ -831,11 +804,12 @@ void tensor_transpose(
             const int j_end = (jj + Tj < D1) ? jj + Tj : D1;
 
             for (int i = ii; i < i_end; ++i) {
-                const float *in_i = in + i * in_stride_0;
-                for (int j = jj; j < j_end; ++j) {
+                const char *in_i = (const char *)in + (size_t)i * in_stride_0 * elem_size;
 
-                    const float *src = in_i + j * D2;
-                    float *dst = out + (j * out_stride_1) + (i * D2);
+                for (int j = jj; j < j_end; ++j) {
+                    const void *src = in_i + (size_t)j * D2 * elem_size;
+                    void *dst = (char *)out
+                        + ((size_t)j * out_stride_1 + (size_t)i * D2) * elem_size;
 
                     memcpy(dst, src, block_size);
                 }
@@ -844,149 +818,10 @@ void tensor_transpose(
     }
 }
 
-static inline float avx2_max(const float *arr, size_t N) {
-    size_t i = 0;
-
-    // Initialize vector accumulator with -inf
-    __m256 vmax = _mm256_set1_ps(-FLT_MAX);
-
-    // Process 8 floats at a time
-    for (; i + 7 < N; i += 8) {
-        __m256 v = _mm256_loadu_ps(arr + i);
-        vmax = _mm256_max_ps(vmax, v);
-    }
-
-    // Horizontal reduction of vmax
-    __m128 low  = _mm256_castps256_ps128(vmax);
-    __m128 high = _mm256_extractf128_ps(vmax, 1);
-    __m128 vmax128 = _mm_max_ps(low, high);
-
-    vmax128 = _mm_max_ps(vmax128, _mm_movehl_ps(vmax128, vmax128));
-    vmax128 = _mm_max_ps(vmax128, _mm_shuffle_ps(vmax128, vmax128, 0x55));
-
-    float max_val = _mm_cvtss_f32(vmax128);
-
-    // Handle remaining elements
-    for (; i < N; i++) {
-        if (arr[i] > max_val) {
-            max_val = arr[i];
-        }
-    }
-
-    return max_val;
-}
-
-static inline float avx2_max_and_scale(float *arr, size_t N, float scale) {
-    size_t i = 0;
-
-    // Initialize vector accumulator with -inf
-    __m256 vmax = _mm256_set1_ps(-FLT_MAX);
-    __m256 v_scale = _mm256_set1_ps(scale);
-
-    // Process 8 floats at a time
-    for (; i + 7 < N; i += 8) {
-        __m256 v = _mm256_loadu_ps(arr + i);
-        v = _mm256_mul_ps(v, v_scale);
-        vmax = _mm256_max_ps(vmax, v);
-        _mm256_storeu_ps(arr + i, v);
-    }
-
-    // Horizontal reduction of vmax
-    __m128 low  = _mm256_castps256_ps128(vmax);
-    __m128 high = _mm256_extractf128_ps(vmax, 1);
-    __m128 vmax128 = _mm_max_ps(low, high);
-
-    vmax128 = _mm_max_ps(vmax128, _mm_movehl_ps(vmax128, vmax128));
-    vmax128 = _mm_max_ps(vmax128, _mm_shuffle_ps(vmax128, vmax128, 0x55));
-
-    float max_val = _mm_cvtss_f32(vmax128);
-
-    // Handle remaining elements
-    for (; i < N; i++) {
-        arr[i] *= scale;
-        if (arr[i] > max_val) {
-            max_val = arr[i];
-        }
-    }
-
-    return max_val;
-}
-
-static inline __m256 exp256_ps(__m256 x) {
-    // Clamp
-    const __m256 max_x = _mm256_set1_ps(88.3762626647949f);
-    const __m256 min_x = _mm256_set1_ps(-88.3762626647949f);
-    x = _mm256_min_ps(x, max_x);
-    x = _mm256_max_ps(x, min_x);
-
-    // Constants
-    const __m256 ln2      = _mm256_set1_ps(0.69314718056f);
-    const __m256 inv_ln2  = _mm256_set1_ps(1.44269504089f);
-
-    // n = floor(x / ln2)
-    __m256 fx = _mm256_mul_ps(x, inv_ln2);
-    fx = _mm256_floor_ps(fx);
-
-    __m256i emm0 = _mm256_cvttps_epi32(fx);
-
-    // g = x - n * ln2
-    __m256 g = _mm256_fnmadd_ps(fx, ln2, x);
-
-    // Polynomial approximation of exp(g)
-    // exp(g) ≈ 1 + g + g²/2 + g³/6 + g⁴/24
-    __m256 y = _mm256_set1_ps(1.0f);
-    y = _mm256_fmadd_ps(g, y, _mm256_set1_ps(1.0f));
-
-    __m256 g2 = _mm256_mul_ps(g, g);
-    y = _mm256_fmadd_ps(g2, _mm256_set1_ps(0.5f), y);
-
-    __m256 g3 = _mm256_mul_ps(g2, g);
-    y = _mm256_fmadd_ps(g3, _mm256_set1_ps(1.0f / 6.0f), y);
-
-    __m256 g4 = _mm256_mul_ps(g3, g);
-    y = _mm256_fmadd_ps(g4, _mm256_set1_ps(1.0f / 24.0f), y);
-
-    // Build 2^n
-    emm0 = _mm256_add_epi32(emm0, _mm256_set1_epi32(127));
-    emm0 = _mm256_slli_epi32(emm0, 23);
-    __m256 pow2n = _mm256_castsi256_ps(emm0);
-
-    return _mm256_mul_ps(y, pow2n);
-}
-
-static inline float avx2_sum_exp_max(float *arr, size_t T, float max_score) {
-    __m256 vsum = _mm256_setzero_ps();
-    __m256 vmax = _mm256_set1_ps(max_score);
-
-    int j = 0;
-    for (; j + 7 < T; j += 8) {
-        __m256 v = _mm256_loadu_ps(arr + j);
-        v = _mm256_sub_ps(v, vmax);
-        v = exp256_ps(v);
-        _mm256_storeu_ps(arr + j, v);
-        vsum = _mm256_add_ps(vsum, v);
-    }
-
-    __m128 lo = _mm256_castps256_ps128(vsum);
-    __m128 hi = _mm256_extractf128_ps(vsum, 1);
-    __m128 s  = _mm_add_ps(lo, hi);
-
-    s = _mm_hadd_ps(s, s);
-    s = _mm_hadd_ps(s, s);
-
-    float sum = _mm_cvtss_f32(s);
-
-    for (; j < T; j++) {
-        arr[j] = expf(arr[j] - max_score);
-        sum += arr[j];
-    }
-
-    return sum;
-}
-
 void vision_att(
-    const float *q, const float *k, const float *v, float *attn_scores, 
-    float *out, int num_heads, int T, int D, float scale
+    const Tensor *q_tensor, const Tensor *k_tensor,
+    const Tensor *v_tensor, Tensor *attn_scores_tensor, 
+    Tensor *out_tensor, int num_heads, int T, int D, float scale
 ) {
     #ifdef CPU_TIME_GEMM
         CPUTimer timer("gemm_att");
@@ -994,21 +829,39 @@ void vision_att(
     #endif
 
     size_t head_stride = (size_t)T * D;
+    DType::Type q_type = q_tensor->dtype;
+    DType::Type k_type = k_tensor->dtype;
+    DType::Type v_type = v_tensor->dtype;
+    DType::Type att_s_type = attn_scores_tensor->dtype;
+    DType::Type out_type = out_tensor->dtype;
+
+    const char *q = (const char *)q_tensor->ptr();
+    const char *k = (const char *)k_tensor->ptr();
+    const char *v = (const char *)v_tensor->ptr();
+    char *out = (char *)out_tensor->ptr();
+
+    const size_t q_size = q_tensor->get_dtype_size();
+    const size_t k_size = k_tensor->get_dtype_size();
+    const size_t v_size = v_tensor->get_dtype_size();
+    const size_t out_size = out_tensor->get_dtype_size();
+
+    float *attn_scores = (float *)attn_scores_tensor->ptr();
 
     for (int h = 0; h < num_heads; h++) {
-        const float *qh = q + h * head_stride;
-        const float *kh = k + h * head_stride;
-        const float *vh = v + h * head_stride;
-        float *oh = out + h * head_stride;
+        const char *qh = q + h * head_stride * q_size;
+        const char *kh = k + h * head_stride * k_size;
+        const char *vh = v + h * head_stride * v_size;
+        char *oh = out + h * head_stride * out_size;
 
         for (int i = 0; i < T; i++) {
-            const float *qi = qh + i * D;
+            const char *qi = qh + i * D * q_size;
+            char *oi = oh + i * D * out_size;
 
-            gemm_att(qi, kh, attn_scores, scale, T, D, true);
+            gemm_att(qi, kh, attn_scores, scale, T, D, true, q_type, k_type, att_s_type);
             float max_score = avx2_max(attn_scores, T);
             // float max_score = avx2_max_and_scale(attn_scores, T, scale);
             float sum = avx2_sum_exp_max(attn_scores, T, max_score);
-            gemm_att(attn_scores, vh, oh + i * D, 1.0f / sum, D, T, false);
+            gemm_att(attn_scores, vh, oi, 1.0f / sum, D, T, false, att_s_type, v_type, out_type);
         }
     }
 }
@@ -1017,13 +870,42 @@ void gelu_tanh(Tensor *x, size_t x_size) {
     const float sqrt_2_over_pi = 0.7978845608028654f;  // sqrt(2/pi)
     const float coeff = 0.044715f;
 
-    float *x_buf = (float *)x->ptr();
+    switch (x->dtype) {
 
-    for (size_t i = 0; i < x_size; ++i) {
-        float xi = x_buf[i];
-        float xi3 = xi * xi * xi;
-        float inner = sqrt_2_over_pi * (xi + coeff * xi3);
-        float tanh_inner = tanhf(inner);
-        x_buf[i] = 0.5f * xi * (1.0f + tanh_inner);
+    case DType::FP32: {
+        float *x_buf = (float *)x->ptr();
+
+        for (size_t i = 0; i < x_size; ++i) {
+            float xi = x_buf[i];
+            float xi3 = xi * xi * xi;
+            float inner = sqrt_2_over_pi * (xi + coeff * xi3);
+            float tanh_inner = tanhf(inner);
+            x_buf[i] = 0.5f * xi * (1.0f + tanh_inner);
+        }
+        break;
+    }
+
+    case DType::FP16: {
+        half_cpu *x_buf = (half_cpu *)x->ptr();
+
+        for (size_t i = 0; i < x_size; ++i) {
+            // FP16 → FP32
+            float xi = (float)x_buf[i];
+
+            float xi3 = xi * xi * xi;
+            float inner = sqrt_2_over_pi * (xi + coeff * xi3);
+            float tanh_inner = tanhf(inner);
+
+            float y = 0.5f * xi * (1.0f + tanh_inner);
+
+            // FP32 → FP16
+            x_buf[i] = (half_cpu)y;
+        }
+        break;
+    }
+
+    default:
+        fprintf(stderr, "gelu_tanh: unsupported dtype of x: %s\n", dtypeToStr(x->dtype));
+        exit(1);
     }
 }

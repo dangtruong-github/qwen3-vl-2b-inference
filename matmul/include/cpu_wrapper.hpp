@@ -18,6 +18,7 @@ void linear(
     DType::Type type_c, size_t group_size
 );
 void gemm_att(
-    const float *mat_A, const float *mat_B, float *mat_C,
-    const float scale, size_t N, size_t K, bool mat_B_transpose
+    const void *mat_A, const void *mat_B, void *mat_C,
+    const float scale, size_t N, size_t K, bool mat_B_transpose,
+    DType::Type type_a, DType::Type type_b, DType::Type type_c
 );

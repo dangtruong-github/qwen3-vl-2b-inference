@@ -242,6 +242,21 @@ void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
                     printf("%.2f ", fp32_buf[i]);
                 }
             }
+        } else if (dtype == DType::FP16) {
+            half_cpu *fp16_buf = (half_cpu *)buf;
+            if (full_tensor) {
+                printf("\n");
+                for (size_t i = 0; i < batches; i++) {
+                    for (size_t j = 0; j < elem; j++) {
+                        printf("%.2f ", (float)(fp16_buf[i * elem + j]));
+                    }
+                    printf("\n");
+                }
+            } else {
+                for (size_t i = 0; i < elem; i++) {
+                    printf("%.2f ", (float)(fp16_buf[i]));
+                }
+            }
         } else if (dtype == DType::INT32) {
             int *int32_buf = (int *)buf;
             if (full_tensor) {

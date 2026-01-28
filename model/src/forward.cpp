@@ -210,11 +210,8 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         #endif
         
         vision_att(
-            (const float *)state->vision_q->ptr(),
-            (const float *)state->vision_k->ptr(),
-            (const float *)state->vision_t->ptr(),
-            (float *)state->vision_attn_scores->ptr(),
-            (float *)state->vision_mlp_out->ptr(), 
+            state->vision_q, state->vision_k, state->vision_t,
+            state->vision_attn_scores, state->vision_mlp_out, 
             VNH, total_tokens, VHD, vision_scale
         );
         
@@ -334,6 +331,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
 
         #ifdef PRINT_LOGITS
             state->vision_x->printDebug("vision_x");
+            if (l >= 12) {
+                state->vision_x->printDebug("vision_x", true);
+                exit(1);
+            }
         #endif
 
         #ifdef PRINT_LOGITS_2
@@ -392,7 +393,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
                 w_mlp2_d_ptr.scale, b_mlp2_d_ptr.buf, b_mlp2_d_ptr.scale,
                 state->vision_deep_stack->ptr({d_stride}), d_tokens, OH, VI,
                 !weight->vl_d_mlp2_w->permuted, state->vision_mlp_out->dtype,
-                dtype_weight, dtype_scale, state->vision_t->dtype,
+                dtype_weight, dtype_scale, state->vision_deep_stack->dtype,
                 vision_group_size
             );
 
@@ -447,7 +448,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         vl_merge_mlp2_w_ptr.scale, vl_merge_mlp2_b_ptr.buf,
         vl_merge_mlp2_b_ptr.scale, state->vision_x->ptr(), d_tokens, OH, VI,
         !weight->vl_merge_mlp2_w->permuted, state->vision_mlp_out->dtype,
-        dtype_weight, dtype_scale, state->vision_t->dtype, vision_group_size
+        dtype_weight, dtype_scale, state->vision_x->dtype, vision_group_size
     );
 
     #ifdef PRINT_LOGITS
@@ -673,8 +674,8 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         #endif
 
         if (l < config->vision_deep_stack_depth && img_token_true) {
-            const float *deep_ptr = (const float *)state->vision_deep_stack->ptr({l, (size_t)state->cur_img_token_id});
-            add_vector(state->x, deep_ptr, 1ll * BATCH_SIZE * hidden_size);
+            const void *deep_ptr = state->vision_deep_stack->ptr({l, (size_t)state->cur_img_token_id});
+            add_vector(state->x, deep_ptr, state->vision_deep_stack->dtype, 1ll * BATCH_SIZE * hidden_size);
 
             #ifdef PRINT_LOGITS
                 state->x->printDebug("x");

@@ -9,6 +9,7 @@
 #include "../../matmul/module.hpp"
 #include "../../utils/module.hpp"
 #include "text_layer.hpp"
+#include "simd_utils.hpp"
 
 // #define DEBUG
 #define max(a, b) ((a) > (b) ? (a) : (b))
@@ -46,7 +47,8 @@ void tensor_transpose(
     int D0, int D1, int D2
 );
 void vision_att(
-    const float *q, const float *k, const float *v, float *attn_scores, 
-    float *out, int num_heads, int T, int D, float scale
+    const Tensor *q_tensor, const Tensor *k_tensor,
+    const Tensor *v_tensor, Tensor *attn_scores_tensor, 
+    Tensor *out_tensor, int num_heads, int T, int D, float scale
 );
 void gelu_tanh(Tensor *x, size_t x_size);

@@ -8,6 +8,7 @@
 #include <math.h>
 #include "../../matmul/module.hpp"
 #include "../../utils/module.hpp"
+#include "simd_utils.hpp"
 
 // #define DEBUG
 #define max(a, b) ((a) > (b) ? (a) : (b))
@@ -43,8 +44,8 @@ void add_vector(
 );
 void add_vector(
     Tensor *__restrict add_to,
-    const float *__restrict add_from,
-    size_t size_vec
+    const void *__restrict add_from,
+    DType::Type add_from_type, size_t size_vec
 );
 void swiglu(
     Tensor *__restrict gate,  // [d]
