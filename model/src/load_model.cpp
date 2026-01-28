@@ -343,21 +343,21 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->logits = new Tensor({BATCH_SIZE, V});
 
     // ---- KV cache ----
-    state->key_cache = new Tensor({BATCH_SIZE, L, NKV, S, D});
-    state->value_cache = new Tensor({BATCH_SIZE, L, NKV, S, D});
+    state->key_cache = new Tensor({BATCH_SIZE, L, NKV, S, D}); //, DType::FP16);
+    state->value_cache = new Tensor({BATCH_SIZE, L, NKV, S, D}); //, DType::FP16);
 
     // -- Vision states --
     state->vision_x = new Tensor({VNP_max, VH}); //, DType::FP16);
-    state->vision_t = new Tensor({VNP_max, VH}); //, DType::FP16);
-    state->vision_q = new Tensor({VNP_max, VH}); //, DType::FP16);
-    state->vision_k = new Tensor({VNP_max, VH}); //, DType::FP16);
+    state->vision_t = new Tensor({VNP_max, VH}, DType::FP16);
+    state->vision_q = new Tensor({VNP_max, VH}, DType::FP16);
+    state->vision_k = new Tensor({VNP_max, VH}, DType::FP16);
 
     state->vision_cos_tensor = new Tensor({VNP_max, VD / 4});    state->vision_sin_tensor = new Tensor({VNP_max, VD / 4}); 
 
     state->vision_pe_cos = new Tensor({VNP_max, VD}); 
     state->vision_pe_sin = new Tensor({VNP_max, VD});
     
-    state->vision_mlp_out = new Tensor({VNP_max, VI}); //, DType::FP16);
+    state->vision_mlp_out = new Tensor({VNP_max, VI}, DType::FP16);
 
     state->vision_deep_stack = new Tensor({VDS, VNP_max, H}, DType::FP16);
 

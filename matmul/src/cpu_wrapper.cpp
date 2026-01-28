@@ -232,33 +232,40 @@ void linear_f32a_f16b_f16c(
     const float *mat_A, const half_cpu *mat_B, const half_cpu *mat_bias,
     half_cpu *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 ) {
-    #pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < M; ++i) {
-        for (size_t j = 0; j < N; ++j) {
-            float sum = mat_bias ? (float)mat_bias[j] : 0.0f;
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+        // Must implement AVX512
+        f32a_f16bc_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
+    #elif defined(__AVX2__) && defined(__FMA__)
+        f32a_f16bc_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
+    #else
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t j = 0; j < N; ++j) {
+                float sum = mat_bias ? (float)mat_bias[j] : 0.0f;
 
-            const float *A_row = mat_A + i * K;
+                const float *A_row = mat_A + i * K;
 
-            if (!mat_B_transpose) {
-                // B is (K, N)
-                for (size_t k = 0; k < K; ++k) {
-                    float a = A_row[k];
-                    float b = (float)mat_B[k * N + j];
-                    sum += a * b;
+                if (!mat_B_transpose) {
+                    // B is (K, N)
+                    for (size_t k = 0; k < K; ++k) {
+                        float a = A_row[k];
+                        float b = (float)mat_B[k * N + j];
+                        sum += a * b;
+                    }
+                } else {
+                    // B is (N, K)
+                    const half_cpu *B_row = mat_B + j * K;
+                    for (size_t k = 0; k < K; ++k) {
+                        float a = A_row[k];
+                        float b = (float)B_row[k];
+                        sum += a * b;
+                    }
                 }
-            } else {
-                // B is (N, K)
-                const half_cpu *B_row = mat_B + j * K;
-                for (size_t k = 0; k < K; ++k) {
-                    float a = A_row[k];
-                    float b = (float)B_row[k];
-                    sum += a * b;
-                }
+
+                mat_C[i * N + j] = (half_cpu)sum;
             }
-
-            mat_C[i * N + j] = (half_cpu)sum;
         }
-    }
+    #endif
 }
 
 void linear(
@@ -270,7 +277,7 @@ void linear(
 ) {
     #ifdef CPU_TIME
         CPUTimer timer("linear");
-        printf("Shape of matmul w/ precision %s: M=%zu, N=%zu, K=%zu, bias=%d, B transpose=%d\n", dtypeToStr(type_b), M, N, K, (mat_bias_in != nullptr), mat_B_transpose);
+        printf("A=%s, B=%s, C=%s, M=%zu, N=%zu, K=%zu, bias=%d, B_trans=%d\n", dtypeToStr(type_a), dtypeToStr(type_b), dtypeToStr(type_c), M, N, K, (mat_bias_in != nullptr), mat_B_transpose);
     #endif
 
     if (type_a == DType::FP32 && type_c == DType::FP32) {

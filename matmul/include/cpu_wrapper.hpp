@@ -9,6 +9,7 @@
 #include "cpu_f32a_f16b_f32c_avx2.hpp"
 #include "cpu_f32a_i8f32sb_f32c_avx2.hpp"
 #include "cpu_att_fp32_full_avx2.hpp"
+#include "cpu_f32a_f16bc_avx2.hpp"
 
 void linear(
     const void *mat_A, const void *mat_B_in, const void *mat_B_scale,
