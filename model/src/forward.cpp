@@ -331,10 +331,6 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
 
         #ifdef PRINT_LOGITS
             state->vision_x->printDebug("vision_x");
-            if (l >= 12) {
-                state->vision_x->printDebug("vision_x", true);
-                exit(1);
-            }
         #endif
 
         #ifdef PRINT_LOGITS_2

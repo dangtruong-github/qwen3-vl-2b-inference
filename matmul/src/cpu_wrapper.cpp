@@ -188,25 +188,32 @@ void linear_fp16_full(
     const half_cpu *mat_A, const half_cpu *mat_B, const half_cpu *mat_bias,
     half_cpu *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 ) {
-    #pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < M; ++i) {
-        for (size_t j = 0; j < N; ++j) {
-            float sum = mat_bias ? (float)mat_bias[j] : 0.0f;
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+        // Must implement AVX512
+        fp16_full_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
+    #elif defined(__AVX2__) && defined(__FMA__)
+        fp16_full_avx2_kernel(mat_A, mat_B, mat_bias, mat_C, M, N, K, mat_B_transpose);
+    #else
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t j = 0; j < N; ++j) {
+                float sum = mat_bias ? (float)mat_bias[j] : 0.0f;
 
-            for (size_t k = 0; k < K; ++k) {
-                float a = (float)mat_A[i * K + k];
-                float b = mat_B_transpose
-                        ? (float)mat_B[j * K + k]   // (N, K)
-                        : (float)mat_B[k * N + j];  // (K, N)
-                sum += a * b;
+                for (size_t k = 0; k < K; ++k) {
+                    float a = (float)mat_A[i * K + k];
+                    float b = mat_B_transpose
+                            ? (float)mat_B[j * K + k]   // (N, K)
+                            : (float)mat_B[k * N + j];  // (K, N)
+                    sum += a * b;
+                }
+
+                mat_C[i * N + j] = (half_cpu)sum;
             }
-
-            mat_C[i * N + j] = (half_cpu)sum;
         }
-    }
+    #endif
 }
 
-void linear_f16a_f16b_f32c(
+void linear_f16ab_f32c(
     const half_cpu *mat_A, const half_cpu *mat_B, const half_cpu *mat_bias,
     float *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 ) {
@@ -228,7 +235,7 @@ void linear_f16a_f16b_f32c(
     }
 }
 
-void linear_f32a_f16b_f16c(
+void linear_f32a_f16bc(
     const float *mat_A, const half_cpu *mat_B, const half_cpu *mat_bias,
     half_cpu *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
 ) {
@@ -313,7 +320,7 @@ void linear(
         }
     } else if (type_a == DType::FP16 && type_c == DType::FP32) {
         if (type_b == DType::FP16) {
-            linear_f16a_f16b_f32c(
+            linear_f16ab_f32c(
                 static_cast<const half_cpu*>(mat_A),
                 static_cast<const half_cpu*>(mat_B_in), 
                 static_cast<const half_cpu*>(mat_bias_in),
@@ -324,7 +331,7 @@ void linear(
         }
     } else if (type_a == DType::FP32 && type_c == DType::FP16) {
         if (type_b == DType::FP16) {
-            linear_f32a_f16b_f16c(
+            linear_f32a_f16bc(
                 static_cast<const float*>(mat_A),
                 static_cast<const half_cpu*>(mat_B_in), 
                 static_cast<const half_cpu*>(mat_bias_in),
