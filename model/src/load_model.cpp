@@ -84,7 +84,8 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
         (fread(&(config->video_token_id), sizeof(int), 1, file) != 1)||
         (fread(&(config->text_bits), sizeof(int), 1, file) != 1) ||
         (fread(&(config->group_size), sizeof(int), 1, file) != 1) ||
-        (fread(&(config->vision_bits), sizeof(int), 1, file) != 1)
+        (fread(&(config->vision_bits), sizeof(int), 1, file) != 1) ||
+        (fread(&(config->group_quantized), sizeof(int), 1, file) != 1)
     ) {
         fprintf(stderr, "Error reading config field from file.\n");
         fclose(file);
@@ -142,6 +143,8 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
 
     off_t current_offset = ftell(file);
 
+    bool text_gq = config->group_quantized ? true : false;
+
     auto map_tensor = [&](Tensor** target, std::vector<size_t> dims, const char* name, size_t weight_bits, bool print_shape = true) {
         size_t count = 1;
         size_t size_elem;
@@ -163,17 +166,17 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
                 size_elem = 1;
             }
             for (auto d : dims) count *= d;
-            size_t group_size = config->group_size;
-            if (count % group_size) {
+            size_t stride_size = config->group_quantized ? config->group_size : dims.back();
+            if (count % stride_size) {
                 fprintf(stderr, "Not even weights %s\n", name);
                 exit(1);
             }
-            size_t count_scales = count / group_size;
+            size_t count_scales = count / stride_size;
             size_t size_scale_elem = 4;
             DType::Type scale_type_elem = DType::FP32;
             void *scale_ptr = mmap_weight_safe(fd, count_scales * size_scale_elem, current_offset, scale_type_elem);
             void *ptr = mmap_weight_safe(fd, count * size_elem, current_offset, type_elem);
-            *target = new Tensor(dims, ptr, scale_ptr, group_size, type_elem, scale_type_elem);
+            *target = new Tensor(dims, ptr, scale_ptr, stride_size, text_gq, type_elem, scale_type_elem);
         }
         if (print_shape) (*target)->printShape(name);
     };

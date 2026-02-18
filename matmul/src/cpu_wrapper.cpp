@@ -121,20 +121,20 @@ void linear_fp32_full(
 }
 
 void linear_f32a_i8f32sb_f32c(
-    const float* mat_A, const int8_t* mat_B_in, const float* mat_B_scales,
-    const int8_t* mat_bias_in, const float* mat_bias_scale, float* mat_C,
+    const float* mat_A, const int8_t* mat_B_in,
+    const float* mat_B_scales, float* mat_C,
     size_t M, size_t N, size_t K, bool mat_B_transpose, size_t group_size
 ) {
     #if defined(__AVX512F__) && defined(__AVX512DQ__)
         // Must implement AVX512
         f32a_i8f32sb_f32c_avx2_kernel(
-            mat_A, mat_B_in, mat_B_scales, mat_bias_in, mat_bias_scale,
-            mat_C, M, N, K, mat_B_transpose, group_size
+            mat_A, mat_B_in, mat_B_scales, mat_C,
+            M, N, K, mat_B_transpose, group_size
         );
     #elif defined(__AVX2__) && defined(__FMA__)
         f32a_i8f32sb_f32c_avx2_kernel(
-            mat_A, mat_B_in, mat_B_scales, mat_bias_in, mat_bias_scale,
-            mat_C, M, N, K, mat_B_transpose, group_size
+            mat_A, mat_B_in, mat_B_scales, mat_C,
+            M, N, K, mat_B_transpose, group_size
         );
     #else
         #pragma omp parallel for collapse(2)
@@ -166,22 +166,50 @@ void linear_f32a_i8f32sb_f32c(
                 mat_C[i * N + j] = acc;
             }
         }
+    #endif
+}
 
-        
+void linear_f32a_i8f32sb_f32c_rq(
+    const float* mat_A, const int8_t* mat_B_in,
+    const float* mat_B_scales, float* mat_C,
+    size_t M, size_t N, size_t K, bool mat_B_transpose
+) {
+    /*
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+        // Must implement AVX512
+        f32a_i8f32sb_f32c_rq_avx2_kernel(
+            mat_A, mat_B_in, mat_B_scales, mat_C,
+            M, N, K, mat_B_transpose
+        );
+    #elif defined(__AVX2__) && defined(__FMA__)
+        f32a_i8f32sb_f32c_rq_avx2_kernel(
+            mat_A, mat_B_in, mat_B_scales, mat_C,
+            M, N, K, mat_B_transpose
+        );
+    #else
+    */
+        #pragma omp parallel for collapse(2)
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t j = 0; j < N; ++j) {
+                float acc = 0.0f;
+                float scale = mat_B_scales[j];
 
-        // -------- Bias --------
-        if (mat_bias_in && mat_bias_scale) {
-            #pragma omp parallel for collapse(2)
-            for (size_t i = 0; i < M; ++i) {
-                for (size_t j = 0; j < N; ++j) {
-                    size_t bias_scale_idx = j / group_size;
-                    float bias =
-                        (float)mat_bias_in[j] * mat_bias_scale[bias_scale_idx];
-                    mat_C[i * N + j] += bias;
+                // -------- GEMM --------
+                for (size_t k = 0; k < K; ++k) {
+                    float a = mat_A[i * K + k];
+
+                    // linear index into B (matches quantizer layout)
+                    size_t b_linear_idx;
+                    b_linear_idx = k * N + j;
+
+                    float b = (float)mat_B_in[b_linear_idx] * scale;
+                    acc += a * b;
                 }
+
+                mat_C[i * N + j] = acc;
             }
         }
-    #endif
+    // #endif
 }
 
 void linear_fp16_full(
@@ -280,7 +308,7 @@ void linear(
     const void *mat_bias_in, const void *mat_bias_scale,
     void *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,
     DType::Type type_a, DType::Type type_b, DType::Type type_b_scale,
-    DType::Type type_c, size_t group_size
+    DType::Type type_c, bool group_quantized, size_t group_size
 ) {
     #ifdef CPU_TIME
         CPUTimer timer("linear");
@@ -306,16 +334,24 @@ void linear(
                 M, N, K, mat_B_transpose
             );
             return;
-        } else if (type_b == DType::INT8 && type_b_scale == DType::FP32)  {
-            linear_f32a_i8f32sb_f32c(
-                static_cast<const float*>(mat_A),
-                static_cast<const int8_t*>(mat_B_in),
-                static_cast<const float*>(mat_B_scale),
-                static_cast<const int8_t*>(mat_bias_in),
-                static_cast<const float*>(mat_bias_scale),
-                static_cast<float*>(mat_C),
-                M, N, K, mat_B_transpose, group_size
-            );
+        } else if (type_b == DType::INT8 && type_b_scale == DType::FP32 && mat_bias_in == nullptr) {
+            if (group_quantized) {
+                linear_f32a_i8f32sb_f32c(
+                    static_cast<const float*>(mat_A),
+                    static_cast<const int8_t*>(mat_B_in),
+                    static_cast<const float*>(mat_B_scale),
+                    static_cast<float*>(mat_C),
+                    M, N, K, mat_B_transpose, group_size
+                );
+            } else {
+                linear_f32a_i8f32sb_f32c_rq(
+                    static_cast<const float*>(mat_A),
+                    static_cast<const int8_t*>(mat_B_in),
+                    static_cast<const float*>(mat_B_scale),
+                    static_cast<float*>(mat_C),
+                    M, N, K, mat_B_transpose
+                );
+            }
             return;
         }
     } else if (type_a == DType::FP16 && type_c == DType::FP32) {
@@ -330,7 +366,7 @@ void linear(
             return;
         }
     } else if (type_a == DType::FP32 && type_c == DType::FP16) {
-        if (type_b == DType::FP16) {
+        if (type_b == DType::FP16 && group_quantized) {
             linear_f32a_f16bc(
                 static_cast<const float*>(mat_A),
                 static_cast<const half_cpu*>(mat_B_in), 
@@ -353,7 +389,7 @@ void linear(
         }
     }
 
-    fprintf(stderr, "DType matmul not supported: type_a=%s, type_b=%s, type_b_scale=%s, type_c=%s\n", dtypeToStr(type_a), dtypeToStr(type_b), dtypeToStr(type_b_scale), dtypeToStr(type_c));
+    fprintf(stderr, "DType matmul not supported: type_a=%s, type_b=%s, type_b_scale=%s, type_c=%s, group_quantized=%d\n", dtypeToStr(type_a), dtypeToStr(type_b), dtypeToStr(type_b_scale), dtypeToStr(type_c), group_quantized);
     exit(1);
 }
 

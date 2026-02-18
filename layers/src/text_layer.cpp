@@ -23,32 +23,44 @@ void embedding_lookup(
         const float *__restrict scales = static_cast<const float*>(emb_ptr.scale);
         float *__restrict dst = static_cast<float*>(out->ptr());
 
-        size_t group_size = embedding->group_size; 
-        size_t groups = hidden_size / group_size;
+        if (embedding->group_quantized) {
+            size_t group_size = embedding->group_size; 
+            size_t groups = hidden_size / group_size;
 
-        #pragma omp parallel for
-        for (size_t g = 0; g < groups; ++g) {
-            float scale = scales[g];
-            size_t base = g * group_size;
+            #pragma omp parallel for
+            for (size_t g = 0; g < groups; ++g) {
+                float scale = scales[g];
+                size_t base = g * group_size;
 
-            for (size_t i = 0; i < group_size; ++i) {
-                size_t idx = base + i;
-                dst[idx] = (float)src_q[idx] * scale;
+                for (size_t i = 0; i < group_size; ++i) {
+                    size_t idx = base + i;
+                    dst[idx] = (float)src_q[idx] * scale;
+                }
+            }
+        } else {
+            float scale_token = scales[token_id];
+
+            #pragma omp simd
+            for (size_t i = 0; i < hidden_size; ++i) {
+                dst[i] = (float)src_q[i] * scale_token;
             }
         }
     }
 }
 
 void rms_norm(
-    const float *__restrict x /*[hidden]*/,
+    const Tensor *__restrict x_tensor /*[hidden]*/,
     const Tensor *__restrict scale /*[hidden]*/,
-    float *__restrict out /*[hidden]*/, 
+    Tensor *__restrict out_tensor /*[hidden]*/, 
     float eps, size_t batches, size_t layer_offset
 ) {
     const size_t hidden_size = scale->shape[scale->ndim - 1];
     const float inv_hs = 1.0f / (float)hidden_size;
 
     PtrPair scale_ptr = scale->ptr_all({layer_offset});
+
+    const float *x = (const float *)(x_tensor->ptr());
+    float *out = (float *)(out_tensor->ptr());
     
     if (scale->dtype == DType::FP32) {
         const float *__restrict scale_buf = (const float *)(scale_ptr.buf);
@@ -97,36 +109,65 @@ void rms_norm(
     } else {
         const int8_t *__restrict scale_q = static_cast<const int8_t*>(scale_ptr.buf);
         const float *__restrict scale_scales = static_cast<const float*>(scale_ptr.scale);
-        const size_t group_size = scale->group_size;
 
-        #pragma omp parallel for
-        for (size_t i = 0; i < batches; i++) {
-            const float *x_ptr = x + i * hidden_size;
-            float *out_ptr = out + i * hidden_size;
+        if (scale->group_quantized) {
+            const size_t group_size = scale->group_size;
 
-            // 1. Calculate sum of squares (standard RMS logic)
-            float ss = 0.0f;
-            #pragma omp simd reduction(+:ss)
-            for (size_t j = 0; j < hidden_size; ++j) {
-                ss += x_ptr[j] * x_ptr[j];
+            #pragma omp parallel for
+            for (size_t i = 0; i < batches; i++) {
+                const float *x_ptr = x + i * hidden_size;
+                float *out_ptr = out + i * hidden_size;
+
+                // 1. Calculate sum of squares (standard RMS logic)
+                float ss = 0.0f;
+                #pragma omp simd reduction(+:ss)
+                for (size_t j = 0; j < hidden_size; ++j) {
+                    ss += x_ptr[j] * x_ptr[j];
+                }
+                
+                float inv_rms = static_cast<float>(1.0 / sqrt(ss * inv_hs + eps));
+
+                // 2. Normalize and apply dequantized weights
+                // out[j] = (x[j] * inv_rms) * (scale_q[j] * scale_scales[j / group_size])
+                for (size_t g = 0; g < hidden_size; g += group_size) {
+                    // Load the scale once for the entire tile
+                    float scale = scale_scales[g / group_size];
+                    float combined_factor = scale * inv_rms;
+
+                    const int8_t* s_q = &scale_q[g];
+                    const float* x_p = &x_ptr[g];
+                    float* o_p = &out_ptr[g];
+
+                    #pragma omp simd
+                    for (size_t j = 0; j < group_size; ++j) {
+                        o_p[j] = static_cast<float>(s_q[j]) * (combined_factor * x_p[j]);
+                    }
+                }
             }
-            
-            float inv_rms = static_cast<float>(1.0 / sqrt(ss * inv_hs + eps));
+        } else {
+            const float scale_base = scale_scales[layer_offset];
 
-            // 2. Normalize and apply dequantized weights
-            // out[j] = (x[j] * inv_rms) * (scale_q[j] * scale_scales[j / group_size])
-            for (size_t g = 0; g < hidden_size; g += group_size) {
-                // Load the scale once for the entire tile
-                float scale = scale_scales[g / group_size];
-                float combined_factor = scale * inv_rms;
+            #pragma omp parallel for
+            for (size_t i = 0; i < batches; i++) {
+                const float *x_ptr = x + i * hidden_size;
+                float *out_ptr = out + i * hidden_size;
+                const int8_t *s_q = scale_q + i * hidden_size;
 
-                const int8_t* s_q = &scale_q[g];
-                const float* x_p = &x_ptr[g];
-                float* o_p = &out_ptr[g];
+                // 1. RMS
+                float ss = 0.0f;
+                #pragma omp simd reduction(+:ss)
+                for (size_t j = 0; j < hidden_size; ++j) {
+                    ss += x_ptr[j] * x_ptr[j];
+                }
+
+                float inv_rms = static_cast<float>(1.0 / sqrt(ss * inv_hs + eps));
+
+                // 2. One scale per channel vector
+                float combined = scale_base * inv_rms;
 
                 #pragma omp simd
-                for (size_t j = 0; j < group_size; ++j) {
-                    o_p[j] = static_cast<float>(s_q[j]) * (combined_factor * x_p[j]);
+                for (size_t j = 0; j < hidden_size; ++j) {
+                    out_ptr[j] = x_ptr[j] * combined * static_cast<float>(s_q[j]);
                 }
             }
         }
@@ -134,7 +175,7 @@ void rms_norm(
 }
 
 void rms_norm_inplace(
-    float *__restrict x /*[batches, hidden]*/,
+    Tensor *__restrict x_tensor /*[batches, hidden]*/,
     const Tensor *__restrict scale /*[hidden]*/,
     float eps, size_t batches, size_t layer_offset
 ) {
@@ -142,6 +183,8 @@ void rms_norm_inplace(
     const float inv_hs = 1.0f / (float)hidden_size;
 
     PtrPair scale_ptr = scale->ptr_all({layer_offset});
+
+    float *x = (float *)(x_tensor->ptr());
 
     if (scale->dtype == DType::FP32) {
         const float *__restrict scale_buf = (const float *)(scale_ptr.buf);
@@ -194,34 +237,62 @@ void rms_norm_inplace(
             static_cast<const int8_t *>(scale_ptr.buf);
         const float *__restrict scale_scales =
             static_cast<const float *>(scale_ptr.scale);
-        const size_t group_size = scale->group_size;
+        
+        if (scale->group_quantized) {
+            const size_t group_size = scale->group_size;
 
-        #pragma omp parallel for
-        for (size_t i = 0; i < batches; ++i) {
-            float *x_ptr = x + i * hidden_size;
+            #pragma omp parallel for
+            for (size_t i = 0; i < batches; ++i) {
+                float *x_ptr = x + i * hidden_size;
 
-            // 1. RMS
-            float ss = 0.0f;
-            #pragma omp simd reduction(+:ss)
-            for (size_t j = 0; j < hidden_size; ++j) {
-                ss += x_ptr[j] * x_ptr[j];
+                // 1. RMS
+                float ss = 0.0f;
+                #pragma omp simd reduction(+:ss)
+                for (size_t j = 0; j < hidden_size; ++j) {
+                    ss += x_ptr[j] * x_ptr[j];
+                }
+
+                float inv_rms =
+                    1.0f / sqrtf(ss * inv_hs + eps);
+
+                // 2. Normalize + dequantized scale (inplace)
+                for (size_t g = 0; g < hidden_size; g += group_size) {
+                    float s = scale_scales[g / group_size];
+                    float combined = s * inv_rms;
+
+                    const int8_t *sq = &scale_q[g];
+                    float *xp = &x_ptr[g];
+
+                    #pragma omp simd
+                    for (size_t j = 0; j < group_size; ++j) {
+                        xp[j] = static_cast<float>(sq[j]) *
+                                (combined * xp[j]);
+                    }
+                }
             }
+        } else {
+            const float scale_base = scale_scales[layer_offset];
 
-            float inv_rms =
-                1.0f / sqrtf(ss * inv_hs + eps);
+            #pragma omp parallel for
+            for (size_t i = 0; i < batches; i++) {
+                float *x_ptr = x + i * hidden_size;
+                const int8_t *s_q = scale_q + i * hidden_size;
 
-            // 2. Normalize + dequantized scale (inplace)
-            for (size_t g = 0; g < hidden_size; g += group_size) {
-                float s = scale_scales[g / group_size];
-                float combined = s * inv_rms;
+                // 1. RMS
+                float ss = 0.0f;
+                #pragma omp simd reduction(+:ss)
+                for (size_t j = 0; j < hidden_size; ++j) {
+                    ss += x_ptr[j] * x_ptr[j];
+                }
 
-                const int8_t *sq = &scale_q[g];
-                float *xp = &x_ptr[g];
+                float inv_rms = static_cast<float>(1.0 / sqrt(ss * inv_hs + eps));
+
+                // 2. One scale per channel vector
+                float combined = scale_base * inv_rms;
 
                 #pragma omp simd
-                for (size_t j = 0; j < group_size; ++j) {
-                    xp[j] = static_cast<float>(sq[j]) *
-                            (combined * xp[j]);
+                for (size_t j = 0; j < hidden_size; ++j) {
+                    x_ptr[j] *= combined * static_cast<float>(s_q[j]);
                 }
             }
         }
@@ -238,7 +309,7 @@ void classifier_gemm(
     linear(
         hid_states->ptr(), emb_ptr.buf, emb_ptr.scale, nullptr, nullptr,
         logits->ptr(), 1, vocab_size, hidden_size, true, hid_states->dtype, embedding->dtype, embedding->scale_dtype, logits->dtype,
-        embedding->group_size
+        embedding->group_quantized, embedding->group_size
     );
 }
 
@@ -303,8 +374,7 @@ void add_vector(
     if (size_vec == 0) {
         size_vec = add_to->num_elem();
     }
-
-    const DType::Type to_dtype   = add_to->dtype;
+    const DType::Type to_dtype = add_to->dtype;
 
     if (to_dtype == DType::FP32 && add_from_type == DType::FP32) {
         float *__restrict to   = (float *)add_to->ptr();
@@ -551,14 +621,14 @@ void attn_scores_all_heads(
                 s7 = _mm256_fmadd_ps(q_vec, _mm256_loadu_ps(k7_ptr + i), s7);
             }
 
-            att_head[t+0] = add_reduce_mm_256(s0) * inv_sqrt_d;
-            att_head[t+1] = add_reduce_mm_256(s1) * inv_sqrt_d;
-            att_head[t+2] = add_reduce_mm_256(s2) * inv_sqrt_d;
-            att_head[t+3] = add_reduce_mm_256(s3) * inv_sqrt_d;
-            att_head[t+4] = add_reduce_mm_256(s4) * inv_sqrt_d;
-            att_head[t+5] = add_reduce_mm_256(s5) * inv_sqrt_d;
-            att_head[t+6] = add_reduce_mm_256(s6) * inv_sqrt_d;
-            att_head[t+7] = add_reduce_mm_256(s7) * inv_sqrt_d;
+            att_head[t+0] = add_reduce_mm_256_layer(s0) * inv_sqrt_d;
+            att_head[t+1] = add_reduce_mm_256_layer(s1) * inv_sqrt_d;
+            att_head[t+2] = add_reduce_mm_256_layer(s2) * inv_sqrt_d;
+            att_head[t+3] = add_reduce_mm_256_layer(s3) * inv_sqrt_d;
+            att_head[t+4] = add_reduce_mm_256_layer(s4) * inv_sqrt_d;
+            att_head[t+5] = add_reduce_mm_256_layer(s5) * inv_sqrt_d;
+            att_head[t+6] = add_reduce_mm_256_layer(s6) * inv_sqrt_d;
+            att_head[t+7] = add_reduce_mm_256_layer(s7) * inv_sqrt_d;
         }
 
         // Tail: 0–7 remaining positions

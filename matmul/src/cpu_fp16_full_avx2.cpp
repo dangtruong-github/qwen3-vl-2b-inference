@@ -1,4 +1,4 @@
-#include "../include/cpu_fp16_full_avx2.hpp"
+#include "../include/cpu_wrapper.hpp"
 
 // #if defined(__AVX2__) && defined(__FMA__)
 template <size_t TN, size_t TK>

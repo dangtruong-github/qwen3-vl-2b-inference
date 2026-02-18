@@ -41,6 +41,7 @@ struct Tensor {
     bool owns_host_buf = false;
     bool use_gpu = false;
     bool permuted = false;
+    bool group_quantized = false;
 
     void* scale_buf = nullptr;
     DType::Type scale_dtype;
@@ -59,7 +60,8 @@ struct Tensor {
     // INT8 and INT4, only weight
     Tensor(
         const std::vector<size_t> &shape_, void *buf_, void *scale_buf_,
-        size_t group_size_, DType::Type dtype_, DType::Type scale_dtype_
+        size_t group_size_, bool group_quantized_,
+        DType::Type dtype_, DType::Type scale_dtype_
     );
     ~Tensor();
 

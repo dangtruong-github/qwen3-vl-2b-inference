@@ -41,6 +41,7 @@ typedef struct {
     int text_bits;
     int group_size;
     int vision_bits;
+    int group_quantized;
 } QwenConfig;
 
 typedef struct {

@@ -235,10 +235,27 @@ def write_config_header(config: dict, fout):
             fout.write(struct.pack("<f", v))
             print(f"Wrote config key {k}={v} (<f)")
 
-
 # ----------------------------------------------------------------------
 # Quantization helpers
 # ----------------------------------------------------------------------
+
+def quantize_rowwise(x: np.ndarray, bits: int, shape: tuple):
+    """
+    Quantize along last dimension (row-wise).
+    """
+    qmax = (1 << (bits - 1)) - 1
+
+    x = x.reshape(shape)
+    last_dim = shape[-1]
+    x2 = x.reshape(-1, last_dim)
+
+    maxv = np.max(np.abs(x2), axis=1, keepdims=True) + 1e-8
+    scales = maxv / qmax
+
+    q = np.round(x2 / scales).astype(np.int8)
+    q = np.clip(q, -qmax, qmax)
+
+    return q.flatten(), scales.flatten().astype(np.float32)
 
 def quantize_groupwise(x: np.ndarray, bits: int, group_size: int):
     qmax = (1 << (bits - 1)) - 1
@@ -284,6 +301,7 @@ def write_weights_streaming(
     text_bits: int,
     vision_bits: int,
     group_size: int,
+    group_quantized: bool
 ):
     # Lists to buffer the bytes in memory before writing
     all_scales_bytes = []
@@ -304,13 +322,21 @@ def write_weights_streaming(
 
         # INT8
         elif bits == 8:
-            q, scales = quantize_groupwise(arr, 8, group_size)
+            if group_quantized:
+                q, scales = quantize_groupwise(arr, 8, group_size)
+            else:
+                q, scales = quantize_rowwise(arr, 8, t.shape)
+
             all_scales_bytes.append(scales.tobytes())
             all_weights_bytes.append(q.astype(np.int8).tobytes())
 
         # INT4
         elif bits == 4:
-            q, scales = quantize_groupwise(arr, 4, group_size)
+            if group_quantized:
+                q, scales = quantize_groupwise(arr, 4, group_size)
+            else:
+                q, scales = quantize_rowwise(arr, 4, t.shape)
+
             packed = pack_int4(q)
             all_scales_bytes.append(scales.tobytes())
             all_weights_bytes.append(packed.tobytes())
@@ -343,6 +369,8 @@ def parse_args():
     p.add_argument("--text_bits", type=int, choices=[4, 8, 16, 32], default=32)
     p.add_argument("--vision_bits", type=int, choices=[16, 32], default=32)
     p.add_argument("--group_size", type=int, choices=[32, 64, 128], default=32)
+    
+    p.add_argument("--group_quantized", action="store_true")
 
     return p.parse_args()
 
@@ -367,9 +395,15 @@ def main():
             fout.write(struct.pack("<i", args.text_bits))
             fout.write(struct.pack("<i", args.group_size))
             fout.write(struct.pack("<i", args.vision_bits))
+
+            # pack bool as int32 (1=True, 0=False)
+            group_flag = 1 if args.group_quantized else 0
+            fout.write(struct.pack("<i", group_flag))
+
             print(f"Wrote config key text_bits={args.text_bits} (<i)")
             print(f"Wrote config key group_size={args.group_size} (<i)")
             print(f"Wrote config key vision_bits={args.vision_bits} (<i)")
+            print(f"Wrote config key group_quantized={group_flag} (<i)")
 
             # 3️⃣ weights
             for ordered_group in ordered_new:
@@ -380,6 +414,7 @@ def main():
                     args.text_bits,
                     args.vision_bits,
                     args.group_size,
+                    args.group_quantized,   # NEW
                 )
 
     print(f"\nDone → {args.output}")

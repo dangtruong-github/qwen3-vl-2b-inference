@@ -1,4 +1,4 @@
-#include "../include/cpu_att_fp32_full_avx2.hpp"
+#include "../include/cpu_wrapper.hpp"
 
 // #if defined(__AVX2__) && defined(__FMA__)
 void gemm_att_transpose_k64(

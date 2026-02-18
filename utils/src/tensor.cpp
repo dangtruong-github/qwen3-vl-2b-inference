@@ -44,12 +44,19 @@ Tensor::Tensor(
 
 Tensor::Tensor(
     const std::vector<size_t> &shape_, void *buf_, void *scale_buf_,
-    size_t group_size_, DType::Type dtype_, DType::Type scale_dtype_
-) : shape(shape_), buf(buf_), scale_buf(scale_buf_), group_size(group_size_), dtype(dtype_), scale_dtype(scale_dtype_), owns_host_buf(false) {
+    size_t group_size_, bool group_quantized_,
+    DType::Type dtype_, DType::Type scale_dtype_
+) : shape(shape_), buf(buf_), scale_buf(scale_buf_), group_size(group_size_), group_quantized(group_quantized_), dtype(dtype_), scale_dtype(scale_dtype_), owns_host_buf(false) {
     ndim = shape_.size();
 
     size_t size_buf = num_elem() * get_dtype_size();
-    size_t size_scale_buf = (num_elem() / group_size) * get_dtype_size(true);
+    size_t size_scale_buf = get_dtype_size(true);
+
+    if (group_quantized_) {
+        size_scale_buf *= (num_elem() / group_size);
+    } else {
+        size_scale_buf *= (num_elem() / shape_[ndim - 1]);
+    }
 
     printf("Dtype tensor %s with scale %s\n", dtypeToStr(dtype), dtypeToStr(scale_dtype));
     printf("New tensor wrapper with size %lf MB\n", double(size_buf) / 1024.0 / 1024.0);
@@ -58,37 +65,43 @@ Tensor::Tensor(
 }
 
 Tensor::~Tensor() {
-    if (buf != nullptr) {
+    static size_t page_size = sysconf(_SC_PAGESIZE);
+
+    auto safe_munmap = [&](void* ptr, size_t data_size) {
+        if (!ptr) return;
+
+        uintptr_t addr = (uintptr_t)ptr;
+        uintptr_t aligned_addr = (addr / page_size) * page_size;
+        size_t offset_in_page = addr - aligned_addr;
+        size_t total_mapped_size = data_size + offset_in_page;
+
+        if (munmap((void*)aligned_addr, total_mapped_size) == -1) {
+            perror("munmap failed");
+        }
+    };
+
+    // --------------------
+    // Free main tensor buf
+    // --------------------
+    if (buf) {
         if (owns_host_buf) {
             free(buf);
         } else {
-            static size_t page_size = sysconf(_SC_PAGESIZE);
-            uintptr_t addr = (uintptr_t)buf;
-            uintptr_t aligned_addr = (addr / page_size) * page_size;
-            size_t offset_in_page = addr - aligned_addr;
-
-            // USE YOUR SIZE CALCULATION HERE
-            size_t data_size = num_elem() * get_dtype_size(); 
-            size_t total_mapped_size = data_size + offset_in_page;
-
-            if (munmap((void*)aligned_addr, total_mapped_size) == -1) {
-                perror("munmap failed");
-            }
+            size_t data_size = num_elem() * get_dtype_size();
+            safe_munmap(buf, data_size);
         }
         buf = nullptr;
     }
 
-    if (scale_buf != nullptr) {
-        // free scale_buf
-        static size_t page_size = sysconf(_SC_PAGESIZE);
-        uintptr_t addr = (uintptr_t)scale_buf;
-        uintptr_t aligned_addr = (addr / page_size) * page_size;
-        size_t offset_in_page = addr - aligned_addr;
+    // --------------------
+    // Free scale buffer
+    // --------------------
+    if (scale_buf) {
+        size_t stride = group_quantized ? group_size : shape[ndim - 1];
+        size_t num_scales = (num_elem() + stride - 1) / stride;
+        size_t data_size = num_scales * get_dtype_size(true);
 
-        // USE YOUR SIZE CALCULATION HERE
-        size_t data_size = num_elem() * get_dtype_size(true); 
-        size_t total_mapped_size = data_size + offset_in_page;
-
+        safe_munmap(scale_buf, data_size);
         scale_buf = nullptr;
     }
 }
@@ -117,11 +130,12 @@ void* Tensor::ptr(const std::vector<size_t>& indices, bool get_scale) const {
     }
 
     if (get_scale) {
-        if (offset % group_size) {
-            fprintf(stderr, "Error: offset of scale_ptr must divide group_size, got offset=%zu and group_size=%zu\n", offset, group_size);
+        size_t stride = group_quantized ? group_size : shape[ndim - 1];
+        if (offset % stride) {
+            fprintf(stderr, "scale offset misaligned\n");
             exit(1);
         }
-        offset /= group_size;
+        offset /= stride;
     }
 
     // Apply offset based on the size of the data type
@@ -159,11 +173,12 @@ PtrPair Tensor::ptr_all(const std::vector<size_t> &indices) const {
     char* buf_ptr = static_cast<char*>(buf);
     out.buf = buf_ptr + (offset * get_dtype_size());
     if (scale_buf) {
-        if (offset % group_size) {
-            fprintf(stderr, "Error: offset of scale_ptr must divide group_size, got offset=%zu and group_size=%zu\n", offset, group_size);
+        size_t stride = group_quantized ? group_size : shape[ndim - 1];
+        if (offset % stride) {
+            fprintf(stderr, "scale offset misaligned\n");
             exit(1);
         }
-        size_t offset_s = offset / group_size;
+        size_t offset_s = offset / stride;
         char* scale_ptr = static_cast<char*>(scale_buf);
         out.scale = scale_ptr + (offset_s * get_dtype_size(true));
     } else {

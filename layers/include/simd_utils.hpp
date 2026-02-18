@@ -145,7 +145,7 @@ static inline float avx2_sum_exp_max(float *arr, size_t T, float max_score) {
     return sum;
 }
 
-static inline float add_reduce_mm_256(__m256 vec) {
+static inline float add_reduce_mm_256_layer(__m256 vec) {
     // Step 1: Split into two 128-bit halves
     __m128 low  = _mm256_castps256_ps128(vec);          // lower 128 bits
     __m128 high = _mm256_extractf128_ps(vec, 1);        // upper 128 bits

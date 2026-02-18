@@ -20,13 +20,13 @@ void embedding_lookup(
     size_t token_id, size_t hidden_size
 );
 void rms_norm(
-    const float *__restrict x /*[hidden]*/,
+    const Tensor *__restrict x_tensor /*[hidden]*/,
     const Tensor *__restrict scale /*[hidden]*/,
-    float *__restrict out /*[hidden]*/, 
+    Tensor *__restrict out_tensor /*[hidden]*/, 
     float eps, size_t batches, size_t layer_offset
 );
 void rms_norm_inplace(
-    float *__restrict x /*[hidden]*/,
+    Tensor *__restrict x_tensor /*[hidden]*/,
     const Tensor *__restrict scale /*[hidden]*/,
     float eps, size_t batches, size_t layer_offset
 );

@@ -25,6 +25,7 @@ void print_config(QwenConfig *config) {
     printf("text_bits: %d\n", config->text_bits);
     printf("group_size: %d\n", config->group_size);
     printf("vision_bits: %d\n", config->vision_bits);
+    printf("group_quantized: %d\n", config->group_quantized);
 }
 
 void print_token(TokenizerStruct *tokenizer, int token_id) {

@@ -1,4 +1,4 @@
-#include "../include/cpu_f32a_f16bc_avx2.hpp"
+#include "../include/cpu_wrapper.hpp"
 
 // #if defined(__AVX2__) && defined(__FMA__)
 void f32a_f16bc_avx2_kernel(

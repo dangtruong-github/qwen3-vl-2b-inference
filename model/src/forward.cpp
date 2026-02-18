@@ -26,6 +26,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     const DType::Type dtype_scale = weight->vl_patch_emb_w->scale_dtype;
     const size_t vision_group_size = weight->vl_patch_emb_w->group_size;
     const bool g_false = vision_group_size <= 0;
+    const bool vision_gq = false;
 
     printf("grid_h=%d, grid_w=%d, total_tokens=%zu\n", grid_h, grid_w, total_tokens);
 
@@ -102,7 +103,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->ptr(), total_tokens, VH, VH,
             !weight->vl_attn_qkv_w->permuted, state->vision_t->dtype,
             dtype_weight, dtype_scale, state->vision_mlp_out->dtype,
-            vision_group_size
+            vision_gq, vision_group_size
         );
 
         #ifdef PRINT_LOGITS
@@ -144,7 +145,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->ptr(), total_tokens, VH, VH,
             !weight->vl_attn_qkv_w->permuted, state->vision_t->dtype,
             dtype_weight, dtype_scale, state->vision_mlp_out->dtype,
-            vision_group_size
+            vision_gq, vision_group_size
         );
 
         #ifdef PRINT_LOGITS
@@ -186,7 +187,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             state->vision_mlp_out->ptr(), total_tokens, VH, VH,
             !weight->vl_attn_qkv_w->permuted, state->vision_t->dtype,
             dtype_weight, dtype_scale, state->vision_mlp_out->dtype,
-            vision_group_size
+            vision_gq, vision_group_size
         );
 
         #ifdef PRINT_LOGITS
@@ -246,7 +247,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             b_attn_proj_ptr.buf, b_attn_proj_ptr.scale, state->vision_q->ptr(),
             total_tokens, VH, VH, !weight->vl_attn_proj_w->permuted,
             state->vision_t->dtype, dtype_weight, dtype_scale,
-            state->vision_q->dtype, vision_group_size
+            state->vision_q->dtype, vision_gq, vision_group_size
         );
 
         #ifdef PRINT_LOGITS
@@ -288,7 +289,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             b_mlp1_ptr.buf, b_mlp1_ptr.scale, state->vision_mlp_out->ptr(),
             total_tokens, VI, VH, !weight->vl_mlp1_w->permuted,
             state->vision_t->dtype, dtype_weight, dtype_scale,
-            state->vision_mlp_out->dtype, vision_group_size
+            state->vision_mlp_out->dtype, vision_gq, vision_group_size
         );
 
         #ifdef PRINT_LOGITS
@@ -316,7 +317,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             b_mlp2_ptr.buf, b_mlp2_ptr.scale, state->vision_t->ptr(),
             total_tokens, VH, VI, !weight->vl_mlp2_w->permuted,
             state->vision_mlp_out->dtype, dtype_weight, dtype_scale,
-            state->vision_t->dtype, vision_group_size
+            state->vision_t->dtype, vision_gq, vision_group_size
         );
 
         #ifdef PRINT_LOGITS
@@ -361,7 +362,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
                 state->vision_mlp_out->ptr(), d_tokens, VI, VI,
                 !weight->vl_d_mlp1_w->permuted, state->vision_t->dtype,
                 dtype_weight, dtype_scale, state->vision_mlp_out->dtype,
-                vision_group_size
+                vision_gq, vision_group_size
             );
 
             #ifdef PRINT_LOGITS
@@ -390,7 +391,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
                 state->vision_deep_stack->ptr({d_stride}), d_tokens, OH, VI,
                 !weight->vl_d_mlp2_w->permuted, state->vision_mlp_out->dtype,
                 dtype_weight, dtype_scale, state->vision_deep_stack->dtype,
-                vision_group_size
+                vision_gq, vision_group_size
             );
 
             #ifdef PRINT_LOGITS
@@ -424,7 +425,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         vl_merge_mlp1_b_ptr.scale, state->vision_mlp_out->ptr(), d_tokens, VI,
         VI, !weight->vl_merge_mlp1_w->permuted, state->vision_t->dtype,
         dtype_weight, dtype_scale, state->vision_mlp_out->dtype,
-        vision_group_size
+        vision_gq, vision_group_size
     );
 
     #ifdef PRINT_LOGITS
@@ -444,7 +445,8 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         vl_merge_mlp2_w_ptr.scale, vl_merge_mlp2_b_ptr.buf,
         vl_merge_mlp2_b_ptr.scale, state->vision_x->ptr(), d_tokens, OH, VI,
         !weight->vl_merge_mlp2_w->permuted, state->vision_mlp_out->dtype,
-        dtype_weight, dtype_scale, state->vision_x->dtype, vision_group_size
+        dtype_weight, dtype_scale, state->vision_x->dtype,
+        vision_gq, vision_group_size
     );
 
     #ifdef PRINT_LOGITS
@@ -470,6 +472,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     const DType::Type dtype_weight = weight->token_embedding_table->dtype;
     const DType::Type dtype_scale = weight->token_embedding_table->scale_dtype;
     const size_t text_group_size = weight->token_embedding_table->group_size;
+    const bool text_gq = config->group_quantized ? true : false;
 
     bool img_token_true = (token_id == config->image_token_id) || (token_id == config->video_token_id);
     
@@ -490,8 +493,8 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         // Pre-attention RMSNorm
         rms_norm(
-            (const float *)state->x->ptr(), weight->rms_ffn_w,
-            (float *)state->t->ptr(), config->rms_norm_eps, BATCH_SIZE, 1ll * l
+            state->x, weight->rms_ffn_w, state->t,
+            config->rms_norm_eps, BATCH_SIZE, 1ll * l
         );
 
         #ifdef PRINT_LOGITS
@@ -512,7 +515,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             state->t->ptr(), w_q.buf, w_q.scale, nullptr, nullptr,
             state->q->ptr(), 1, hidden_size, hidden_size,
             !weight->w_attn_q->permuted, state->t->dtype, dtype_weight,
-            dtype_scale, state->q->dtype, text_group_size
+            dtype_scale, state->q->dtype, text_gq, text_group_size
         );
 
         #ifdef PRINT_LOGITS
@@ -523,23 +526,23 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             state->t->ptr(), w_k.buf, w_k.scale, nullptr, nullptr,
             state->k->ptr(), 1, kv_dim, hidden_size,
             !weight->w_attn_k->permuted, state->t->dtype, dtype_weight,
-            dtype_scale, state->k->dtype, text_group_size
+            dtype_scale, state->k->dtype, text_gq, text_group_size
         );
         linear(
             state->t->ptr(), w_v.buf, w_v.scale, nullptr, nullptr,
             state->v->ptr(), 1, kv_dim, hidden_size,
             !weight->w_attn_v->permuted, state->t->dtype, dtype_weight,
-            dtype_scale, state->v->dtype, text_group_size
+            dtype_scale, state->v->dtype, text_gq, text_group_size
         );
 
         // QK RMSNorm
         rms_norm_inplace(
-            (float *)state->q->ptr(), weight->w_attn_q_norm,
-            config->rms_norm_eps, BATCH_SIZE * num_heads, 1ll * l
+            state->q, weight->w_attn_q_norm, config->rms_norm_eps,
+            BATCH_SIZE * num_heads, 1ll * l
         );
         rms_norm_inplace(
-            (float *)state->k->ptr(), weight->w_attn_k_norm, 
-            config->rms_norm_eps, BATCH_SIZE * num_kv_heads, 1ll * l
+            state->k, weight->w_attn_k_norm, config->rms_norm_eps,
+            BATCH_SIZE * num_kv_heads, 1ll * l
         );
 
         #ifdef PRINT_LOGITS
@@ -598,7 +601,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             state->qkv_out->ptr(), w_out_proj.buf, w_out_proj.scale, nullptr,
             nullptr, state->t->ptr(), 1, hidden_size, hidden_size,
             !weight->w_attn_o->permuted, state->qkv_out->dtype, dtype_weight,
-            dtype_scale, state->t->dtype, text_group_size
+            dtype_scale, state->t->dtype, text_gq, text_group_size
         );
 
         #ifdef PRINT_LOGITS
@@ -614,8 +617,8 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
 
         // Post-attention RMSNorm
         rms_norm(
-            (const float *)state->x->ptr(), weight->rms_attn_w,
-            (float *)state->t->ptr(), config->rms_norm_eps, BATCH_SIZE, 1ll * l
+            state->x, weight->rms_attn_w, state->t,
+            config->rms_norm_eps, BATCH_SIZE, 1ll * l
         );
 
         #ifdef PRINT_LOGITS
@@ -629,13 +632,13 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             state->t->ptr(), w_gate.buf, w_gate.scale, nullptr, nullptr,
             state->gate->ptr(), 1, config->intermediate_size, hidden_size,
             !weight->w_mlp_gate->permuted, state->t->dtype, dtype_weight,
-            dtype_scale, state->gate->dtype, text_group_size
+            dtype_scale, state->gate->dtype, text_gq, text_group_size
         );
         linear(
             state->t->ptr(), w_up.buf, w_up.scale, nullptr, nullptr,
             state->up->ptr(), 1, config->intermediate_size, hidden_size,
             !weight->w_mlp_up->permuted, state->t->dtype, dtype_weight,
-            dtype_scale, state->up->dtype, text_group_size
+            dtype_scale, state->up->dtype, text_gq, text_group_size
         );
 
         #ifdef PRINT_LOGITS
@@ -655,7 +658,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         linear(
             state->gate->ptr(), w_down.buf, w_down.scale, nullptr, nullptr,
             state->t->ptr(), 1, hidden_size, config->intermediate_size,!weight->w_mlp_down->permuted, state->gate->dtype, dtype_weight,
-            dtype_scale, state->t->dtype, text_group_size
+            dtype_scale, state->t->dtype, text_gq, text_group_size
         );
 
         #ifdef PRINT_LOGITS
@@ -696,8 +699,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
 
     // Final RMSNorm
     rms_norm_inplace(
-        (float *)state->x->ptr(), weight->rms_out_w,
-        config->rms_norm_eps, BATCH_SIZE, 0ll
+        state->x, weight->rms_out_w, config->rms_norm_eps, BATCH_SIZE, 0ll
     );
 
     #ifdef PRINT_LOGITS
