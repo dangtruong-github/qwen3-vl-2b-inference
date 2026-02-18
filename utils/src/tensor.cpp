@@ -28,7 +28,6 @@ Tensor::Tensor(
     CHECK_ALLOC(buf, N_ * each_elem);
 
     printf("Allocate tensor with size %lf MB\n", double(N_ * each_elem) / 1024.0 / 1024.0);
-    fflush(stdout);
 }
 
 Tensor::Tensor(
@@ -39,7 +38,6 @@ Tensor::Tensor(
     size_t size_buf = num_elem() * get_dtype_size();
 
     printf("New tensor wrapper with size %lf MB\n", double(size_buf) / 1024.0 / 1024.0);
-    fflush(stdout);
 }
 
 Tensor::Tensor(
@@ -61,7 +59,6 @@ Tensor::Tensor(
     printf("Dtype tensor %s with scale %s\n", dtypeToStr(dtype), dtypeToStr(scale_dtype));
     printf("New tensor wrapper with size %lf MB\n", double(size_buf) / 1024.0 / 1024.0);
     printf("New tensor wrapper scale with size %lf MB\n", double(size_scale_buf) / 1024.0 / 1024.0);
-    fflush(stdout);
 }
 
 Tensor::~Tensor() {
@@ -225,7 +222,7 @@ void Tensor::printShape(const std::string &descr) const {
             printf("%zu ", shape[i]);
         }
         printf("\n");
-        fflush(stdout);
+
     }
 }
 
@@ -289,7 +286,7 @@ void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
             }
         }
         printf("\n");
-        fflush(stdout);
+
     }
 }
 

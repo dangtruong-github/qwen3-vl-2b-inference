@@ -113,7 +113,6 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         );
 
         printf("Finish processing images\n");
-        fflush(stdout);
 
         double t_gen_start = now_sec();
         double t_first_token = 0.0;
@@ -129,7 +128,6 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
 
         printf("Finish forward images\n");
         printf("max_seq_len=%d, input_count=%d\n", max_seq_len, input_count);
-        fflush(stdout);
         
         // ------------------------------------------------------------
         // 4. Generation loop - matching the structure from run.cpp
@@ -266,31 +264,22 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         // 6. Cleanup
         // ------------------------------------------------------------
         printf("Start freeing data\n");
-        fflush(stdout);
         free(in_line);
         printf("Freeing in_line successfully\n");
-        fflush(stdout);
         free(in_img_line);
         printf("Freeing in_img_line successfully\n");
-        fflush(stdout);
         // if (img_true) free(img_processed_output);
         printf("Freeing img_processed_output successfully\n");
-        fflush(stdout);
         free(out_line);
         printf("Freeing out_line successfully\n");
-        fflush(stdout);
         free(input_tokens);
         printf("Freeing input_tokens successfully\n");
-        fflush(stdout);
         free(expected_tokens);
         printf("Freeing expected_tokens successfully\n");
-        fflush(stdout);
         free(generated_tokens);
         printf("Freeing generated_tokens successfully\n");
-        fflush(stdout);
 
         printf("End of forward cycle %d\n", sample_count);
-        fflush(stdout);
     }
 
     double avg_ttft = first_tok_gen_time_total / sample_count;
@@ -382,7 +371,6 @@ void forward_generate(const char *in_token_file, const char *in_img_path, const 
         );
 
         printf("Finish processing images\n");
-        fflush(stdout);
 
         double t_gen_start = now_sec();
         double t_first_token = 0.0;
@@ -396,7 +384,6 @@ void forward_generate(const char *in_token_file, const char *in_img_path, const 
 
         printf("Finish forward images\n");
         printf("max_seq_len=%d, input_count=%d\n", max_seq_len, input_count);
-        fflush(stdout);
         
         // ------------------------------------------------------------
         // 4. Generation loop - matching the structure from run.cpp
@@ -489,25 +476,18 @@ void forward_generate(const char *in_token_file, const char *in_img_path, const 
         // 6. Cleanup
         // ------------------------------------------------------------
         printf("Start freeing data\n");
-        fflush(stdout);
         free(in_line);
         printf("Freeing in_line successfully\n");
-        fflush(stdout);
         free(in_img_line);
         printf("Freeing in_img_line successfully\n");
-        fflush(stdout);
         // if (img_true) free(img_processed_output);
         printf("Freeing img_processed_output successfully\n");
-        fflush(stdout);
         free(input_tokens);
         printf("Freeing input_tokens successfully\n");
-        fflush(stdout);
         free(generated_tokens);
         printf("Freeing generated_tokens successfully\n");
-        fflush(stdout);
 
         printf("End of forward cycle %d\n", sample_count);
-        fflush(stdout);
     }
 
     double avg_ttft = first_tok_gen_time_total / sample_count;
@@ -566,7 +546,6 @@ int image_processor_validate(const char *in_img_path,
         sample_count++;
         printf("\n--- Image Validation Sample %d ---\n", sample_count);
         printf("Image Path: %s\n", img_path);
-        fflush(stdout);
 
         // ------------------------------------------------------------
         // Run Vision Encoder Input (same call used in forward_validate)
@@ -582,22 +561,18 @@ int image_processor_validate(const char *in_img_path,
         );
 
         printf("Finish validation sample %d\n", sample_count);
-        fflush(stdout);
 
         forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
 
         printf("Finish forward validation sample %d\n", sample_count);
-        fflush(stdout);
 
         free(img_path);
         if (img_true) free(img_processed_output);
 
         printf("Finish free sample %d\n", sample_count);
-        fflush(stdout);
     }
 
     printf("Finish validation\n");
-    fflush(stdout);
 
     fclose(img_file);
     free(prev_embedding);

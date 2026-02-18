@@ -14,5 +14,4 @@ CPUTimer::~CPUTimer() {
     double endTime = now_sec();
     double elapsedTime = endTime - startTime;
     printf("%s CPU time: %.6f seconds\n", function_name, elapsedTime);
-    fflush(stdout);
 }

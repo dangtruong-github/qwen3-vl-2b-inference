@@ -373,7 +373,6 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
         state->vision_cos_tensor, state->vision_sin_tensor, config
     );
     printf("Finish init run state\n");
-    fflush(stdout);
 }
 
 void free_model_run_state(QwenRunState* state) {

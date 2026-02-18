@@ -7,7 +7,6 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
 
     printf("img_h=%d, img_w=%d, grid_h=%d, grid_w=%d\n", img_h, img_w, grid_h, grid_w);
     printf("vision_num_channels=%d, vision_temporal_patch_size=%d, vision_patch_size=%d\n", config->vision_num_channels, config->vision_temporal_patch_size, config->vision_patch_size);
-    fflush(stdout);
 
     long VC = config->vision_num_channels;
     long VTP = config->vision_temporal_patch_size;
@@ -73,7 +72,6 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     #endif
 
     printf("Finish preprocessing forward_img\n");
-    fflush(stdout);
 
     for (size_t l = 0; l < config->vision_depth; l++) {
         layer_norm(
@@ -404,7 +402,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         }
 
         printf("Finish layer %ld\n", l);
-        fflush(stdout);
+
     }
 
     layer_norm(
@@ -501,16 +499,10 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             state->t->printDebug("t");
         #endif
 
-        // QKV Projections
-        // printf("BEFORE PTR\n");
-        // fflush(stdout);
         PtrPair w_q = weight->w_attn_q->ptr_all({l});
         PtrPair w_k = weight->w_attn_k->ptr_all({l});
         PtrPair w_v = weight->w_attn_v->ptr_all({l});
 
-        // printf("AFTER PTR\n");
-        // fflush(stdout);
-        
         linear(
             state->t->ptr(), w_q.buf, w_q.scale, nullptr, nullptr,
             state->q->ptr(), 1, hidden_size, hidden_size,
@@ -689,7 +681,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
                     printf("%.2f ", print_ptr[i]);
                 }
                 printf("\n");
-                fflush(stdout);
+        
             }
             */
         } else {
