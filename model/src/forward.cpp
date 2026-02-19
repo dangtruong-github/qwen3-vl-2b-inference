@@ -712,8 +712,8 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         state->cur_img_token_id += 1;
     }
 
-    #if defined(CPU_TIME) || defined(CPU_TIME_FP16)
-        if (pos > 10) exit(1);
+    #if defined(CPU_TIME) || defined(CPU_TIME_FP16) || defined(PRINT_LOGITS)
+        if (pos > 30) exit(1);
     #endif
     
     return (float *)state->logits->ptr();

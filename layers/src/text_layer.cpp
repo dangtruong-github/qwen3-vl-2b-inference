@@ -6,6 +6,7 @@ void embedding_lookup(
     size_t token_id, size_t hidden_size
 ) {
     PtrPair emb_ptr = embedding->ptr_all({token_id});
+
     if (embedding->dtype == DType::FP32) {
         memcpy(out->ptr(), emb_ptr.buf, hidden_size * sizeof(float));
     } else if (embedding->dtype == DType::FP16) {
@@ -38,7 +39,7 @@ void embedding_lookup(
                 }
             }
         } else {
-            float scale_token = scales[token_id];
+            float scale_token = scales[0];
 
             #pragma omp simd
             for (size_t i = 0; i < hidden_size; ++i) {
@@ -145,13 +146,12 @@ void rms_norm(
                 }
             }
         } else {
-            const float scale_base = scale_scales[layer_offset];
+            const float scale_base = scale_scales[0];
 
             #pragma omp parallel for
             for (size_t i = 0; i < batches; i++) {
                 const float *x_ptr = x + i * hidden_size;
                 float *out_ptr = out + i * hidden_size;
-                const int8_t *s_q = scale_q + i * hidden_size;
 
                 // 1. RMS
                 float ss = 0.0f;
@@ -167,7 +167,7 @@ void rms_norm(
 
                 #pragma omp simd
                 for (size_t j = 0; j < hidden_size; ++j) {
-                    out_ptr[j] = x_ptr[j] * combined * static_cast<float>(s_q[j]);
+                    out_ptr[j] = x_ptr[j] * combined * static_cast<float>(scale_q[j]);
                 }
             }
         }

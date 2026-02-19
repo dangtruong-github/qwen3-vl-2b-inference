@@ -223,6 +223,16 @@ void Tensor::printShape(const std::string &descr) const {
         }
         printf("\n");
 
+        if (scale_buf) {
+            printf("Shape of %s scale: ", descr.c_str());
+            for (size_t i = 0; i < ndim - 1; i++) {
+                printf("%zu ", shape[i]);
+            }
+            if (group_quantized) {
+                printf("%zu", shape[ndim - 1] / group_size);
+            }
+            printf("\n");
+        }
     }
 }
 

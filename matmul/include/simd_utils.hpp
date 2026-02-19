@@ -27,3 +27,14 @@ static inline float add_reduce_m256i(__m256i v) {
     v128 = _mm_hadd_epi32(v128, v128);
     return (float)_mm_cvtsi128_si32(v128);
 }
+
+static inline int add_reduce_m256i_int(__m256i v) {
+    __m128i vlow  = _mm256_castsi256_si128(v);
+    __m128i vhigh = _mm256_extracti128_si256(v, 1);
+    __m128i sum   = _mm_add_epi32(vlow, vhigh);
+
+    sum = _mm_add_epi32(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(2,3,0,1)));
+    sum = _mm_add_epi32(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(1,0,3,2)));
+
+    return _mm_cvtsi128_si32(sum);
+}

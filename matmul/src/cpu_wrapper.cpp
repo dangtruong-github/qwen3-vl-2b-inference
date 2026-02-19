@@ -172,8 +172,10 @@ void linear_f32a_i8f32sb_f32c(
 void linear_f32a_i8f32sb_f32c_rq(
     const float* mat_A, const int8_t* mat_B_in,
     const float* mat_B_scales, float* mat_C,
-    size_t M, size_t N, size_t K, bool mat_B_transpose
+    size_t M, size_t N, size_t K
 ) {
+    // B is transpose, guaranteed
+    // mat_B_scales: shape (N) --> row-quantized
     /*
     #if defined(__AVX512F__) && defined(__AVX512DQ__)
         // Must implement AVX512
@@ -343,16 +345,16 @@ void linear(
                     static_cast<float*>(mat_C),
                     M, N, K, mat_B_transpose, group_size
                 );
-            } else {
+                return;
+            } else if (mat_B_transpose) {
                 linear_f32a_i8f32sb_f32c_rq(
                     static_cast<const float*>(mat_A),
                     static_cast<const int8_t*>(mat_B_in),
                     static_cast<const float*>(mat_B_scale),
-                    static_cast<float*>(mat_C),
-                    M, N, K, mat_B_transpose
+                    static_cast<float*>(mat_C), M, N, K
                 );
+                return;
             }
-            return;
         }
     } else if (type_a == DType::FP16 && type_c == DType::FP32) {
         if (type_b == DType::FP16) {

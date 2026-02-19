@@ -322,7 +322,7 @@ def write_weights_streaming(
 
         # INT8
         elif bits == 8:
-            if group_quantized:
+            if group_quantized or "norm" in name:
                 q, scales = quantize_groupwise(arr, 8, group_size)
             else:
                 q, scales = quantize_rowwise(arr, 8, t.shape)
@@ -332,7 +332,7 @@ def write_weights_streaming(
 
         # INT4
         elif bits == 4:
-            if group_quantized:
+            if group_quantized or "norm" in name:
                 q, scales = quantize_groupwise(arr, 4, group_size)
             else:
                 q, scales = quantize_rowwise(arr, 4, t.shape)

@@ -223,6 +223,107 @@ void gemv_lg_N_lg_K_transpose(
     }
 }
 
+void gemv_lg_N_lg_K_transpose_2(
+    const float *__restrict mat_A,
+    const int8_t *__restrict mat_B_in,
+    const float *__restrict mat_B_scales,
+    float *__restrict mat_C, size_t N, size_t K, size_t group_size
+) {
+    // Pre-calculate this once outside all loops
+    const float inv_group_size = 1.0f / (float)group_size;
+    const float inv_127 = 1.0f / 127.0f;
+
+    alignas(32) uint8_t a_q8[K];
+    float a_q8_s[K / group_size];
+
+    for (int kk = 0; kk < K; kk += group_size) {
+        // ---------------- RMS scale ----------------
+        __m256 sum0 = _mm256_setzero_ps();
+        for (int k = kk; k < kk + group_size; k += 8) {
+            __m256 f0 = _mm256_loadu_ps(mat_A + k);
+            sum0 = _mm256_fmadd_ps(f0, f0, sum0);
+        }
+
+        float sumsq = add_reduce_mm_256(sum0);
+        float rms = sqrtf(sumsq * inv_group_size + 1e-6f);
+        float scale = rms * inv_127;
+        a_q8_s[kk / group_size] = scale;
+
+        __m256 invS = _mm256_set1_ps(1.0f / scale);
+        __m256 zp = _mm256_set1_ps(128.0f);
+
+        // ---------------- quantize ----------------
+        for (int k = kk; k < kk + group_size; k += 32) {
+            __m256 f0 = _mm256_loadu_ps(mat_A + k);
+            __m256 f1 = _mm256_loadu_ps(mat_A + k + 8);
+            __m256 f2 = _mm256_loadu_ps(mat_A + k + 16);
+            __m256 f3 = _mm256_loadu_ps(mat_A + k + 24);
+
+            f0 = _mm256_fmadd_ps(f0, invS, zp);
+            f1 = _mm256_fmadd_ps(f1, invS, zp);
+            f2 = _mm256_fmadd_ps(f2, invS, zp);
+            f3 = _mm256_fmadd_ps(f3, invS, zp);
+
+            __m256i i0 = _mm256_cvtps_epi32(f0);
+            __m256i i1 = _mm256_cvtps_epi32(f1);
+            __m256i i2 = _mm256_cvtps_epi32(f2);
+            __m256i i3 = _mm256_cvtps_epi32(f3);
+
+            __m256i p01 = _mm256_packs_epi32(i0, i1);
+            __m256i p23 = _mm256_packs_epi32(i2, i3);
+
+            p01 = _mm256_permute4x64_epi64(p01, 0xD8);
+            p23 = _mm256_permute4x64_epi64(p23, 0xD8);
+
+            __m256i q8 = _mm256_packus_epi16(p01, p23);
+            q8 = _mm256_permute4x64_epi64(q8, 0xD8);
+
+            _mm256_store_si256((__m256i*)(a_q8 + k), q8);
+        }
+    }
+
+    const size_t K_g = K / group_size;
+
+    const __m256i ones = _mm256_set1_epi16(1);
+    const __m256i ones8 = _mm256_set1_epi8(1);
+    
+    #pragma omp parallel for schedule(static)
+    for (size_t jj = 0; jj < N; ++jj) {
+        __m256 c0_f = _mm256_setzero_ps();
+
+        const int8_t *__restrict b0_ptr = mat_B_in + jj * K;
+        
+        for (size_t kk = 0; kk < K; kk += group_size) {
+            const size_t g_off = (jj * K + kk) / group_size;
+            const float *__restrict b_s_ptr = mat_B_scales + g_off;
+
+            __m256i c0 = _mm256_setzero_si256();
+            __m256i corr32 = _mm256_setzero_si256();
+
+            for (size_t k = kk; k < kk + group_size; k += 32) {
+                __m256i a0 = _mm256_load_si256((__m256i*)(a_q8 + k));
+                
+                __m256i b0 = _mm256_loadu_si256((__m256i*)(b0_ptr + k));
+                __m256i b16 = _mm256_maddubs_epi16(ones8, b0);   // 32 → 16
+
+                __m256i prod16 = _mm256_maddubs_epi16(a0, b0);
+                
+                corr32 = _mm256_add_epi32(corr32, _mm256_madd_epi16(b16, ones));
+                c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(prod16, ones));
+            }
+
+            const float a_s = a_q8_s[kk / group_size];
+
+            corr32 = _mm256_slli_epi32(corr32, 7);
+            c0 = _mm256_sub_epi32(c0, corr32);
+            
+            c0_f = _mm256_fmadd_ps(_mm256_cvtepi32_ps(c0), _mm256_set1_ps(a_s * b_s_ptr[0]), c0_f);
+        }
+        
+        mat_C[jj] = add_reduce_mm_256(c0_f);
+    }
+}
+
 void gemv_lg_N_lg_K_transpose_decode(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
@@ -366,7 +467,7 @@ void linear_int8_fp32s_int32acc_transpose(
                 mat_A, mat_B_in, mat_B_scales, mat_C, N, K, group_size
             );
         } else {
-            gemv_lg_N_lg_K_transpose(
+            gemv_lg_N_lg_K_transpose_2(
                 mat_A, mat_B_in, mat_B_scales, mat_C, N, K, group_size
             );
         }
