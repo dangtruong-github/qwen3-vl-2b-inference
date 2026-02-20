@@ -307,9 +307,10 @@ void classifier_gemm(
 ) {
     PtrPair emb_ptr = embedding->ptr_all();
     linear(
-        hid_states->ptr(), emb_ptr.buf, emb_ptr.scale, nullptr, nullptr,
-        logits->ptr(), 1, vocab_size, hidden_size, true, hid_states->dtype, embedding->dtype, embedding->scale_dtype, logits->dtype,
-        embedding->group_quantized, embedding->group_size
+        hid_states->ptr(), emb_ptr.buf, emb_ptr.scale, emb_ptr.sum_int8,
+        nullptr, nullptr, logits->ptr(), 1, vocab_size, hidden_size, true,
+        hid_states->dtype, embedding->dtype, embedding->scale_dtype,
+        logits->dtype, embedding->group_quantized, embedding->group_size
     );
 }
 

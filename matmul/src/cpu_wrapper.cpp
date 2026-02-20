@@ -122,19 +122,26 @@ void linear_fp32_full(
 
 void linear_f32a_i8f32sb_f32c(
     const float* mat_A, const int8_t* mat_B_in,
-    const float* mat_B_scales, float* mat_C,
-    size_t M, size_t N, size_t K, bool mat_B_transpose, size_t group_size
+    const float* mat_B_scales, const int *sum_int8_B, float* mat_C,
+    size_t M, size_t N, size_t K, size_t group_size
 ) {
     #if defined(__AVX512F__) && defined(__AVX512DQ__)
         // Must implement AVX512
-        f32a_i8f32sb_f32c_avx512_kernel(
-            mat_A, mat_B_in, mat_B_scales, mat_C,
-            M, N, K, mat_B_transpose, group_size
-        );
+        if (sum_int8_B) {
+            f32a_i8f32sb_f32c_avx512_prefix_kernel(
+                mat_A, mat_B_in, mat_B_scales, sum_int8_B,
+                mat_C, M, N, K, group_size
+            );
+        } else {
+            f32a_i8f32sb_f32c_avx512_kernel(
+                mat_A, mat_B_in, mat_B_scales,
+                mat_C, M, N, K, group_size
+            );
+        }
     #elif defined(__AVX2__) && defined(__FMA__)
         f32a_i8f32sb_f32c_avx2_kernel(
-            mat_A, mat_B_in, mat_B_scales, mat_C,
-            M, N, K, mat_B_transpose, group_size
+            mat_A, mat_B_in, mat_B_scales,
+            mat_C, M, N, K, group_size
         );
     #else
         #pragma omp parallel for collapse(2)
@@ -148,13 +155,7 @@ void linear_f32a_i8f32sb_f32c(
 
                     // linear index into B (matches quantizer layout)
                     size_t b_linear_idx;
-                    if (mat_B_transpose) {
-                        // B is [N, K]
-                        b_linear_idx = j * K + k;
-                    } else {
-                        // B is [K, N]
-                        b_linear_idx = k * N + j;
-                    }
+                    b_linear_idx = j * K + k;
 
                     size_t scale_idx = b_linear_idx / group_size;
                     float scale = mat_B_scales[scale_idx];
@@ -174,44 +175,27 @@ void linear_f32a_i8f32sb_f32c_rq(
     const float* mat_B_scales, float* mat_C,
     size_t M, size_t N, size_t K
 ) {
-    // B is transpose, guaranteed
-    // mat_B_scales: shape (N) --> row-quantized
-    /*
-    #if defined(__AVX512F__) && defined(__AVX512DQ__)
-        // Must implement AVX512
-        f32a_i8f32sb_f32c_rq_avx2_kernel(
-            mat_A, mat_B_in, mat_B_scales, mat_C,
-            M, N, K, mat_B_transpose
-        );
-    #elif defined(__AVX2__) && defined(__FMA__)
-        f32a_i8f32sb_f32c_rq_avx2_kernel(
-            mat_A, mat_B_in, mat_B_scales, mat_C,
-            M, N, K, mat_B_transpose
-        );
-    #else
-    */
-        #pragma omp parallel for collapse(2)
-        for (size_t i = 0; i < M; ++i) {
-            for (size_t j = 0; j < N; ++j) {
-                float acc = 0.0f;
-                float scale = mat_B_scales[j];
+    #pragma omp parallel for collapse(2)
+    for (size_t i = 0; i < M; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            float acc = 0.0f;
+            float scale = mat_B_scales[j];
 
-                // -------- GEMM --------
-                for (size_t k = 0; k < K; ++k) {
-                    float a = mat_A[i * K + k];
+            // -------- GEMM --------
+            for (size_t k = 0; k < K; ++k) {
+                float a = mat_A[i * K + k];
 
-                    // linear index into B (matches quantizer layout)
-                    size_t b_linear_idx;
-                    b_linear_idx = k * N + j;
+                // linear index into B (matches quantizer layout)
+                size_t b_linear_idx;
+                b_linear_idx = k * N + j;
 
-                    float b = (float)mat_B_in[b_linear_idx] * scale;
-                    acc += a * b;
-                }
-
-                mat_C[i * N + j] = acc;
+                float b = (float)mat_B_in[b_linear_idx] * scale;
+                acc += a * b;
             }
+
+            mat_C[i * N + j] = acc;
         }
-    // #endif
+    }
 }
 
 void linear_fp16_full(
@@ -307,7 +291,7 @@ void linear_f32a_f16bc(
 
 void linear(
     const void *mat_A, const void *mat_B_in, const void *mat_B_scale,
-    const void *mat_bias_in, const void *mat_bias_scale,
+    const void *sum_int8_B, const void *mat_bias_in, const void *mat_bias_scale,
     void *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,
     DType::Type type_a, DType::Type type_b, DType::Type type_b_scale,
     DType::Type type_c, bool group_quantized, size_t group_size
@@ -336,17 +320,17 @@ void linear(
                 M, N, K, mat_B_transpose
             );
             return;
-        } else if (type_b == DType::INT8 && type_b_scale == DType::FP32 && mat_bias_in == nullptr) {
+        } else if (type_b == DType::INT8 && type_b_scale == DType::FP32 && mat_bias_in == nullptr && mat_B_transpose) {
             if (group_quantized) {
                 linear_f32a_i8f32sb_f32c(
                     static_cast<const float*>(mat_A),
                     static_cast<const int8_t*>(mat_B_in),
                     static_cast<const float*>(mat_B_scale),
-                    static_cast<float*>(mat_C),
-                    M, N, K, mat_B_transpose, group_size
+                    static_cast<const int*>(sum_int8_B),
+                    static_cast<float*>(mat_C), M, N, K, group_size
                 );
                 return;
-            } else if (mat_B_transpose) {
+            } else {
                 linear_f32a_i8f32sb_f32c_rq(
                     static_cast<const float*>(mat_A),
                     static_cast<const int8_t*>(mat_B_in),

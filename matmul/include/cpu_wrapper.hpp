@@ -9,7 +9,7 @@
 
 void linear(
     const void *mat_A, const void *mat_B_in, const void *mat_B_scale,
-    const void *mat_bias_in, const void *mat_bias_scale,
+    const void *sum_int8_B, const void *mat_bias_in, const void *mat_bias_scale,
     void *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,
     DType::Type type_a, DType::Type type_b, DType::Type type_b_scale,
     DType::Type type_c, bool group_quantized, size_t group_size
@@ -66,11 +66,11 @@ void f32a_i8f32sb_f32c_avx2_kernel(
     float *__restrict mat_C, size_t M, size_t N, size_t K,
     bool mat_B_transpose, size_t group_size
 );
-void f32a_i8f32sb_f32c_rq_avx2_kernel(
+void f32a_i8f32sb_f32c_avx2_kernel(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
+    float *__restrict mat_C, size_t M, size_t N, size_t K, size_t group_size
 );
 #endif
 
@@ -86,7 +86,14 @@ void f32a_i8f32sb_f32c_avx512_kernel(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t M, size_t N, size_t K,
-    bool mat_B_transpose, size_t group_size
+    float *__restrict mat_C, size_t M, size_t N, size_t K, size_t group_size
+);
+void f32a_i8f32sb_f32c_avx512_prefix_kernel(
+    const float *__restrict mat_A,
+    const int8_t *__restrict mat_B_in,
+    const float *__restrict mat_B_scales,
+    const int *__restrict sum_int8_B,
+    float *__restrict mat_C,
+    size_t M, size_t N, size_t K, size_t group_size
 );
 #endif

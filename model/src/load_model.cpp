@@ -184,15 +184,22 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     map_tensor(&weights->token_embedding_table, {vocab_size, H}, "token_embedding_table", text_bits);
     map_tensor(&weights->rms_ffn_w, {L, H}, "rms_ffn_w", text_bits, true);
     map_tensor(&weights->w_mlp_down, {L, H, I}, "w_mlp_down", text_bits);
+    weights->w_mlp_down->offline_sum_int8();
     map_tensor(&weights->w_mlp_gate, {L, I, H}, "w_mlp_gate", text_bits);
+    weights->w_mlp_gate->offline_sum_int8();
     map_tensor(&weights->w_mlp_up, {L, I, H}, "w_mlp_up", text_bits);
+    weights->w_mlp_up->offline_sum_int8();
     map_tensor(&weights->rms_attn_w, {L, H}, "rms_attn_w", text_bits, true);
     map_tensor(&weights->w_attn_k_norm, {L, head_dim}, "w_attn_k_norm", text_bits, true);
     map_tensor(&weights->w_attn_k, {L, KVAD, H}, "w_attn_k", text_bits);
+    weights->w_attn_k->offline_sum_int8();
     map_tensor(&weights->w_attn_o, {L, H, H}, "w_attn_o", text_bits);
+    weights->w_attn_o->offline_sum_int8();
     map_tensor(&weights->w_attn_q_norm, {L, head_dim}, "w_attn_q_norm", text_bits, true);
     map_tensor(&weights->w_attn_q, {L, QD, H}, "w_attn_q", text_bits);
+    weights->w_attn_q->offline_sum_int8();
     map_tensor(&weights->w_attn_v, {L, KVAD, H}, "w_attn_v", text_bits);
+    weights->w_attn_v->offline_sum_int8();
     map_tensor(&weights->rms_out_w, {H}, "rms_out_w", text_bits, true);
 
     // --- VISION WEIGHTS ---
