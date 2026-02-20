@@ -2,123 +2,7 @@
 
 #define VERY_LARGE_N 65536
 
-// #if defined(__AVX2__) && defined(__FMA__)
-void sm_M_lg_N_lg_K_transpose_prepacked(
-    const float *__restrict mat_A,
-    const int8_t *__restrict mat_B_in,
-    const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t M, size_t N, size_t K, size_t group_size
-) {
-    constexpr size_t MAX_GS = 128; // assume MAX_GS == group_size
-    constexpr size_t TN = 4 * 2;
-    constexpr size_t TK = MAX_GS * 2;
-
-    for (size_t i = 0; i < M; ++i) {
-        int16_t a_q16[K];
-        float a_q16_s[K / group_size];
-        const float *a0_ptr = mat_A + i * K;
-
-        #pragma omp parallel for
-        for (size_t kk = 0; kk < K; kk += group_size) {
-            float sumsq = 0.0f;
-
-            #pragma omp simd
-            for (size_t k = kk; k < kk + group_size; ++k) {
-                sumsq += a0_ptr[k] * a0_ptr[k];
-            }
-
-            float rms = sqrtf(sumsq / group_size + 1e-6f);
-            float inv_Sa = 127.0f / rms;
-            a_q16_s[kk / group_size] = 1 / inv_Sa;
-
-            #pragma omp simd
-            for (size_t k = kk; k < kk + group_size; ++k) {
-                a_q16[k] = (int16_t)(a0_ptr[k] * inv_Sa);
-            }
-        }
-
-        #pragma omp parallel for
-        for (size_t j_tile = 0; j_tile < N; j_tile += TN) {
-            for (size_t k_tile = 0; k_tile < K; k_tile += TK) {
-                int16_t b_q16[TN * TK];
-                float b_q16_s[TN * TK / group_size];
-                float acc[TN] = {0.0f};
-
-                for (size_t k = 0; k < TK; k += 32) {
-                    for (size_t j = 0; j < TN; ++j) {
-                        if (k % group_size == 0) {
-                            b_q16_s[(j * TK + k) / group_size] = mat_B_scales[((j + j_tile) * K + k_tile + k) / group_size];
-                        }
-                        // load 32 int8 and save 32 int16
-                        __m256i b8 = _mm256_loadu_si256((__m256i*)(mat_B_in + (j + j_tile) * K + k_tile + k));
-                        __m256i b16_0 = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(b8));
-                        __m256i b16_1 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b8, 1));
-
-                        _mm256_storeu_si256((__m256i*)(b_q16 + j * TK + k), b16_0);
-                        _mm256_storeu_si256((__m256i*)(b_q16 + j * TK + k + 16), b16_1);
-                    }
-                }
-
-                for (size_t kk = 0; kk < TK; kk += group_size) {
-                    const int16_t *aq_now = a_q16 + kk + k_tile;
-                    const float a_s = a_q16_s[(kk + k_tile) / group_size];
-                    const size_t group = kk / group_size;
-                
-                    for (size_t jj = 0; jj < TN; jj += 4) {
-                        const int16_t *b0_ptr = b_q16 + jj * TK + kk;
-                        const int16_t *b1_ptr = b_q16 + (jj + 1) * TK + kk;
-                        const int16_t *b2_ptr = b_q16 + (jj + 2) * TK + kk;
-                        const int16_t *b3_ptr = b_q16 + (jj + 3) * TK + kk;
-
-                        __m256i c0 = _mm256_setzero_si256();
-                        __m256i c1 = _mm256_setzero_si256();
-                        __m256i c2 = _mm256_setzero_si256();
-                        __m256i c3 = _mm256_setzero_si256();
-
-                        for (size_t k = 0; k < group_size; k += 32) {
-                            __m256i a0 = _mm256_loadu_si256((__m256i*)(aq_now + k));
-                            __m256i a1 = _mm256_loadu_si256((__m256i*)(aq_now + k + 16));
-
-                            __m256i b00 = _mm256_loadu_si256((__m256i*)(b0_ptr + k));
-                            __m256i b10 = _mm256_loadu_si256((__m256i*)(b1_ptr + k));
-                            __m256i b20 = _mm256_loadu_si256((__m256i*)(b2_ptr + k));
-                            __m256i b30 = _mm256_loadu_si256((__m256i*)(b3_ptr + k));
-
-                            __m256i b01 = _mm256_loadu_si256((__m256i*)(b0_ptr + k + 16));
-                            __m256i b11 = _mm256_loadu_si256((__m256i*)(b1_ptr + k + 16));
-                            __m256i b21 = _mm256_loadu_si256((__m256i*)(b2_ptr + k + 16));
-                            __m256i b31 = _mm256_loadu_si256((__m256i*)(b3_ptr + k + 16));
-
-                            c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(a0, b00));
-                            c1 = _mm256_add_epi32(c1, _mm256_madd_epi16(a0, b10));
-                            c2 = _mm256_add_epi32(c2, _mm256_madd_epi16(a0, b20));
-                            c3 = _mm256_add_epi32(c3, _mm256_madd_epi16(a0, b30));
-                            c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(a1, b01));
-                            c1 = _mm256_add_epi32(c1, _mm256_madd_epi16(a1, b11));
-                            c2 = _mm256_add_epi32(c2, _mm256_madd_epi16(a1, b21));
-                            c3 = _mm256_add_epi32(c3, _mm256_madd_epi16(a1, b31));
-                        }
-
-                        acc[jj + 0] += add_reduce_m256i(c0) * a_s * b_q16_s[jj * TK / group_size + group];
-                        acc[jj + 1] += add_reduce_m256i(c1) * a_s * b_q16_s[(jj + 1) * TK / group_size + group];
-                        acc[jj + 2] += add_reduce_m256i(c2) * a_s * b_q16_s[(jj + 2) * TK / group_size + group];
-                        acc[jj + 3] += add_reduce_m256i(c3) * a_s * b_q16_s[(jj + 3) * TK / group_size + group];
-                    }
-                }
-
-                for (size_t j = 0; j < TN; ++j) {
-                    size_t out_idx = i * N + j_tile + j;
-                    if (k_tile == 0) {
-                        mat_C[out_idx] = acc[j];
-                    } else {
-                        mat_C[out_idx] += acc[j];
-                    }
-                }
-            }
-        }
-    }
-}
-
+#if defined(__AVX2__) && defined(__FMA__)
 void gemv_lg_N_lg_K_transpose(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
@@ -223,7 +107,7 @@ void gemv_lg_N_lg_K_transpose(
     }
 }
 
-void gemv_lg_N_lg_K_transpose_2(
+void gemv_lg_N_lg_K_transpose_2_new(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
@@ -231,26 +115,28 @@ void gemv_lg_N_lg_K_transpose_2(
 ) {
     // Pre-calculate this once outside all loops
     const float inv_group_size = 1.0f / (float)group_size;
-    const float inv_127 = 1.0f / 127.0f;
+    const float inv_127 = 2.0f / (127.0f);
 
-    alignas(32) uint8_t a_q8[K];
+    alignas(64) uint8_t a_q8[K];
     float a_q8_s[K / group_size];
 
     for (int kk = 0; kk < K; kk += group_size) {
-        // ---------------- RMS scale ----------------
-        __m256 sum0 = _mm256_setzero_ps();
+        // 1. Find Max Absolute instead of RMS for better range coverage
+        __m256 v_max = _mm256_setzero_ps();
         for (int k = kk; k < kk + group_size; k += 8) {
             __m256 f0 = _mm256_loadu_ps(mat_A + k);
-            sum0 = _mm256_fmadd_ps(f0, f0, sum0);
+            __m256 abs_f0 = _mm256_andnot_ps(_mm256_set1_ps(-0.0f), f0);
+            v_max = _mm256_max_ps(v_max, abs_f0);
         }
-
-        float sumsq = add_reduce_mm_256(sum0);
-        float rms = sqrtf(sumsq * inv_group_size + 1e-6f);
-        float scale = rms * inv_127;
+        float max_val = max_reduce_mm_256(v_max); 
+        float scale = max_val / 127.0f;
+        float inv_scale = (max_val > 0) ? 1.0f / scale : 0.0f;
         a_q8_s[kk / group_size] = scale;
 
-        __m256 invS = _mm256_set1_ps(1.0f / scale);
-        __m256 zp = _mm256_set1_ps(128.0f);
+        __m256 invS = _mm256_set1_ps(inv_scale);
+        __m256 fmin = _mm256_set1_ps(-128.0f);
+        __m256 fmax = _mm256_set1_ps(127.0f);
+        __m256i zp = _mm256_set1_epi8((char)128);
 
         // ---------------- quantize ----------------
         for (int k = kk; k < kk + group_size; k += 32) {
@@ -259,37 +145,48 @@ void gemv_lg_N_lg_K_transpose_2(
             __m256 f2 = _mm256_loadu_ps(mat_A + k + 16);
             __m256 f3 = _mm256_loadu_ps(mat_A + k + 24);
 
-            f0 = _mm256_fmadd_ps(f0, invS, zp);
-            f1 = _mm256_fmadd_ps(f1, invS, zp);
-            f2 = _mm256_fmadd_ps(f2, invS, zp);
-            f3 = _mm256_fmadd_ps(f3, invS, zp);
+            f0 = _mm256_mul_ps(f0, invS);
+            f1 = _mm256_mul_ps(f1, invS);
+            f2 = _mm256_mul_ps(f2, invS);
+            f3 = _mm256_mul_ps(f3, invS);
+
+            f0 = _mm256_min_ps(_mm256_max_ps(f0, fmin), fmax);
+            f1 = _mm256_min_ps(_mm256_max_ps(f1, fmin), fmax);
+            f2 = _mm256_min_ps(_mm256_max_ps(f2, fmin), fmax);
+            f3 = _mm256_min_ps(_mm256_max_ps(f3, fmin), fmax);
 
             __m256i i0 = _mm256_cvtps_epi32(f0);
             __m256i i1 = _mm256_cvtps_epi32(f1);
             __m256i i2 = _mm256_cvtps_epi32(f2);
             __m256i i3 = _mm256_cvtps_epi32(f3);
 
+            // int32 -> int16
             __m256i p01 = _mm256_packs_epi32(i0, i1);
             __m256i p23 = _mm256_packs_epi32(i2, i3);
 
+            // fix lane order
             p01 = _mm256_permute4x64_epi64(p01, 0xD8);
             p23 = _mm256_permute4x64_epi64(p23, 0xD8);
 
-            __m256i q8 = _mm256_packus_epi16(p01, p23);
-            q8 = _mm256_permute4x64_epi64(q8, 0xD8);
+            // int16 -> int8 (SIGNED)
+            __m256i q8s = _mm256_packs_epi16(p01, p23);
+            q8s = _mm256_permute4x64_epi64(q8s, _MM_SHUFFLE(3, 1, 2, 0));
 
-            _mm256_store_si256((__m256i*)(a_q8 + k), q8);
+            // 🔥 ADD 128 to convert signed → unsigned
+            __m256i q8u = _mm256_add_epi8(q8s, zp);
+
+            // store uint8
+            _mm256_store_si256((__m256i*)(a_q8 + k), q8u);
         }
     }
 
     const size_t K_g = K / group_size;
 
-    const __m256i ones = _mm256_set1_epi16(1);
-    const __m256i ones8 = _mm256_set1_epi8(1);
+    const __m512i ones8 = _mm512_set1_epi8(1);
     
     #pragma omp parallel for schedule(static)
     for (size_t jj = 0; jj < N; ++jj) {
-        __m256 c0_f = _mm256_setzero_ps();
+        __m512 c0_f = _mm512_setzero_ps();
 
         const int8_t *__restrict b0_ptr = mat_B_in + jj * K;
         
@@ -297,30 +194,26 @@ void gemv_lg_N_lg_K_transpose_2(
             const size_t g_off = (jj * K + kk) / group_size;
             const float *__restrict b_s_ptr = mat_B_scales + g_off;
 
-            __m256i c0 = _mm256_setzero_si256();
-            __m256i corr32 = _mm256_setzero_si256();
+            __m512i c0 = _mm512_setzero_si512();
+            __m512i corr32 = _mm512_setzero_si512();
 
-            for (size_t k = kk; k < kk + group_size; k += 32) {
-                __m256i a0 = _mm256_load_si256((__m256i*)(a_q8 + k));
-                
-                __m256i b0 = _mm256_loadu_si256((__m256i*)(b0_ptr + k));
-                __m256i b16 = _mm256_maddubs_epi16(ones8, b0);   // 32 → 16
+            for (size_t k = kk; k < kk + group_size; k += 64) {
+                __m512i a0 = _mm512_loadu_si512((__m512i*)(a_q8 + k));
+                __m512i b0 = _mm512_loadu_si512((__m512i*)(b0_ptr + k));
 
-                __m256i prod16 = _mm256_maddubs_epi16(a0, b0);
-                
-                corr32 = _mm256_add_epi32(corr32, _mm256_madd_epi16(b16, ones));
-                c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(prod16, ones));
+                corr32 = _mm512_dpbusd_epi32(corr32, ones8, b0);
+                c0 = _mm512_dpbusd_epi32(c0, a0, b0);
             }
 
             const float a_s = a_q8_s[kk / group_size];
 
-            corr32 = _mm256_slli_epi32(corr32, 7);
-            c0 = _mm256_sub_epi32(c0, corr32);
+            corr32 = _mm512_slli_epi32(corr32, 7);
+            c0 = _mm512_sub_epi32(c0, corr32);
             
-            c0_f = _mm256_fmadd_ps(_mm256_cvtepi32_ps(c0), _mm256_set1_ps(a_s * b_s_ptr[0]), c0_f);
+            c0_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c0), _mm512_set1_ps(a_s * b_s_ptr[0]), c0_f);
         }
         
-        mat_C[jj] = add_reduce_mm_256(c0_f);
+        mat_C[jj] = _mm512_reduce_add_ps(c0_f);
     }
 }
 
@@ -700,4 +593,4 @@ void f32a_i8f32sb_f32c_avx2_kernel(
         }
     }
 }
-// #endif
+#endif

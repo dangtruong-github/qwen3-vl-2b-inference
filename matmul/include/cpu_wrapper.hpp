@@ -80,3 +80,13 @@ void att_fp32_full_avx2_kernel(
     const float scale, size_t N, size_t K, bool mat_B_transpose
 );
 #endif
+
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+void f32a_i8f32sb_f32c_avx512_kernel(
+    const float *__restrict mat_A,
+    const int8_t *__restrict mat_B_in,
+    const float *__restrict mat_B_scales,
+    float *__restrict mat_C, size_t M, size_t N, size_t K,
+    bool mat_B_transpose, size_t group_size
+);
+#endif

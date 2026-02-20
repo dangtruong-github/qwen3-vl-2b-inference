@@ -127,7 +127,7 @@ void linear_f32a_i8f32sb_f32c(
 ) {
     #if defined(__AVX512F__) && defined(__AVX512DQ__)
         // Must implement AVX512
-        f32a_i8f32sb_f32c_avx2_kernel(
+        f32a_i8f32sb_f32c_avx512_kernel(
             mat_A, mat_B_in, mat_B_scales, mat_C,
             M, N, K, mat_B_transpose, group_size
         );

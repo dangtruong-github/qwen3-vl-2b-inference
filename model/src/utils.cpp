@@ -598,7 +598,7 @@ void warm_up(
     int pos = 0;
 
     // ---- 2. Process one image ----
-    int img_grid_h = 4, img_grid_w = 4;
+    int img_grid_h = 1, img_grid_w = 1;
     int img_processed_h = img_grid_h * img_grid_w, img_processed_w = 1536;
     float *img_processed_output = (float *)malloc(img_processed_h * img_processed_w * sizeof(float));
 
@@ -613,7 +613,7 @@ void warm_up(
     // ---- 3. Run one transformer token forward ----
     float *logits;
 
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 15; ++i) {
         logits = forward_text(config, state, weight, warmup_token, pos);
     }
 

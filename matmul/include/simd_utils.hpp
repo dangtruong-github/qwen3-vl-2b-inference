@@ -18,6 +18,25 @@ static inline float add_reduce_mm_256(__m256 vec) {
     return _mm_cvtss_f32(sum128);
 }
 
+static inline float max_reduce_mm_256(__m256 vec) {
+    // Step 1: Split 256-bit into two 128-bit halves and take the max
+    // result = [max(low0, high0), max(low1, high1), max(low2, high2), max(low3, high3)]
+    __m128 low  = _mm256_castps256_ps128(vec);
+    __m128 high = _mm256_extractf128_ps(vec, 1);
+    __m128 max128 = _mm_max_ps(low, high);
+
+    // Step 2: Shuffle and max to reduce from 4 elements to 2
+    // Compare [x, y, z, w] with [z, w, ?, ?]
+    __m128 max64 = _mm_max_ps(max128, _mm_movehl_ps(max128, max128));
+
+    // Step 3: Shuffle and max to reduce from 2 elements to 1
+    // Compare [x, y, ...] with [y, y, ...]
+    __m128 max32 = _mm_max_ps(max64, _mm_shuffle_ps(max64, max64, _MM_SHUFFLE(1, 1, 1, 1)));
+
+    // Step 4: Extract the final scalar
+    return _mm_cvtss_f32(max32);
+}
+
 static inline float add_reduce_m256i(__m256i v) {
     __m128i v128 = _mm_add_epi32(
         _mm256_castsi256_si128(v),
