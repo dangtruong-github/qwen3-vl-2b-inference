@@ -56,7 +56,6 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
     }
 
     printf("\nStarting Forward Validation...\n");
-    setbuf(stdout, NULL);
 
     int validation_failures = 0;
     int sample_count = 0;
@@ -320,7 +319,6 @@ void forward_generate(const char *in_token_file, const char *in_img_path, const 
     }
 
     printf("\nStarting Forward Validation...\n");
-    setbuf(stdout, NULL);
 
     int sample_count = 0;
 
@@ -504,12 +502,13 @@ void forward_generate(const char *in_token_file, const char *in_img_path, const 
     
 }
 
-int image_processor_validate(const char *in_img_path,
-                             TokenizerStruct *tokenizer,
-                             QwenConfig *config,
-                             QwenWeight *weight,
-                             QwenRunState *state)
-{
+int image_processor_validate(
+    const char *in_img_path,
+    TokenizerStruct *tokenizer,
+    QwenConfig *config,
+    QwenWeight *weight,
+    QwenRunState *state
+) {
     FILE* img_file = fopen(in_img_path, "r");
     if (!img_file) {
         fprintf(stderr, "Error: Could not open image path file: %s\n", in_img_path);
@@ -517,7 +516,6 @@ int image_processor_validate(const char *in_img_path,
     }
 
     printf("\nStarting Image Processor Validation...\n");
-    setbuf(stdout, NULL);
 
     int sample_count = 0;
     int validation_failures = 0;
@@ -585,4 +583,41 @@ int image_processor_validate(const char *in_img_path,
     printf("Total Failures: %d\n", validation_failures);
 
     return (validation_failures > 0) ? 1 : 0;
+}
+
+void warm_up(
+    TokenizerStruct *tokenizer,
+    QwenConfig *config,
+    QwenWeight *weight,
+    QwenRunState *state
+) {
+    printf("🔥 Warm-up start...\n");
+
+    // ---- 1. Fake token (BOS or random vocab token) ----
+    int warmup_token = 1;  // usually <bos> = 1, adjust if needed
+    int pos = 0;
+
+    // ---- 2. Process one image ----
+    int img_grid_h = 4, img_grid_w = 4;
+    int img_processed_h = img_grid_h * img_grid_w, img_processed_w = 1536;
+    float *img_processed_output = (float *)malloc(img_processed_h * img_processed_w * sizeof(float));
+
+    forward_img(config, state, weight,
+                img_processed_output,
+                img_processed_h, img_processed_w,
+                img_grid_h, img_grid_w);
+    
+    state->vision_embed_tokens = 0;
+    state->cur_img_token_id = 0;
+
+    // ---- 3. Run one transformer token forward ----
+    float *logits;
+
+    for (int i = 0; i < 5; ++i) {
+        logits = forward_text(config, state, weight, warmup_token, pos);
+    }
+
+    (void)logits; // suppress unused warning
+
+    printf("🔥 Warm-up done.\n");
 }

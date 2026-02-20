@@ -99,6 +99,8 @@ int main(int argc, char** argv) {
 
     printf("Model and Tokenizer initialized successfully.\n");
 
+    warm_up(tokenizer, config, weights, state);
+
     int validation_result = forward_validate(
         input_path, image_path, output_val_path,
         tokenizer, config, weights, state

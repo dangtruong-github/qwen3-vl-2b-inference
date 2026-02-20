@@ -141,7 +141,6 @@ int tokenizer_validate(
     }
 
     printf("\nStarting Tokenizer Validation...\n");
-    setbuf(stdout, NULL);
 
     int validation_failures = 0;
     int sample_count = 0;
@@ -286,7 +285,6 @@ int decode_validate(
     }
 
     printf("\nStarting Decode Validation...\n");
-    setbuf(stdout, NULL);
 
     int validation_failures = 0;
     int sample_count = 0;

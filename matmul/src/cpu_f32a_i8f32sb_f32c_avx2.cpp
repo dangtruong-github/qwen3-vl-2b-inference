@@ -467,7 +467,7 @@ void linear_int8_fp32s_int32acc_transpose(
                 mat_A, mat_B_in, mat_B_scales, mat_C, N, K, group_size
             );
         } else {
-            gemv_lg_N_lg_K_transpose_2(
+            gemv_lg_N_lg_K_transpose(
                 mat_A, mat_B_in, mat_B_scales, mat_C, N, K, group_size
             );
         }

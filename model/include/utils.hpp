@@ -13,3 +13,9 @@ int image_processor_validate(const char *in_img_path,
                              QwenConfig *config,
                              QwenWeight *weight,
                              QwenRunState *state);
+void warm_up(
+    TokenizerStruct *tokenizer,
+    QwenConfig *config,
+    QwenWeight *weight,
+    QwenRunState *state
+);
