@@ -31,6 +31,111 @@ void concat_merge(const char *a, const char *b, char **c) {
     strcat(*c, b);
 }
 
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+int greedy_decode(float* logits, int vocab_size) {
+    // 1. Initialize 16-lane vectors
+    __m512 v_max_vals = _mm512_set1_ps(-FLT_MAX);
+    __m512i v_max_idxs = _mm512_setzero_si512();
+    
+    // Index tracker: {0, 1, ..., 15}
+    __m512i v_current_idxs = _mm512_setr_epi32(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15);
+    __m512i v_step = _mm512_set1_epi32(16);
+
+    int i = 0;
+    // 2. Main Loop (16 elements at a time)
+    for (; i <= vocab_size - 16; i += 16) {
+        __m512 v_logits = _mm512_loadu_ps(&logits[i]);
+        
+        // Compare into a 16-bit mask register
+        __mmask16 mask = _mm512_cmp_ps_mask(v_logits, v_max_vals, _CMP_GT_OQ);
+        
+        // Use the mask to update values and indices (only where mask bit is 1)
+        v_max_vals = _mm512_mask_mov_ps(v_max_vals, mask, v_logits);
+        v_max_idxs = _mm512_mask_mov_epi32(v_max_idxs, mask, v_current_idxs);
+        
+        v_current_idxs = _mm512_add_epi32(v_current_idxs, v_step);
+    }
+
+    // 3. Horizontal Reduction of the 16 lanes
+    float temp_vals[16];
+    int temp_idxs[16];
+    _mm512_storeu_ps(temp_vals, v_max_vals);
+    _mm512_storeu_si512((__m512i*)temp_idxs, v_max_idxs);
+
+    float final_max = temp_vals[0];
+    int final_idx = temp_idxs[0];
+    for (int j = 1; j < 16; ++j) {
+        if (temp_vals[j] > final_max) {
+            final_max = temp_vals[j];
+            final_idx = temp_idxs[j];
+        }
+    }
+
+    // 4. Tail Handling
+    for (; i < vocab_size; ++i) {
+        if (logits[i] > final_max) {
+            final_max = logits[i];
+            final_idx = i;
+        }
+    }
+
+    return final_idx;
+}
+#elif defined(__AVX2__) && defined(__FMA__)
+int greedy_decode_avx2(float* logits, int vocab_size) {
+    // 1. Initialize vectors
+    __m256 v_max_vals = _mm256_set1_ps(-FLT_MAX);
+    __m256i v_max_idxs = _mm256_setzero_si256();
+    
+    // Index tracker: {0, 1, 2, 3, 4, 5, 6, 7}
+    __m256i v_current_idxs = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+    __m256i v_step = _mm256_set1_epi32(8);
+
+    int i = 0;
+    // 2. Main Loop (8 elements at a time)
+    for (; i <= vocab_size - 8; i += 8) {
+        __m256 v_logits = _mm256_loadu_ps(&logits[i]);
+        
+        // Compare: result is 0xFFFFFFFF where logits[i] > current_max
+        __m256 v_mask = _mm256_cmp_ps(v_logits, v_max_vals, _CMP_GT_OQ);
+        
+        // Update max values and max indices
+        v_max_vals = _mm256_blendv_ps(v_max_vals, v_logits, v_mask);
+        v_max_idxs = _mm256_castps_si256(_mm256_blendv_ps(
+            _mm256_castsi256_ps(v_max_idxs), 
+            _mm256_castsi256_ps(v_current_idxs), 
+            v_mask));
+        
+        // Increment current indices for next iteration
+        v_current_idxs = _mm256_add_epi32(v_current_idxs, v_step);
+    }
+
+    // 3. Horizontal Reduction of the 8 lanes
+    float temp_vals[8];
+    int temp_idxs[8];
+    _mm256_storeu_ps(temp_vals, v_max_vals);
+    _mm256_storeu_si256((__m256i*)temp_idxs, v_max_idxs);
+
+    float final_max = temp_vals[0];
+    int final_idx = temp_idxs[0];
+    for (int j = 1; j < 8; ++j) {
+        if (temp_vals[j] > final_max) {
+            final_max = temp_vals[j];
+            final_idx = temp_idxs[j];
+        }
+    }
+
+    // 4. Tail Handling (since vocab_size might not be multiple of 8)
+    for (; i < vocab_size; ++i) {
+        if (logits[i] > final_max) {
+            final_max = logits[i];
+            final_idx = i;
+        }
+    }
+
+    return final_idx;
+}
+#else
 int greedy_decode(float* logits, int vocab_size) {
     float max_val = -FLT_MAX;
     int max_idx = 0;
@@ -42,6 +147,7 @@ int greedy_decode(float* logits, int vocab_size) {
     }
     return max_idx;
 }
+#endif
 
 int str_lookup(const char *str, TokenIndex *sorted_vocab, int vocab_size) {
     // efficiently find the perfect match for str in vocab, return its index or -1 if not found
