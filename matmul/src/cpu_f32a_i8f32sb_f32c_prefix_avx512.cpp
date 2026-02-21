@@ -2,7 +2,7 @@
 
 #define VERY_LARGE_N 65536
 
-// #if defined(__AVX512F__) && defined(__AVX512DQ__)
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
 void gemv_lg_N_K_avx512_prefix(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
@@ -325,4 +325,4 @@ void f32a_i8f32sb_f32c_avx512_prefix_kernel(
         }
     }
 }
-// #endif
+#endif

@@ -1,6 +1,6 @@
 #include "../include/cpu_wrapper.hpp"
 
-// #if defined(__AVX2__) && defined(__FMA__)
+#if defined(__AVX2__) && defined(__FMA__)
 void gemm_att_transpose_k64(
     const float *mat_A, const float *mat_B, float *mat_C,
     const float scale, size_t N
@@ -164,4 +164,4 @@ void att_fp32_full_avx2_kernel(
         mat_C[n] = sum;
     }
 }
-// #endif
+#endif

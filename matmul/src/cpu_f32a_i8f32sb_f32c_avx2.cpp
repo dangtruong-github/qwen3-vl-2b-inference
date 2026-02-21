@@ -2,7 +2,7 @@
 
 #define VERY_LARGE_N 65536
 
-// #if defined(__AVX2__) && defined(__FMA__)
+#if defined(__AVX2__) && defined(__FMA__)
 void gemv_lg_N_K(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
@@ -554,4 +554,4 @@ void f32a_i8f32sb_f32c_avx2_kernel(
         }
     }
 }
-// #endif
+#endif

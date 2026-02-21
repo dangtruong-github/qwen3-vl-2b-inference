@@ -1,6 +1,6 @@
 #include "../include/cpu_wrapper.hpp"
 
-// #if defined(__AVX2__) && defined(__FMA__)
+#if defined(__AVX2__) && defined(__FMA__)
 template <size_t TN, size_t TK>
 void linear_fp16_normal_tm_4(
     const half_cpu *A, const half_cpu *B, const half_cpu *bias, half_cpu *C,
@@ -871,4 +871,4 @@ void fp16_full_avx2_kernel(
         }
     }
 }
-// #endif
+#endif
