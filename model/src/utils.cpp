@@ -598,7 +598,7 @@ void warm_up(
     int pos = 0;
 
     // ---- 2. Process one image ----
-    int img_grid_h = 1, img_grid_w = 1;
+    int img_grid_h = 2, img_grid_w = 2;
     int img_processed_h = img_grid_h * img_grid_w, img_processed_w = 1536;
     float *img_processed_output = (float *)malloc(img_processed_h * img_processed_w * sizeof(float));
 
@@ -609,6 +609,8 @@ void warm_up(
     
     state->vision_embed_tokens = 0;
     state->cur_img_token_id = 0;
+
+    printf("🔥 Warm-up image finished.\n");
 
     // ---- 3. Run one transformer token forward ----
     float *logits;

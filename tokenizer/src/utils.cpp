@@ -82,7 +82,7 @@ int greedy_decode(float* logits, int vocab_size) {
     return final_idx;
 }
 #elif defined(__AVX2__) && defined(__FMA__)
-int greedy_decode_avx2(float* logits, int vocab_size) {
+int greedy_decode(float* logits, int vocab_size) {
     // 1. Initialize vectors
     __m256 v_max_vals = _mm256_set1_ps(-FLT_MAX);
     __m256i v_max_idxs = _mm256_setzero_si256();

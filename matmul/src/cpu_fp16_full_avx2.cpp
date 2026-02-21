@@ -843,14 +843,12 @@ void fp16_full_avx2_kernel(
 ) {
     if (!mat_B_transpose) {
         if (N >= 1024 && K >= 1024) {
-            if (M > 64) {
-                if (N == 1024 && K == 4096) {
-                    linear_fp16_normal_tm_4<32, 512>(mat_A, mat_B, mat_bias, mat_C, M, N, K);
-                } else {
-                    linear_fp16_normal_tm_4<64, 256>(mat_A, mat_B, mat_bias, mat_C, M, N, K);
-                }
-                return;
+            if (N == 1024 && K == 4096) {
+                linear_fp16_normal_tm_4<32, 512>(mat_A, mat_B, mat_bias, mat_C, M, N, K);
+            } else {
+                linear_fp16_normal_tm_4<64, 256>(mat_A, mat_B, mat_bias, mat_C, M, N, K);
             }
+            return;
         }
     }
 

@@ -139,10 +139,17 @@ void linear_f32a_i8f32sb_f32c(
             );
         }
     #elif defined(__AVX2__) && defined(__FMA__)
-        f32a_i8f32sb_f32c_avx2_kernel(
-            mat_A, mat_B_in, mat_B_scales,
-            mat_C, M, N, K, group_size
-        );
+        if (sum_int8_B && false) {
+            f32a_i8f32sb_f32c_avx2_prefix_kernel(
+                mat_A, mat_B_in, mat_B_scales, sum_int8_B,
+                mat_C, M, N, K, group_size
+            );
+        } else {
+            f32a_i8f32sb_f32c_avx2_kernel(
+                mat_A, mat_B_in, mat_B_scales,
+                mat_C, M, N, K, group_size
+            );
+        }
     #else
         #pragma omp parallel for collapse(2)
         for (size_t i = 0; i < M; ++i) {
