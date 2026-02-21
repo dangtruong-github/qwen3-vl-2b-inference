@@ -45,6 +45,13 @@ void f32a_f16bc_avx2_kernel(
     half_cpu *__restrict mat_C,
     size_t M, size_t N, size_t K, bool mat_B_transpose
 );
+void f16ab_f32c_avx2_kernel(
+    const half_cpu *__restrict mat_A,
+    const half_cpu *__restrict mat_B,
+    const half_cpu *__restrict mat_bias,
+    float *__restrict mat_C,
+    size_t M, size_t N, size_t K, bool mat_B_transpose
+);
 void f32a_f16b_f32c_avx2_kernel(
     const float *__restrict mat_A,
     const half_cpu *__restrict mat_B,
