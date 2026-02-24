@@ -110,8 +110,7 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     config->deep_layer[11] = 2; // set index 11 to 2
     config->deep_layer[17] = 3;
 
-    config->max_prefill_size = 1;
-
+    config->max_prefill_size = 2;
 
     // ==================================================================================
     // 2. Derived Dimensions
@@ -339,8 +338,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->t = new Tensor({MPS, H});
 
     state->q = new Tensor({MPS, NH, D});
-    state->k = new Tensor({MPS, NH, D});
-    state->v = new Tensor({MPS, NH, D});
+    state->k = new Tensor({MPS, NKV, D});
+    state->v = new Tensor({MPS, NKV, D});
 
     state->att = new Tensor({MPS, NH, S});
 

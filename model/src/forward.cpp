@@ -1,8 +1,8 @@
 #include "../include/forward.hpp"
 
 void forward_img(
-    QwenConfig *config, QwenRunState *state, QwenWeight *weight, float *img_data,
-    int img_h, int img_w, int grid_h, int grid_w, bool warm_up
+    QwenConfig *config, QwenRunState *state, QwenWeight *weight,
+    float *img_data, int img_h, int img_w, int grid_h, int grid_w, bool warm_up
 ) {
     if (img_data == nullptr) {
         return;
@@ -466,8 +466,8 @@ void forward_img(
 }
 
 void forward_text_prefill(
-    QwenConfig *config, QwenRunState *state, QwenWeight *weight, int *token_list,
-    const size_t prefill_size, size_t pos, bool warm_up
+    QwenConfig *config, QwenRunState *state, QwenWeight *weight,
+    int *token_list, const size_t prefill_size, size_t pos, bool warm_up
 ) {
     long hidden_size = config->hidden_size;
     long num_heads = config->num_attention_heads;

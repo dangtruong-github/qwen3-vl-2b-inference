@@ -228,6 +228,23 @@ void f32a_i8f32sb_f32c_avx2_kernel(
         }
         return;
     }
+    
+    if (group_size == 128) {
+        for (size_t i = 0; i < M; ++i) {
+            gemv_lg_N_K_g128(
+                mat_A + i * K, mat_B_in, mat_B_scales, mat_C + i * N, N, K
+            );
+        }
+    } else {
+        for (size_t i = 0; i < M; ++i) {
+            gemv_lg_N_K(
+                mat_A + i * K, mat_B_in, mat_B_scales,
+                mat_C + i * N, N, K, group_size
+            );
+        }
+    }
+
+    return;
 
     const size_t groups_per_row = K / group_size;
 
