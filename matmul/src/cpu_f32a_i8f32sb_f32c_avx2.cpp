@@ -229,190 +229,32 @@ void f32a_i8f32sb_f32c_avx2_kernel(
         return;
     }
 
-    constexpr size_t TN = 4 * 4;
-    constexpr size_t TK = 128 * 2;
-    // Pre-calculate this once outside all loops
-    const float inv_group_size = 1.0f / (float)group_size;
-    const float inv_127 = 1.0f / 127.0f;
+    const size_t groups_per_row = K / group_size;
+
 
     for (size_t i = 0; i < M; ++i) {
-        int16_t a_q16[K];
-        float a_q16_s[K / group_size];
-        const float *a0_ptr = mat_A + i * K;
 
-        for (size_t kk = 0; kk < K; kk += group_size) {
-            __m256 v_sumsq0 = _mm256_setzero_ps();
-            __m256 v_sumsq1 = _mm256_setzero_ps();
-
-            for (size_t k = kk; k < kk + group_size; k += 16) {
-                __m256 v_a0 = _mm256_loadu_ps(a0_ptr + k);
-                __m256 v_a1 = _mm256_loadu_ps(a0_ptr + k + 8);
-
-                v_sumsq0 = _mm256_fmadd_ps(v_a0, v_a0, v_sumsq0);
-                v_sumsq1 = _mm256_fmadd_ps(v_a1, v_a1, v_sumsq1);
-            }
-
-            // Combine at the end
-            float sumsq = add_reduce_mm_256(_mm256_add_ps(v_sumsq0, v_sumsq1));
-
-            // Inside the loop:
-            float rms = sqrtf(sumsq * inv_group_size + 1e-6f);
-            float s_val = rms * inv_127; 
-
-            a_q16_s[kk / group_size] = s_val;
-
-            __m256 v_inv_Sa = _mm256_set1_ps(1 / s_val);
-
-            for (size_t k = kk; k < kk + group_size; k += 16) {
-                // 1. Load 16 floats
-                __m256 f0 = _mm256_loadu_ps(a0_ptr + k);
-                __m256 f1 = _mm256_loadu_ps(a0_ptr + k + 8);
-
-                // 2. Scale and Convert to i32
-                __m256i i0 = _mm256_cvtps_epi32(_mm256_mul_ps(f0, v_inv_Sa));
-                __m256i i1 = _mm256_cvtps_epi32(_mm256_mul_ps(f1, v_inv_Sa));
-
-                // 3. Pack (This creates the "Lane Mess")
-                __m256i packed = _mm256_packs_epi32(i0, i1);
-
-                // 4. FIX THE LANES (The Magic Step)
-                // This permutes 64-bit quads to restore linear order: 0, 2, 1, 3
-                __m256i linear = _mm256_permute4x64_epi64(packed, 0xD8); 
-
-                // 5. Store
-                _mm256_storeu_si256((__m256i*)(a_q16 + k), linear);
-            }
-        }
+        const float *a_row = mat_A + i * K;
 
         #pragma omp parallel for
-        for (size_t jj = 0; jj < N; jj += TN) {
-            const size_t j_end = std::min(jj + TN, N);
-            const size_t j_size = j_end - jj;
-            float acc[j_size] = {0.0f};
+        for (size_t j = 0; j < N; ++j) {
 
-            for (size_t kk = 0; kk < K; kk += TK) {
-                const size_t k_end = std::min(kk + TK, K);
-                const size_t k_size = k_end - kk;
+            const int8_t *b_row = mat_B_in + j * K;
+            const float *b_scale_row = mat_B_scales + j * groups_per_row;
 
-                size_t k = kk;
-                for (; k + group_size <= k_end; k += group_size) {
-                    const size_t group = k / group_size;
+            float acc = 0.0f;
 
-                    size_t j = jj;
-                    for (; j < j_end; j += 4) {
-                        const int8_t *b0_ptr = mat_B_in + j * K;
-                        const int8_t *b1_ptr = mat_B_in + (j+1) * K;
-                        const int8_t *b2_ptr = mat_B_in + (j+2) * K;
-                        const int8_t *b3_ptr = mat_B_in + (j+3) * K;
+            for (size_t k = 0; k < K; ++k) {
 
-                        // group_size % 16 == 0
-                        __m256i c0 = _mm256_setzero_si256();
-                        __m256i c1 = _mm256_setzero_si256();
-                        __m256i c2 = _mm256_setzero_si256();
-                        __m256i c3 = _mm256_setzero_si256();
+                size_t group = k / group_size;
 
-                        /*
-                        for (size_t k_i = k; k_i < k + group_size; k_i += 16) {
-                            __m256i a0 = _mm256_loadu_si256((__m256i*)(a_q16 + k_i));
-                            __m256i a1 = _mm256_loadu_si256((__m256i*)(a_q16 + k_i + 16));
+                float b_dequant =
+                    (float)b_row[k] * b_scale_row[group];
 
-                            __m256i b8 = _mm256_loadu_si256((__m256i*)(b0_ptr + k_i));
-                            __m256i b16_00 = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(b8));
-                            __m256i b16_01 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b8, 1));
-
-                            b8 = _mm256_loadu_si256((__m256i*)(b1_ptr + k_i));
-                            __m256i b16_10 = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(b8));
-                            __m256i b16_11 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b8, 1));
-
-                            c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(a0, b16_00));
-                            c1 = _mm256_add_epi32(c1, _mm256_madd_epi16(a0, b16_10));
-                            c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(a1, b16_01));
-                            c1 = _mm256_add_epi32(c1, _mm256_madd_epi16(a1, b16_11));
-
-                            b8 = _mm256_loadu_si256((__m256i*)(b2_ptr + k_i));
-                            b16_00 = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(b8));
-                            b16_01 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b8, 1));
-
-                            b8 = _mm256_loadu_si256((__m256i*)(b3_ptr + k_i));
-                            b16_10 = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(b8));
-                            b16_11 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b8, 1));
-
-                            c2 = _mm256_add_epi32(c2, _mm256_madd_epi16(a0, b16_00));
-                            c3 = _mm256_add_epi32(c3, _mm256_madd_epi16(a0, b16_10));
-                            c2 = _mm256_add_epi32(c2, _mm256_madd_epi16(a1, b16_01));
-                            c3 = _mm256_add_epi32(c3, _mm256_madd_epi16(a1, b16_11));
-                        }
-                        */
-
-                        for (size_t k_i = k; k_i < k + group_size; k_i += 16) {
-                            __m256i a0 = _mm256_loadu_si256((__m256i*)(a_q16 + k_i));
-                            
-                            __m128i b80 = _mm_loadu_si128((const __m128i*)(b0_ptr + k_i));
-                            __m256i b16_00 = _mm256_cvtepi8_epi16(b80);
-                            
-                            __m128i b81 = _mm_loadu_si128((const __m128i*)(b1_ptr + k_i));
-                            __m256i b16_10 = _mm256_cvtepi8_epi16(b81);
-                            
-                            __m128i b82 = _mm_loadu_si128((const __m128i*)(b2_ptr + k_i));
-                            __m256i b16_20 = _mm256_cvtepi8_epi16(b82);
-                            
-                            __m128i b83 = _mm_loadu_si128((const __m128i*)(b3_ptr + k_i));
-                            __m256i b16_30 = _mm256_cvtepi8_epi16(b83);
-
-                            c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(a0, b16_00));
-                            c1 = _mm256_add_epi32(c1, _mm256_madd_epi16(a0, b16_10));
-                            c2 = _mm256_add_epi32(c2, _mm256_madd_epi16(a0, b16_20));
-                            c3 = _mm256_add_epi32(c3, _mm256_madd_epi16(a0, b16_30));
-                        }
-
-                        const float a_q_group = a_q16_s[group];
-                        acc[j - jj] += add_reduce_m256i(c0) * a_q_group * mat_B_scales[j * K / group_size + group];
-                        acc[j + 1 - jj] += add_reduce_m256i(c1) * a_q_group * mat_B_scales[(j + 1) * K / group_size + group];
-                        acc[j + 2 - jj] += add_reduce_m256i(c2) * a_q_group * mat_B_scales[(j + 2) * K / group_size + group];
-                        acc[j + 3 - jj] += add_reduce_m256i(c3) * a_q_group * mat_B_scales[(j + 3) * K / group_size + group];
-                    }
-                
-                    for (; j < j_end; ++j) {
-                        const int8_t *b0_ptr = mat_B_in + j * K;
-
-                        // group_size % 16 == 0
-                        __m256i c0 = _mm256_setzero_si256();
-                        __m256i c1 = _mm256_setzero_si256();
-                        __m256i c2 = _mm256_setzero_si256();
-                        __m256i c3 = _mm256_setzero_si256();
-
-                        for (size_t k_i = k; k_i < k + group_size; k_i += 64) {
-                            __m256i a0 = _mm256_loadu_si256((__m256i*)(a_q16 + k_i));
-                            __m256i a1 = _mm256_loadu_si256((__m256i*)(a_q16 + k_i + 16));
-                            __m256i a2 = _mm256_loadu_si256((__m256i*)(a_q16 + k_i + 32));
-                            __m256i a3 = _mm256_loadu_si256((__m256i*)(a_q16 + k_i + 48));
-
-                            __m256i b80 = _mm256_loadu_si256((__m256i*)(b0_ptr + k_i));
-                            __m256i b16_0 = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(b80));
-                            __m256i b16_1 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b80, 1));
-
-                            __m256i b81 = _mm256_loadu_si256((__m256i*)(b0_ptr + k_i + 32));
-                            __m256i b16_2 = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(b81));
-                            __m256i b16_3 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b81, 1));
-
-                            c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(a0, b16_0));
-                            c1 = _mm256_add_epi32(c1, _mm256_madd_epi16(a1, b16_1));
-                            c2 = _mm256_add_epi32(c2, _mm256_madd_epi16(a2, b16_2));
-                            c3 = _mm256_add_epi32(c3, _mm256_madd_epi16(a3, b16_3));
-                        }
-
-                        c0 = _mm256_add_epi32(c0, c1);
-                        c2 = _mm256_add_epi32(c2, c3);
-
-                        acc[j - jj] += add_reduce_m256i(_mm256_add_epi32(c0, c2)) * a_q16_s[group] * mat_B_scales[j * K / group_size + group];
-                    }
-                }
+                acc += a_row[k] * b_dequant;
             }
 
-            for (size_t j = jj; j < j_end; ++j) {
-                size_t out_idx = i * N + j;
-                mat_C[out_idx] = acc[j - jj];
-            }
+            mat_C[i * N + j] = acc;
         }
     }
 }

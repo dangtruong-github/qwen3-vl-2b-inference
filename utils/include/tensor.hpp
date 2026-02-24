@@ -79,6 +79,6 @@ struct Tensor {
     void reshape(const std::vector<size_t> &shape_);
     void printShape(const std::string &descr) const;
     // NEEDS IMPLEMENTING FOR scale_buf
-    void printDebug(const std::string &descr, bool full_tensor = false) const;
+    void printDebug(const std::string &descr, const std::vector<size_t> &indices = {}, bool full_tensor = false) const;
     void permute(const std::vector<size_t> &order);
 };

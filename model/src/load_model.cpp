@@ -110,6 +110,8 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     config->deep_layer[11] = 2; // set index 11 to 2
     config->deep_layer[17] = 3;
 
+    config->max_prefill_size = 1;
+
 
     // ==================================================================================
     // 2. Derived Dimensions
@@ -328,32 +330,34 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     size_t VD = VH / config->vision_num_heads;
     size_t VI = config->vision_intermediate_size;
     size_t VDS = config->vision_deep_stack_depth;
+    
+    size_t MPS = config->max_prefill_size;
 
     // ---- Hidden / intermediate ----
-    state->x = new Tensor({BATCH_SIZE, H});
+    state->x = new Tensor({MPS, H});
 
-    state->t = new Tensor({BATCH_SIZE, H});
+    state->t = new Tensor({MPS, H});
 
-    state->q = new Tensor({BATCH_SIZE, NH, D});
-    state->k = new Tensor({BATCH_SIZE, NH, D});
-    state->v = new Tensor({BATCH_SIZE, NH, D});
+    state->q = new Tensor({MPS, NH, D});
+    state->k = new Tensor({MPS, NH, D});
+    state->v = new Tensor({MPS, NH, D});
 
-    state->att = new Tensor({BATCH_SIZE, NH, S});
+    state->att = new Tensor({MPS, NH, S});
 
-    state->qkv_out = new Tensor({BATCH_SIZE, H});
+    state->qkv_out = new Tensor({MPS, H});
 
-    state->gate = new Tensor({BATCH_SIZE, I});
+    state->gate = new Tensor({MPS, I});
 
-    state->up = new Tensor({BATCH_SIZE, I});
+    state->up = new Tensor({MPS, I});
 
     state->cos_tensor = new Tensor({3, S, D / 2});
     state->sin_tensor = new Tensor({3, S, D / 2});
 
-    state->logits = new Tensor({BATCH_SIZE, V});
+    state->logits = new Tensor({MPS, V});
 
     // ---- KV cache ----
-    state->key_cache = new Tensor({BATCH_SIZE, L, NKV, S, D}); //, DType::FP16);
-    state->value_cache = new Tensor({BATCH_SIZE, L, NKV, S, D}); //, DType::FP16);
+    state->key_cache = new Tensor({1, L, NKV, S, D}); //, DType::FP16);
+    state->value_cache = new Tensor({1, L, NKV, S, D}); //, DType::FP16);
 
     // -- Vision states --
     state->vision_x = new Tensor({VNP_max, VH});
@@ -361,7 +365,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->vision_q = new Tensor({VNP_max, VH}, DType::FP16);
     state->vision_k = new Tensor({VNP_max, VH}, DType::FP16);
 
-    state->vision_cos_tensor = new Tensor({VNP_max, VD / 4}, DType::FP16);    state->vision_sin_tensor = new Tensor({VNP_max, VD / 4}, DType::FP16);
+    state->vision_cos_tensor = new Tensor({VNP_max, VD / 4}, DType::FP16);   
+    state->vision_sin_tensor = new Tensor({VNP_max, VD / 4}, DType::FP16);
 
     state->vision_pe_cos = new Tensor({VNP_max, VD}, DType::FP16); 
     state->vision_pe_sin = new Tensor({VNP_max, VD}, DType::FP16);

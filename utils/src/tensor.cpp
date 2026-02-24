@@ -329,9 +329,11 @@ void Tensor::printShape(const std::string &descr) const {
     }
 }
 
-void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
+void Tensor::printDebug(const std::string &descr, const std::vector<size_t> &indices, bool full_tensor) const {
     #pragma omp critical
     {
+        void *buf_print = ptr(indices);
+
         size_t elem = num_elem();
         size_t batches = elem / shape[ndim - 1];
 
@@ -343,7 +345,7 @@ void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
 
         printf("Print debug %s: ", descr.c_str());
         if (dtype == DType::FP32) {
-            float *fp32_buf = (float *)buf;
+            float *fp32_buf = (float *)buf_print;
             if (full_tensor) {
                 printf("\n");
                 for (size_t i = 0; i < batches; i++) {
@@ -358,7 +360,7 @@ void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
                 }
             }
         } else if (dtype == DType::FP16) {
-            half_cpu *fp16_buf = (half_cpu *)buf;
+            half_cpu *fp16_buf = (half_cpu *)buf_print;
             if (full_tensor) {
                 printf("\n");
                 for (size_t i = 0; i < batches; i++) {
@@ -373,7 +375,7 @@ void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
                 }
             }
         } else if (dtype == DType::INT32) {
-            int *int32_buf = (int *)buf;
+            int *int32_buf = (int *)buf_print;
             if (full_tensor) {
                 printf("\n");
                 for (size_t i = 0; i < batches; i++) {

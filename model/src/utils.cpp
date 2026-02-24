@@ -134,72 +134,59 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         int *generated_tokens = (int*)malloc(max_seq_len * sizeof(int));
         int total_generated_count = 0;
 
-        // Start the main loop - similar to generate() in run.cpp
-        int next; // will store the next token in the sequence
-        int token = input_tokens[0]; // kick off with the first token in the prompt
         int pos = 0; // position in the sequence
-        int im_end_count = 0;
+        for (; pos < input_count; pos += config->max_prefill_size) {
+            size_t cur_prefill_size = std::min(input_count - pos, config->max_prefill_size);
 
-        while (pos < max_seq_len) { // max steps
-            // Forward the transformer to get logits for the next token
-            // Using your existing forward functions
-            float *logits = forward_text(config, state, weight, token, pos);
+            // Process a chunk of prompt tokens
+            forward_text_prefill(config, state, weight, input_tokens + pos, cur_prefill_size, pos);
 
-            // Advance the state machine - similar to run.cpp
-            if (pos < input_count - 1) {
-                // If we are still processing the input prompt, force the next prompt token
-                next = input_tokens[pos + 1];
-            } else {
-                // Otherwise use greedy decoding (temperature=0 equivalent)
-                next = greedy_decode(logits, config->vocab_size);
-                if (!first_token_recorded) {
-                    t_first_token = now_sec();
-                    first_token_recorded = 1;
-                }
+            // Print each prompt token properly
+            for (size_t i = 0; i < cur_prefill_size; ++i) {
+                print_token(tokenizer, input_tokens[pos + i]);
             }
-            pos++;
+        }
 
-            // Add generated token to sequence (only after processing prompt)
-            if (pos >= input_count) {
-                generated_tokens[total_generated_count++] = next;
+        #ifdef PRINT_LOGITS
+            exit(1);
+        #endif
+        
+        pos = input_count - 1;
+        int token = input_tokens[pos];
+
+        while (pos < max_seq_len) {
+            float *logits = forward_text_decode(config, state, weight, token, pos);
+
+            int next = greedy_decode(logits, config->vocab_size);
+
+            if (!first_token_recorded) {
+                t_first_token = now_sec();
+                first_token_recorded = 1;
             }
+
+            generated_tokens[total_generated_count++] = next;
 
             #ifdef PRINT_LOGITS
-                if (pos >= input_count) {
-                    printf("%d %s", next, tokenizer->vocab[next]);
-                    printf("\nLogits: ");
-                    for (int i = 0; i < 5; i++) {
-                        printf("%.6f ", logits[i]);
-                    }
-                    printf("\n");
-                } else {
-                    print_token(tokenizer, next);
+                printf("%d %s\n", next, tokenizer->vocab[next]);
+                printf("Logits: ");
+                for (int i = 0; i < 5; i++) {
+                    printf("%.6f ", logits[i]);
                 }
+                printf("\n");
             #else
                 print_token(tokenizer, next);
             #endif
 
-            // Data-dependent terminating condition - match your EOS tokens
-            // Using the same condition as original forward_validate
-            if (next == 151645) { // <im_end> token
-                // Count consecutive im_end tokens like original
-                im_end_count++;
-                if (im_end_count >= 2) {
-                    printf("\nStopping generation: <im_end> token encountered twice\n");
-                    break;
-                }
-            }
-
-            /*
-            if (total_generated_count >= expected_count) {
-                printf("\nExpected token count reached, break\n");
+            // EOS handling
+            if (next == 151645) {  // <im_end>
+                printf("\nStopping generation: <im_end> token encountered twice\n");
                 break;
             }
-            */
 
-            token = next; // Update token for next iteration
+            token = next;
+            pos++;
         }
-        
+
         t_gen_end = now_sec();
 
         printf("  Generated %d total tokens\n", total_generated_count);
@@ -398,7 +385,7 @@ void forward_generate(const char *in_token_file, const char *in_img_path, const 
         while (pos < max_seq_len) { // max steps
             // Forward the transformer to get logits for the next token
             // Using your existing forward functions
-            float *logits = forward_text(config, state, weight, token, pos);
+            float *logits = forward_text_decode(config, state, weight, token, pos);
 
             // Advance the state machine - similar to run.cpp
             if (pos < input_count - 1) {
@@ -605,7 +592,7 @@ void warm_up(
     forward_img(config, state, weight,
                 img_processed_output,
                 img_processed_h, img_processed_w,
-                img_grid_h, img_grid_w);
+                img_grid_h, img_grid_w, true);
     
     state->vision_embed_tokens = 0;
     state->cur_img_token_id = 0;
@@ -615,8 +602,9 @@ void warm_up(
     // ---- 3. Run one transformer token forward ----
     float *logits;
 
-    for (int i = 0; i < 15; ++i) {
-        logits = forward_text(config, state, weight, warmup_token, pos);
+    for (int i = 0; i < 5; ++i) {
+        forward_text_prefill(config, state, weight, &warmup_token, 1, pos, true);
+        logits = forward_text_decode(config, state, weight, warmup_token, pos, true);
     }
 
     (void)logits; // suppress unused warning

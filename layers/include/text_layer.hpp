@@ -17,7 +17,7 @@
 void embedding_lookup(
     const Tensor *__restrict embedding /*[vocab, hidden]*/, 
     Tensor *__restrict out /*[hidden]*/,
-    size_t token_id, size_t hidden_size
+    size_t out_id, size_t token_id, size_t hidden_size
 );
 void rms_norm(
     const Tensor *__restrict x_tensor /*[hidden]*/,
@@ -43,9 +43,12 @@ void add_vector(
     size_t size_vec = 0
 );
 void add_vector(
-    Tensor *__restrict add_to,
-    const void *__restrict add_from,
+    Tensor *__restrict add_to, const void *__restrict add_from,
     DType::Type add_from_type, size_t size_vec
+);
+void add_vector(
+    void *__restrict add_to, const void *__restrict add_from,
+    DType::Type add_from_type, DType::Type add_to_type, size_t size_vec
 );
 void swiglu(
     Tensor *__restrict gate,  // [d]
@@ -56,24 +59,24 @@ void attn_scores_all_heads(
     const float *__restrict key_cache,
     const Tensor *__restrict q, Tensor *__restrict att,
     size_t attn_heads, int kv_mul, int head_dim,
-    int kv_dim, size_t sh_offset, int pos
+    int kv_dim, size_t sh_offset, int pos, int prefill_size
 );
 void attn_weighted_sum_all_heads(
     const float *__restrict value_cache,
     const Tensor *__restrict att, Tensor *__restrict tb,
     int attn_heads, int kv_mul, int head_dim, int kv_dim,
-    size_t sh_offset, int pos
+    size_t sh_offset, int pos, int prefill_size
 );
 void apply_rotary(
-    Tensor *__restrict x /*[n_heads*hd]*/,
-    const Tensor *__restrict cos_table /*[seq_len*hd/2]*/,
-    const Tensor *__restrict sin_table /*[seq_len*hd/2]*/,
-    int n_heads, int head_dim, int pos
+    Tensor *__restrict x,               /* [batch_size, n_heads, head_dim] */
+    const Tensor *__restrict cos_table, /* [seq_len, head_dim/2] */
+    const Tensor *__restrict sin_table, /* [seq_len, head_dim/2] */
+    int batch_size, int n_heads, int head_dim, int pos
 );
 void apply_rotary_cache(
     const Tensor *__restrict in /*[n_heads*hd]*/,
     float *__restrict k_out      /*[n_heads*seq_len*hd]*/,
     const Tensor *__restrict cos_table /*[seq_len*hd/2]*/,
     const Tensor *__restrict sin_table /*[seq_len*hd/2]*/,
-    int n_heads, int head_dim, int pos, size_t sh_off
+    int batch_size, int n_heads, int head_dim, int pos, size_t sh_off
 );

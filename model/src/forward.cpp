@@ -1,6 +1,9 @@
 #include "../include/forward.hpp"
 
-void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, float *img_data, int img_h, int img_w, int grid_h, int grid_w) {
+void forward_img(
+    QwenConfig *config, QwenRunState *state, QwenWeight *weight, float *img_data,
+    int img_h, int img_w, int grid_h, int grid_w, bool warm_up
+) {
     if (img_data == nullptr) {
         return;
     }
@@ -35,7 +38,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     );
 
     #ifdef PRINT_LOGITS
-        state->vision_x->printDebug("vision_x");
+        if (!warm_up) state->vision_x->printDebug("vision_x");
     #endif
 
     free(img_data);
@@ -51,13 +54,13 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     );
 
     #ifdef PRINT_LOGITS
-        state->vision_t->printDebug("vision_t");
+        if (!warm_up) state->vision_t->printDebug("vision_t");
     #endif
 
     add_vector(state->vision_x, state->vision_t, 1ll * total_tokens * VH);
 
     #ifdef PRINT_LOGITS
-        state->vision_x->printDebug("vision_x");
+        if (!warm_up) state->vision_x->printDebug("vision_x");
     #endif
 
     vision_rot_pos_emb(
@@ -67,8 +70,10 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     );
 
     #ifdef PRINT_LOGITS
-        state->vision_pe_cos->printDebug("vision_pe_cos");
-        state->vision_pe_sin->printDebug("vision_pe_sin");
+        if (!warm_up) {
+            state->vision_pe_cos->printDebug("vision_pe_cos");
+            state->vision_pe_sin->printDebug("vision_pe_sin");
+        }
     #endif
 
     printf("Finish preprocessing forward_img\n");
@@ -81,11 +86,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_t->printDebug("vision_t");
+            if (!warm_up) state->vision_t->printDebug("vision_t");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_t->printDebug("vision_t");
+            if (!warm_up) state->vision_t->printDebug("vision_t");
         #endif
 
         PtrPair w_q = weight->vl_attn_qkv_w->ptr_all({l});
@@ -105,11 +110,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         vision_apply_rotary_inplace(
@@ -118,11 +123,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         tensor_transpose(
@@ -130,11 +135,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_q->printDebug("vision_q");
+            if (!warm_up) state->vision_q->printDebug("vision_q");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_q->printDebug("vision_q");
+            if (!warm_up) state->vision_q->printDebug("vision_q");
         #endif
 
         // use vl_v as temporary buffer for vision_k
@@ -147,11 +152,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         vision_apply_rotary_inplace(
@@ -160,11 +165,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         tensor_transpose(
@@ -172,11 +177,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_k->printDebug("vision_k");
+            if (!warm_up) state->vision_k->printDebug("vision_k");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_k->printDebug("vision_k");
+            if (!warm_up) state->vision_k->printDebug("vision_k");
         #endif
 
         // swap vision_t and vl_v
@@ -189,11 +194,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         tensor_transpose(
@@ -201,11 +206,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_t->printDebug("vision_t");
+            if (!warm_up) state->vision_t->printDebug("vision_t");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_t->printDebug("vision_t");
+            if (!warm_up) state->vision_t->printDebug("vision_t");
         #endif
         
         vision_att(
@@ -215,11 +220,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
         
         #ifdef PRINT_LOGITS
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
         
         // swap back vision_t and vl_v
@@ -228,11 +233,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_t->printDebug("vision_t");
+            if (!warm_up) state->vision_t->printDebug("vision_t");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_t->printDebug("vision_t");
+            if (!warm_up) state->vision_t->printDebug("vision_t");
         #endif
 
         PtrPair w_attn_proj_ptr, b_attn_proj_ptr;
@@ -250,21 +255,21 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_q->printDebug("vision_q");
+            if (!warm_up) state->vision_q->printDebug("vision_q");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_q->printDebug("vision_q");
+            if (!warm_up) state->vision_q->printDebug("vision_q");
         #endif
 
         add_vector(state->vision_x, state->vision_q, 1ll * total_tokens * VH);
 
         #ifdef PRINT_LOGITS
-            state->vision_x->printDebug("vision_x");
+            if (!warm_up) state->vision_x->printDebug("vision_x");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_x->printDebug("vision_x");
+            if (!warm_up) state->vision_x->printDebug("vision_x");
         #endif
 
         layer_norm(
@@ -274,11 +279,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_t->printDebug("vision_t");
+            if (!warm_up) state->vision_t->printDebug("vision_t");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_t->printDebug("vision_t");
+            if (!warm_up) state->vision_t->printDebug("vision_t");
         #endif
         
         PtrPair w_mlp1_ptr = weight->vl_mlp1_w->ptr_all({l});
@@ -293,21 +298,21 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
 
         gelu_tanh(state->vision_mlp_out, 1ll * total_tokens * VI);
 
         #ifdef PRINT_LOGITS
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
         
         #ifdef PRINT_LOGITS_2
-            state->vision_mlp_out->printDebug("vision_mlp_out");
+            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
         #endif
         
         PtrPair w_mlp2_ptr = weight->vl_mlp2_w->ptr_all({l});
@@ -322,21 +327,21 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
         );
 
         #ifdef PRINT_LOGITS
-            state->vision_t->printDebug("vision_t");
+            if (!warm_up) state->vision_t->printDebug("vision_t");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_t->printDebug("vision_t");
+            if (!warm_up) state->vision_t->printDebug("vision_t");
         #endif
 
         add_vector(state->vision_x, state->vision_t, 1ll * total_tokens * VH);
 
         #ifdef PRINT_LOGITS
-            state->vision_x->printDebug("vision_x");
+            if (!warm_up) state->vision_x->printDebug("vision_x");
         #endif
 
         #ifdef PRINT_LOGITS_2
-            state->vision_x->printDebug("vision_x");
+            if (!warm_up) state->vision_x->printDebug("vision_x");
         #endif
 
         if (config->deep_layer[l] > 0) {
@@ -348,11 +353,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             );
 
             #ifdef PRINT_LOGITS
-                state->vision_t->printDebug("vision_t");
+                if (!warm_up) state->vision_t->printDebug("vision_t");
             #endif
 
             #ifdef PRINT_LOGITS_2
-                state->vision_t->printDebug("vision_t");
+                if (!warm_up) state->vision_t->printDebug("vision_t");
             #endif
             
             PtrPair w_mlp1_d_ptr = weight->vl_d_mlp1_w->ptr_all({d_stride});
@@ -367,21 +372,21 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             );
 
             #ifdef PRINT_LOGITS
-                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
             #endif
 
             #ifdef PRINT_LOGITS_2
-                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
             #endif
         
             gelu_tanh(state->vision_mlp_out, 1ll * d_tokens * VI);
 
             #ifdef PRINT_LOGITS
-                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
             #endif
 
             #ifdef PRINT_LOGITS_2
-                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
             #endif
 
             PtrPair w_mlp2_d_ptr = weight->vl_d_mlp2_w->ptr_all({d_stride});
@@ -396,11 +401,11 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
             );
 
             #ifdef PRINT_LOGITS
-                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
             #endif
 
             #ifdef PRINT_LOGITS_2
-                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
             #endif
         }
 
@@ -415,7 +420,7 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     );
 
     #ifdef PRINT_LOGITS
-        state->vision_t->printDebug("vision_t");
+        if (!warm_up) state->vision_t->printDebug("vision_t");
     #endif
 
     PtrPair vl_merge_mlp1_w_ptr = weight->vl_merge_mlp1_w->ptr_all();
@@ -431,13 +436,13 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     );
 
     #ifdef PRINT_LOGITS
-        state->vision_mlp_out->printDebug("vision_mlp_out");
+        if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
     #endif
 
     gelu_tanh(state->vision_mlp_out, 1ll * d_tokens * VI);
 
     #ifdef PRINT_LOGITS
-        state->vision_mlp_out->printDebug("vision_mlp_out");
+        if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
     #endif
 
     PtrPair vl_merge_mlp2_w_ptr = weight->vl_merge_mlp2_w->ptr_all();
@@ -453,14 +458,341 @@ void forward_img(QwenConfig *config, QwenRunState *state, QwenWeight *weight, fl
     );
 
     #ifdef PRINT_LOGITS
-        state->vision_x->printDebug("vision_x");
+        if (!warm_up) state->vision_x->printDebug("vision_x");
     #endif
     
     state->vision_embed_tokens = d_tokens;
     state->cur_img_token_id = 0;
 }
 
-float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight, int token_id, size_t pos) {
+void forward_text_prefill(
+    QwenConfig *config, QwenRunState *state, QwenWeight *weight, int *token_list,
+    const size_t prefill_size, size_t pos, bool warm_up
+) {
+    long hidden_size = config->hidden_size;
+    long num_heads = config->num_attention_heads;
+    long num_kv_heads = config->num_key_value_heads;
+    long head_dim = hidden_size / num_heads;
+    long seq_len = config->seq_len;
+    long kv_dim = config->num_key_value_heads * head_dim;
+    int kv_mul = num_heads / num_kv_heads;
+
+    const size_t kv_pos_off = 1ll * pos * head_dim;
+    const size_t kv_all_off = 1ll * seq_len * head_dim;
+
+    const DType::Type dtype_weight = weight->token_embedding_table->dtype;
+    const DType::Type dtype_scale = weight->token_embedding_table->scale_dtype;
+    const size_t text_group_size = weight->token_embedding_table->group_size;
+    const bool text_gq = config->group_quantized ? true : false;
+
+    int img_token_id[prefill_size];
+
+    // Embed layer
+    for (size_t i = 0; i < prefill_size; ++i) { 
+        int token_id = token_list[i];
+        bool img_token_true = (token_id == config->image_token_id) || (token_id == config->video_token_id);
+        if (!img_token_true) {
+            embedding_lookup(
+                weight->token_embedding_table,
+                state->x, i, token_id, hidden_size
+            );
+            img_token_id[i] = -1;
+        } else {
+            const float *src = (const float *)state->vision_x->ptr() + 1ll * hidden_size * state->cur_img_token_id;
+            memcpy(state->x->ptr({i}), src, 1ll * hidden_size * sizeof(float));
+            img_token_id[i] = state->cur_img_token_id;
+            state->cur_img_token_id++;
+        }
+    }
+
+    #ifdef PRINT_LOGITS
+        if (!warm_up) {
+            for (size_t b = 0; b < prefill_size; ++b) {
+                state->x->printDebug("x", {b});
+            }
+        }
+    #endif
+
+    for (size_t l = 0; l < config->num_hidden_layers; l++) {
+        // Pre-attention RMSNorm
+        rms_norm(
+            state->x, weight->rms_ffn_w, state->t,
+            config->rms_norm_eps, prefill_size, 1ll * l
+        );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->t->printDebug("t", {b});
+                }
+            }
+        #endif
+
+        PtrPair w_q = weight->w_attn_q->ptr_all({l});
+        PtrPair w_k = weight->w_attn_k->ptr_all({l});
+        PtrPair w_v = weight->w_attn_v->ptr_all({l});
+
+        linear(
+            state->t->ptr(), w_q.buf, w_q.scale, w_q.sum_int8, nullptr, nullptr,
+            state->q->ptr(), prefill_size, hidden_size, hidden_size,
+            !weight->w_attn_q->permuted, state->t->dtype, dtype_weight,
+            dtype_scale, state->q->dtype, text_gq, text_group_size
+        );
+        linear(
+            state->t->ptr(), w_k.buf, w_k.scale, w_k.sum_int8, nullptr, nullptr,
+            state->k->ptr(), prefill_size, kv_dim, hidden_size,
+            !weight->w_attn_k->permuted, state->t->dtype, dtype_weight,
+            dtype_scale, state->k->dtype, text_gq, text_group_size
+        );
+        linear(
+            state->t->ptr(), w_v.buf, w_v.scale, w_v.sum_int8, nullptr, nullptr,
+            state->v->ptr(), prefill_size, kv_dim, hidden_size,
+            !weight->w_attn_v->permuted, state->t->dtype, dtype_weight,
+            dtype_scale, state->v->dtype, text_gq, text_group_size
+        );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->q->printDebug("q", {b});
+                    state->k->printDebug("k", {b});
+                    state->v->printDebug("v", {b});
+                }
+            }
+        #endif
+
+        // QK RMSNorm
+        rms_norm_inplace(
+            state->q, weight->w_attn_q_norm, config->rms_norm_eps,
+            prefill_size * num_heads, 1ll * l
+        );
+        rms_norm_inplace(
+            state->k, weight->w_attn_k_norm, config->rms_norm_eps,
+            prefill_size * num_kv_heads, 1ll * l
+        );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->q->printDebug("q", {b});
+                }
+            }
+        #endif
+
+        // Apply Rotary Position Embeddings
+        apply_rotary(
+            state->q, state->cos_tensor, state->sin_tensor,
+            prefill_size, num_heads, head_dim, pos
+        );
+
+        const float *k_cache_l = (const float *)state->key_cache->ptr({0, l});
+        float *k_cache_ptr = (float *)k_cache_l + kv_pos_off;
+        apply_rotary_cache(
+            state->k, k_cache_ptr, state->cos_tensor, state->sin_tensor,
+            prefill_size, num_kv_heads, head_dim, pos, kv_all_off
+        );
+
+        const float *v_cache_l = (const float *)state->value_cache->ptr({0, l});
+        float *v_cache_base_ptr = (float *)v_cache_l + kv_pos_off;
+
+        for (size_t b = 0; b < prefill_size; ++b) {
+            const float *v_now_ptr = (const float *)state->v->ptr({b});
+            float *v_cache_ptr = v_cache_base_ptr + b * head_dim;
+            for (int h = 0; h < num_kv_heads; h++) {
+                memcpy(v_cache_ptr + h * kv_all_off, v_now_ptr + h * head_dim, head_dim * sizeof(float));
+            }
+        }
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                if (l == config->num_hidden_layers - 1) printf("pos=%d\n", pos);
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->q->printDebug("q", {b});
+                }
+            }
+        #endif
+
+        if (l == config->num_hidden_layers - 1) return;
+
+        // Multi-head attention
+
+        // Compute attention scores
+        attn_scores_all_heads(
+            k_cache_l, state->q, state->att, num_heads,
+            kv_mul, head_dim, kv_dim, kv_all_off, pos, prefill_size
+        );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->att->printDebug("att", {b});
+                }
+            }
+        #endif
+
+        // Compute weighted sum of values
+        attn_weighted_sum_all_heads(
+            v_cache_l, state->att, state->qkv_out, num_heads,
+            kv_mul, head_dim, kv_dim, kv_all_off, pos, prefill_size
+        );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->qkv_out->printDebug("qkv_out", {b});
+                }
+            }
+        #endif
+
+        // Output projection: using state->t for attn_out
+        PtrPair w_out_proj = weight->w_attn_o->ptr_all({l});
+        linear(
+            state->qkv_out->ptr(), w_out_proj.buf, w_out_proj.scale,
+            w_out_proj.sum_int8, nullptr, nullptr, state->t->ptr(), prefill_size,
+            hidden_size, hidden_size, !weight->w_attn_o->permuted,
+            state->qkv_out->dtype, dtype_weight, dtype_scale,
+            state->t->dtype, text_gq, text_group_size
+        );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->t->printDebug("t", {b});
+                }
+            }
+        #endif
+
+        // Residual connection 1
+        add_vector(state->x, state->t, prefill_size * hidden_size);
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->x->printDebug("x", {b});
+                }
+            }
+        #endif
+
+        // Post-attention RMSNorm
+        rms_norm(
+            state->x, weight->rms_attn_w, state->t,
+            config->rms_norm_eps, prefill_size, 1ll * l
+        );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->t->printDebug("t", {b});
+                }
+            }
+        #endif
+
+        // MLP: Gate and Up projections
+        PtrPair w_gate = weight->w_mlp_gate->ptr_all({l});
+        PtrPair w_up = weight->w_mlp_up->ptr_all({l});
+        linear(
+            state->t->ptr(), w_gate.buf, w_gate.scale, w_gate.sum_int8,
+            nullptr, nullptr, state->gate->ptr(), prefill_size, config->intermediate_size,
+            hidden_size, !weight->w_mlp_gate->permuted, state->t->dtype,
+            dtype_weight, dtype_scale, state->gate->dtype,
+            text_gq, text_group_size
+        );
+        linear(
+            state->t->ptr(), w_up.buf, w_up.scale, w_up.sum_int8, nullptr,
+            nullptr, state->up->ptr(), prefill_size, config->intermediate_size,
+            hidden_size, !weight->w_mlp_up->permuted, state->t->dtype,
+            dtype_weight, dtype_scale, state->up->dtype, text_gq,
+            text_group_size
+        );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->gate->printDebug("gate", {b});
+                    state->up->printDebug("up", {b});
+                }
+            }
+        #endif
+        
+        // SwiGLU activation
+        swiglu(state->gate, state->up, prefill_size * config->intermediate_size);
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->gate->printDebug("gate", {b});
+                }
+            }
+        #endif
+
+        // MLP: Down projection: using state->t for down
+        PtrPair w_down = weight->w_mlp_down->ptr_all({l});
+        linear(
+            state->gate->ptr(), w_down.buf, w_down.scale, w_down.sum_int8, 
+            nullptr, nullptr, state->t->ptr(), prefill_size, hidden_size,
+            config->intermediate_size, !weight->w_mlp_down->permuted,
+            state->gate->dtype, dtype_weight, dtype_scale, state->t->dtype,
+            text_gq, text_group_size
+        );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->t->printDebug("t", {b});
+                }
+            }
+        #endif
+
+        // Residual connection 2
+        add_vector(state->x, state->t, prefill_size * hidden_size);
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    state->x->printDebug("x", {b});
+                }
+            }
+        #endif
+
+        if (l < config->vision_deep_stack_depth) {
+            for (size_t i = 0; i < prefill_size; ++i) {
+                if (img_token_id[i] < 0) {
+                    continue;
+                }
+                
+                const void *deep_ptr = state->vision_deep_stack->ptr({l, (size_t)img_token_id[i]});
+                void *x_ptr = state->x->ptr({i});
+
+                // edit add_vector
+                add_vector(
+                    x_ptr, deep_ptr, state->vision_deep_stack->dtype, state->x->dtype, hidden_size
+                );
+            }
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    for (size_t i = 0; i < prefill_size; ++i) {
+                        if (img_token_id[i] >= 0) {
+                            for (size_t b = 0; b < prefill_size; ++b) {
+                                state->x->printDebug("x", {b});
+                            }
+                            break;
+                        }
+                    }
+                }
+            #endif
+        }
+        
+        if (warm_up) {
+            if ((l + 2) % 7 == 0) printf("Finish layer text %zu\n", l);
+        }
+    }
+}
+
+float *forward_text_decode(
+    QwenConfig *config, QwenRunState *state, QwenWeight *weight,
+    int token_id, size_t pos, bool warm_up
+) {
     long hidden_size = config->hidden_size;
     long num_heads = config->num_attention_heads;
     long num_kv_heads = config->num_key_value_heads;
@@ -482,7 +814,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     // Embed layer
     if (!img_token_true) {
         embedding_lookup(
-            weight->token_embedding_table, state->x, token_id, hidden_size
+            weight->token_embedding_table, state->x, 0ll, token_id, hidden_size
         );
     } else {
         const float *src = (const float *)state->vision_x->ptr() + 1ll * hidden_size * state->cur_img_token_id;
@@ -490,18 +822,18 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     }
 
     #ifdef PRINT_LOGITS
-        state->x->printDebug("x");
+        if (!warm_up) state->x->printDebug("x");
     #endif
 
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         // Pre-attention RMSNorm
         rms_norm(
             state->x, weight->rms_ffn_w, state->t,
-            config->rms_norm_eps, BATCH_SIZE, 1ll * l
+            config->rms_norm_eps, 1, 1ll * l
         );
 
         #ifdef PRINT_LOGITS
-            state->t->printDebug("t");
+            if (!warm_up) state->t->printDebug("t");
         #endif
 
         PtrPair w_q = weight->w_attn_q->ptr_all({l});
@@ -516,7 +848,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         );
 
         #ifdef PRINT_LOGITS
-            state->q->printDebug("q");
+            if (!warm_up) state->q->printDebug("q");
         #endif
 
         linear(
@@ -532,31 +864,38 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
             dtype_scale, state->v->dtype, text_gq, text_group_size
         );
 
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                state->k->printDebug("k");
+                state->v->printDebug("v");
+            }
+        #endif
+
         // QK RMSNorm
         rms_norm_inplace(
             state->q, weight->w_attn_q_norm, config->rms_norm_eps,
-            BATCH_SIZE * num_heads, 1ll * l
+            num_heads, 1ll * l
         );
         rms_norm_inplace(
             state->k, weight->w_attn_k_norm, config->rms_norm_eps,
-            BATCH_SIZE * num_kv_heads, 1ll * l
+            num_kv_heads, 1ll * l
         );
 
         #ifdef PRINT_LOGITS
-            state->q->printDebug("q");
+            if (!warm_up) state->q->printDebug("q");
         #endif
 
         // Apply Rotary Position Embeddings
         apply_rotary(
             state->q, state->cos_tensor, state->sin_tensor,
-            num_heads, head_dim, pos
+            1, num_heads, head_dim, pos
         );
 
         const float *k_cache_l = (const float *)state->key_cache->ptr({0, l});
         float *k_cache_ptr = (float *)k_cache_l + kv_pos_off;
         apply_rotary_cache(
             state->k, k_cache_ptr, state->cos_tensor, state->sin_tensor,
-            num_kv_heads, head_dim, pos, kv_all_off
+            1, num_kv_heads, head_dim, pos, kv_all_off
         );
 
         const float *v_cache_l = (const float *)state->value_cache->ptr({0, l});
@@ -567,7 +906,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         }
 
         #ifdef PRINT_LOGITS
-            state->q->printDebug("q");
+            if (!warm_up) state->q->printDebug("q");
         #endif
 
         // Multi-head attention
@@ -575,21 +914,21 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         // Compute attention scores
         attn_scores_all_heads(
             k_cache_l, state->q, state->att, num_heads,
-            kv_mul, head_dim, kv_dim, kv_all_off, pos
+            kv_mul, head_dim, kv_dim, kv_all_off, pos, 1
         );
 
         #ifdef PRINT_LOGITS
-            state->att->printDebug("att");
+            if (!warm_up) state->att->printDebug("att");
         #endif
 
         // Compute weighted sum of values
         attn_weighted_sum_all_heads(
             v_cache_l, state->att, state->qkv_out, num_heads,
-            kv_mul, head_dim, kv_dim, kv_all_off, pos
+            kv_mul, head_dim, kv_dim, kv_all_off, pos, 1
         );
 
         #ifdef PRINT_LOGITS
-            state->qkv_out->printDebug("qkv_out");
+            if (!warm_up) state->qkv_out->printDebug("qkv_out");
         #endif
 
         // Output projection: using state->t for attn_out
@@ -603,24 +942,24 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         );
 
         #ifdef PRINT_LOGITS
-            state->t->printDebug("t");
+            if (!warm_up) state->t->printDebug("t");
         #endif
 
         // Residual connection 1
-        add_vector(state->x, state->t, 1ll * BATCH_SIZE * hidden_size);
+        add_vector(state->x, state->t, hidden_size);
 
         #ifdef PRINT_LOGITS
-            state->x->printDebug("x");
+            if (!warm_up) state->x->printDebug("x");
         #endif
 
         // Post-attention RMSNorm
         rms_norm(
             state->x, weight->rms_attn_w, state->t,
-            config->rms_norm_eps, BATCH_SIZE, 1ll * l
+            config->rms_norm_eps, 1, 1ll * l
         );
 
         #ifdef PRINT_LOGITS
-            state->t->printDebug("t");
+            if (!warm_up) state->t->printDebug("t");
         #endif
 
         // MLP: Gate and Up projections
@@ -642,15 +981,17 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         );
 
         #ifdef PRINT_LOGITS
-            state->gate->printDebug("gate");
-            state->up->printDebug("up");
+            if (!warm_up) {
+                state->gate->printDebug("gate");
+                state->up->printDebug("up");
+            }
         #endif
         
         // SwiGLU activation
         swiglu(state->gate, state->up, config->intermediate_size);
 
         #ifdef PRINT_LOGITS
-            state->gate->printDebug("gate");
+            if (!warm_up) state->gate->printDebug("gate");
         #endif
 
         // MLP: Down projection: using state->t for down
@@ -664,48 +1005,41 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
         );
 
         #ifdef PRINT_LOGITS
-            state->t->printDebug("t");
+            if (!warm_up) state->t->printDebug("t");
         #endif
 
         // Residual connection 2
-        add_vector(state->x, state->t, 1ll * BATCH_SIZE * hidden_size);
+        add_vector(state->x, state->t, hidden_size);
 
         #ifdef PRINT_LOGITS
-            state->x->printDebug("x");
+            if (!warm_up) state->x->printDebug("x");
         #endif
 
         if (l < config->vision_deep_stack_depth && img_token_true) {
             const void *deep_ptr = state->vision_deep_stack->ptr({l, (size_t)state->cur_img_token_id});
-            add_vector(state->x, deep_ptr, state->vision_deep_stack->dtype, 1ll * BATCH_SIZE * hidden_size);
+            add_vector(
+                state->x, deep_ptr,
+                state->vision_deep_stack->dtype, hidden_size
+            );
 
             #ifdef PRINT_LOGITS
-                state->x->printDebug("x");
+                if (!warm_up) state->x->printDebug("x");
             #endif
         }
-        if (pos < 50) {
-            /*
-            if (l == 0) {
-                const float *print_ptr = (const float *)state->x->ptr();
-                printf("pos = %d\n", pos);
-                for (int i = 0; i < config->hidden_size; i++) {
-                    printf("%.2f ", print_ptr[i]);
-                }
-                printf("\n");
         
-            }
-            */
-        } else {
-            // exit(1);
+        
+        if (warm_up) {
+            if ((l + 2) % 7 == 0) printf("Finish layer text %zu\n", l);
         }
     }
 
     // Final RMSNorm
     rms_norm_inplace(
-        state->x, weight->rms_out_w, config->rms_norm_eps, BATCH_SIZE, 0ll
+        state->x, weight->rms_out_w, config->rms_norm_eps, 1, 0ll
     );
 
     #ifdef PRINT_LOGITS
-        state->x->printDebug("x");
+        if (!warm_up) state->x->printDebug("x");
     #endif
 
     // Classifier (LM Head)
@@ -715,7 +1049,7 @@ float *forward_text(QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     );
 
     #ifdef PRINT_LOGITS
-        state->logits->printDebug("logits");
+        if (!warm_up) state->logits->printDebug("logits");
     #endif
 
     if (img_token_true) {

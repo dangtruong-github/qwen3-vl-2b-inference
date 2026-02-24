@@ -42,6 +42,8 @@ typedef struct {
     int group_size;
     int vision_bits;
     int group_quantized;
+
+    int max_prefill_size;
 } QwenConfig;
 
 typedef struct {

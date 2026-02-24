@@ -3,26 +3,25 @@
 void embedding_lookup(
     const Tensor *__restrict embedding /*[vocab, hidden]*/, 
     Tensor *__restrict out /*[hidden]*/,
-    size_t token_id, size_t hidden_size
+    size_t out_id, size_t token_id, size_t hidden_size
 ) {
     PtrPair emb_ptr = embedding->ptr_all({token_id});
+    float *out_ptr = static_cast<float*>(out->ptr({out_id}));
 
     if (embedding->dtype == DType::FP32) {
-        memcpy(out->ptr(), emb_ptr.buf, hidden_size * sizeof(float));
+        memcpy(out_ptr, emb_ptr.buf, hidden_size * sizeof(float));
     } else if (embedding->dtype == DType::FP16) {
         // Get typed pointers
         const half_cpu *__restrict src = static_cast<const half_cpu*>(emb_ptr.buf);
-        float *__restrict dst = static_cast<float*>(out->ptr());
 
         // Loop-based conversion (memcpy cannot be used here)
         #pragma omp simd
         for (size_t i = 0; i < hidden_size; ++i) {
-            dst[i] = static_cast<float>(src[i]);
+            out_ptr[i] = static_cast<float>(src[i]);
         }
     } else {
         const int8_t *__restrict src_q = static_cast<const int8_t*>(emb_ptr.buf);
         const float *__restrict scales = static_cast<const float*>(emb_ptr.scale);
-        float *__restrict dst = static_cast<float*>(out->ptr());
 
         if (embedding->group_quantized) {
             size_t group_size = embedding->group_size; 
@@ -35,7 +34,7 @@ void embedding_lookup(
 
                 for (size_t i = 0; i < group_size; ++i) {
                     size_t idx = base + i;
-                    dst[idx] = (float)src_q[idx] * scale;
+                    out_ptr[idx] = (float)src_q[idx] * scale;
                 }
             }
         } else {
@@ -43,7 +42,7 @@ void embedding_lookup(
 
             #pragma omp simd
             for (size_t i = 0; i < hidden_size; ++i) {
-                dst[i] = (float)src_q[i] * scale_token;
+                out_ptr[i] = (float)src_q[i] * scale_token;
             }
         }
     }
@@ -323,80 +322,56 @@ void add_vector(
         size_vec = add_to->num_elem();
     }
 
-    const DType::Type to_dtype   = add_to->dtype;
-    const DType::Type from_dtype = add_from->dtype;
-
-    if (to_dtype == DType::FP32 && from_dtype == DType::FP32) {
-        float *__restrict to   = (float *)add_to->ptr();
-        const float *__restrict from = (const float *)add_from->ptr();
-
-        #pragma omp parallel for simd
-        for (size_t i = 0; i < size_vec; ++i) {
-            to[i] += from[i];
-        }
-        return;
-    } else if (to_dtype == DType::FP32 && from_dtype == DType::FP16) {
-        float *__restrict to = (float *)add_to->ptr();
-        const half_cpu *__restrict from = (const half_cpu *)add_from->ptr();
-
-        #pragma omp parallel for simd
-        for (size_t i = 0; i < size_vec; ++i) {
-            to[i] += (float)from[i];
-        }
-        return;
-    } else if (to_dtype == DType::FP16 && from_dtype == DType::FP16) {
-        half_cpu *__restrict to = (half_cpu *)add_to->ptr();
-        const half_cpu *__restrict from = (const half_cpu *)add_from->ptr();
-
-        #pragma omp parallel for simd
-        for (size_t i = 0; i < size_vec; ++i) {
-            float acc = (float)to[i] + (float)from[i];
-            to[i] = (half_cpu)acc;
-        }
-        return;
-    } else if (to_dtype == DType::FP16 && from_dtype == DType::FP32) {
-        half_cpu *__restrict to = (half_cpu *)add_to->ptr();
-        const float *__restrict from = (const float *)add_from->ptr();
-
-        #pragma omp parallel for simd
-        for (size_t i = 0; i < size_vec; ++i) {
-            float acc = (float)to[i] + from[i];  // FP32 accumulate
-            to[i] = (half_cpu)acc;               // cast back
-        }
-        return;
-    }
+    add_vector(
+        add_to->ptr(),
+        add_from->ptr(),
+        add_from->dtype,
+        add_to->dtype,
+        size_vec
+    );
 }
 
 void add_vector(
-    Tensor *__restrict add_to,
-    const void *__restrict add_from,
+    Tensor *__restrict add_to, const void *__restrict add_from,
     DType::Type add_from_type, size_t size_vec
 ) {
     if (size_vec == 0) {
         size_vec = add_to->num_elem();
     }
-    const DType::Type to_dtype = add_to->dtype;
 
-    if (to_dtype == DType::FP32 && add_from_type == DType::FP32) {
-        float *__restrict to   = (float *)add_to->ptr();
+    add_vector(
+        add_to->ptr(),
+        add_from,
+        add_from_type,
+        add_to->dtype,
+        size_vec
+    );
+}
+
+void add_vector(
+    void *__restrict add_to, const void *__restrict add_from,
+    DType::Type add_from_type, DType::Type add_to_type, size_t size_vec
+) {
+    if (size_vec == 0) return;
+
+    if (add_to_type == DType::FP32 && add_from_type == DType::FP32) {
+        float *__restrict to = (float *)add_to;
         const float *__restrict from = (const float *)add_from;
 
         #pragma omp parallel for simd
         for (size_t i = 0; i < size_vec; ++i) {
             to[i] += from[i];
         }
-        return;
-    } else if (to_dtype == DType::FP32 && add_from_type == DType::FP16) {
-        float *__restrict to = (float *)add_to->ptr();
+    } else if (add_to_type == DType::FP32 && add_from_type == DType::FP16) {
+        float *__restrict to = (float *)add_to;
         const half_cpu *__restrict from = (const half_cpu *)add_from;
 
         #pragma omp parallel for simd
         for (size_t i = 0; i < size_vec; ++i) {
             to[i] += (float)from[i];
         }
-        return;
-    } else if (to_dtype == DType::FP16 && add_from_type == DType::FP16) {
-        half_cpu *__restrict to = (half_cpu *)add_to->ptr();
+    } else if (add_to_type == DType::FP16 && add_from_type == DType::FP16) {
+        half_cpu *__restrict to = (half_cpu *)add_to;
         const half_cpu *__restrict from = (const half_cpu *)add_from;
 
         #pragma omp parallel for simd
@@ -404,17 +379,15 @@ void add_vector(
             float acc = (float)to[i] + (float)from[i];
             to[i] = (half_cpu)acc;
         }
-        return;
-    } else if (to_dtype == DType::FP16 && add_from_type == DType::FP32) {
-        half_cpu *__restrict to = (half_cpu *)add_to->ptr();
+    } else if (add_to_type == DType::FP16 && add_from_type == DType::FP32) {
+        half_cpu *__restrict to = (half_cpu *)add_to;
         const float *__restrict from = (const float *)add_from;
 
         #pragma omp parallel for simd
         for (size_t i = 0; i < size_vec; ++i) {
-            float acc = (float)to[i] + from[i];  // FP32 accumulate
-            to[i] = (half_cpu)acc;               // cast back
+            float acc = (float)to[i] + from[i];
+            to[i] = (half_cpu)acc;
         }
-        return;
     }
 }
 
@@ -577,144 +550,157 @@ void attn_scores_all_heads(
     const float *__restrict key_cache,
     const Tensor *__restrict q, Tensor *__restrict att,
     size_t attn_heads, int kv_mul, int head_dim,
-    int kv_dim, size_t sh_offset, int pos
+    int kv_dim, size_t sh_offset, int pos, int prefill_size
 ) {
     const float inv_sqrt_d = 1.0f / sqrtf((float)head_dim);
 
-    for (size_t h = 0; h < attn_heads; h++) {
-        const float *__restrict q_head = (const float *)q->ptr({0, h});
-        float       *__restrict att_head = (float *)att->ptr({0, h});
+    // q_offset and att_offset should be the stride between consecutive heads
+    // Usually q->shape[2] is head_dim, so we need the full stride to the next head.
+    const size_t att_stride = att->shape[2]; // Stride for attention scores (usually max_seq_len)
 
-        const float *__restrict k_ptr = key_cache + 1ll * (h / kv_mul) * sh_offset;
-        
-        // Main unrolled loop: 8 positions at a time
-        #pragma omp parallel for
-        for (int t = 0; t <= pos - 8; t += 8) {
-            const float *k0_ptr = k_ptr + (t+0) * head_dim; 
-            const float *k1_ptr = k_ptr + (t+1) * head_dim;
-            const float *k2_ptr = k_ptr + (t+2) * head_dim;
-            const float *k3_ptr = k_ptr + (t+3) * head_dim;
-            const float *k4_ptr = k_ptr + (t+4) * head_dim; 
-            const float *k5_ptr = k_ptr + (t+5) * head_dim;
-            const float *k6_ptr = k_ptr + (t+6) * head_dim;
-            const float *k7_ptr = k_ptr + (t+7) * head_dim;
+    // Outer loop: iterate through groups of Q heads that share one K head
+    for (size_t b = 0; b < prefill_size; ++b) {
+        for (size_t h_base = 0; h_base < attn_heads; h_base += kv_mul) {
+            // K pointer remains the same for all kv_mul Q-heads
+            const float *__restrict k_ptr = key_cache + 1ll * (h_base / kv_mul) * sh_offset;
 
-            __m256 s0 = _mm256_setzero_ps();
-            __m256 s1 = _mm256_setzero_ps();
-            __m256 s2 = _mm256_setzero_ps();
-            __m256 s3 = _mm256_setzero_ps();
-            __m256 s4 = _mm256_setzero_ps();
-            __m256 s5 = _mm256_setzero_ps();
-            __m256 s6 = _mm256_setzero_ps();
-            __m256 s7 = _mm256_setzero_ps();
+            // Base pointers for the first Q head and first Attention head in this group
+            const float *__restrict q_group_base = (const float *)q->ptr({b, h_base});
+            float       *__restrict att_group_base = (float *)att->ptr({b, h_base});
 
-            // head_dim % 8 == 0
-            for (int i = 0; i < head_dim; i += 8) {
-                __m256 q_vec = _mm256_loadu_ps(q_head + i);
+            size_t t_end = ((pos + b) + 1) & ~3; // Round down to multiple of 4
 
-                s0 = _mm256_fmadd_ps(q_vec, _mm256_loadu_ps(k0_ptr + i), s0);
-                s1 = _mm256_fmadd_ps(q_vec, _mm256_loadu_ps(k1_ptr + i), s1);
-                s2 = _mm256_fmadd_ps(q_vec, _mm256_loadu_ps(k2_ptr + i), s2);
-                s3 = _mm256_fmadd_ps(q_vec, _mm256_loadu_ps(k3_ptr + i), s3);
-                s4 = _mm256_fmadd_ps(q_vec, _mm256_loadu_ps(k4_ptr + i), s4);
-                s5 = _mm256_fmadd_ps(q_vec, _mm256_loadu_ps(k5_ptr + i), s5);
-                s6 = _mm256_fmadd_ps(q_vec, _mm256_loadu_ps(k6_ptr + i), s6);
-                s7 = _mm256_fmadd_ps(q_vec, _mm256_loadu_ps(k7_ptr + i), s7);
+            // Parallelize the time (sequence) dimension
+            #pragma omp parallel for
+            for (size_t t = 0; t < t_end; t += 4) {
+                const float *k0_ptr = k_ptr + (size_t)t * head_dim;
+                const float *k1_ptr = k_ptr + (size_t)(t + 1) * head_dim;
+                const float *k2_ptr = k_ptr + (size_t)(t + 2) * head_dim;
+                const float *k3_ptr = k_ptr + (size_t)(t + 3) * head_dim;
+
+                // Use fixed-size arrays for accumulators (stack allocated)
+                __m256 s0[kv_mul], s1[kv_mul], s2[kv_mul], s3[kv_mul];
+
+                for (int m = 0; m < kv_mul; ++m) {
+                    s0[m] = _mm256_setzero_ps();
+                    s1[m] = _mm256_setzero_ps();
+                    s2[m] = _mm256_setzero_ps();
+                    s3[m] = _mm256_setzero_ps();
+                }
+
+                for (int i = 0; i < head_dim; i += 8) {
+                    __m256 k0v = _mm256_loadu_ps(k0_ptr + i);
+                    __m256 k1v = _mm256_loadu_ps(k1_ptr + i);
+                    __m256 k2v = _mm256_loadu_ps(k2_ptr + i);
+                    __m256 k3v = _mm256_loadu_ps(k3_ptr + i);
+
+                    for (int m = 0; m < kv_mul; ++m) {
+                        __m256 q_vec = _mm256_loadu_ps(q_group_base + (m * head_dim) + i);
+                        s0[m] = _mm256_fmadd_ps(q_vec, k0v, s0[m]);
+                        s1[m] = _mm256_fmadd_ps(q_vec, k1v, s1[m]);
+                        s2[m] = _mm256_fmadd_ps(q_vec, k2v, s2[m]);
+                        s3[m] = _mm256_fmadd_ps(q_vec, k3v, s3[m]);
+                    }
+                }
+
+                for (int m = 0; m < kv_mul; ++m) {
+                    float *att_ptr = att_group_base + (m * att_stride);
+                    att_ptr[t + 0] = add_reduce_mm_256_layer(s0[m]) * inv_sqrt_d;
+                    att_ptr[t + 1] = add_reduce_mm_256_layer(s1[m]) * inv_sqrt_d;
+                    att_ptr[t + 2] = add_reduce_mm_256_layer(s2[m]) * inv_sqrt_d;
+                    att_ptr[t + 3] = add_reduce_mm_256_layer(s3[m]) * inv_sqrt_d;
+                }
             }
 
-            att_head[t+0] = add_reduce_mm_256_layer(s0) * inv_sqrt_d;
-            att_head[t+1] = add_reduce_mm_256_layer(s1) * inv_sqrt_d;
-            att_head[t+2] = add_reduce_mm_256_layer(s2) * inv_sqrt_d;
-            att_head[t+3] = add_reduce_mm_256_layer(s3) * inv_sqrt_d;
-            att_head[t+4] = add_reduce_mm_256_layer(s4) * inv_sqrt_d;
-            att_head[t+5] = add_reduce_mm_256_layer(s5) * inv_sqrt_d;
-            att_head[t+6] = add_reduce_mm_256_layer(s6) * inv_sqrt_d;
-            att_head[t+7] = add_reduce_mm_256_layer(s7) * inv_sqrt_d;
-        }
-
-        // Tail: 0–7 remaining positions
-        for (int t = (pos / 8) * 8; t <= pos; ++t) {
-            float score = 0.0f;
-            const float *k_head = k_ptr + (size_t)t * head_dim;
-
-            #pragma omp simd reduction(+:score)
-            for (int i = 0; i < head_dim; i++) {
-                score += q_head[i] * k_head[i];
+            // Tail processing for remaining time steps
+            for (size_t t = t_end; t <= (pos + b); ++t) {
+                const float *k_head = k_ptr + (size_t)t * head_dim;
+                for (int m = 0; m < kv_mul; ++m) {
+                    const float *q_head = q_group_base + (m * head_dim);
+                    float score = 0.0f;
+                    #pragma omp simd reduction(+:score)
+                    for (int i = 0; i < head_dim; i++) {
+                        score += q_head[i] * k_head[i];
+                    }
+                    att_group_base[m * att_stride + t] = score * inv_sqrt_d;
+                }
             }
 
-            att_head[t] = score * inv_sqrt_d;
-        }
-
-        // Causal softmax over [0, pos]
-        softmax(att_head, (size_t)pos + 1);
+            // Final Softmax for each head in the group
+            for (int m = 0; m < kv_mul; ++m) {
+                softmax(att_group_base + m * att_stride, (size_t)(pos + b + 1));
+            }
+        } 
     }
 }
 
-// Fix attn_weighted_sum_all_heads function:
-// This function was already correct. 'loff' passed from forward_text
-// corresponds to the layer_cache_start.
 void attn_weighted_sum_all_heads(
     const float *__restrict value_cache,
     const Tensor *__restrict att, Tensor *__restrict tb,
     int attn_heads, int kv_mul, int head_dim, int kv_dim,
-    size_t sh_offset, int pos
+    size_t sh_offset, int pos, int prefill_size
 ) {
-    // tb shape: (B=1, attn_heads, head_dim)
-    float *__restrict tb_base = (float *)tb->ptr();
-    const float *__restrict att_base = (const float *)att->ptr();
     const size_t seq_len = att->shape[att->ndim - 1];
 
-    #pragma omp parallel for
-    for (int h = 0; h < attn_heads; h++) {
-        float *__restrict tb_head = tb_base + 1ll * h * head_dim;
-        const float *__restrict att_head = att_base + 1ll * h * seq_len;
+    for (size_t b = 0; b < prefill_size; ++b) {
+        float *__restrict tb_base = (float *)tb->ptr({b});
+        const float *__restrict att_base = (const float *)att->ptr({b});
 
-        const int kv_head_idx = h / kv_mul;
-        const float *__restrict v_head_base = value_cache + 1ll * kv_head_idx * sh_offset;
+        #pragma omp parallel for
+        for (size_t h_base = 0; h_base < attn_heads; h_base += kv_mul) {
+            float *__restrict tb_head = tb_base + 1ll * h_base * head_dim;
+            const float *__restrict att_head = att_base + 1ll * h_base * seq_len;
+            const float *__restrict v_head_base = value_cache + 1ll * (h_base / kv_mul) * sh_offset;
 
-        for (int hd = 0; hd < head_dim; hd += 64) {
-            // Load accumulators
-            __m256 acc_0 = _mm256_setzero_ps();
-            __m256 acc_1 = _mm256_setzero_ps();
-            __m256 acc_2 = _mm256_setzero_ps();
-            __m256 acc_3 = _mm256_setzero_ps();
-            __m256 acc_4 = _mm256_setzero_ps();
-            __m256 acc_5 = _mm256_setzero_ps();
-            __m256 acc_6 = _mm256_setzero_ps();
-            __m256 acc_7 = _mm256_setzero_ps();
+            for (int hd = 0; hd < head_dim; hd += 32) {
+                // Load accumulators
+                __m256 acc_0[kv_mul];
+                __m256 acc_1[kv_mul];
+                __m256 acc_2[kv_mul];
+                __m256 acc_3[kv_mul];
 
-            for (int t = 0; t <= pos; ++t) {
-                __m256 a = _mm256_set1_ps(att_head[t]);
-                const float *v = v_head_base + (size_t)t * head_dim + hd;
+                for (int m = 0; m < kv_mul; ++m) {
+                    acc_0[m] = _mm256_setzero_ps();
+                    acc_1[m] = _mm256_setzero_ps();
+                    acc_2[m] = _mm256_setzero_ps();
+                    acc_3[m] = _mm256_setzero_ps();
+                }
 
-                acc_0 = _mm256_fmadd_ps(a, _mm256_loadu_ps(v), acc_0);
-                acc_1 = _mm256_fmadd_ps(a, _mm256_loadu_ps(v + 8), acc_1);
-                acc_2 = _mm256_fmadd_ps(a, _mm256_loadu_ps(v + 16), acc_2);
-                acc_3 = _mm256_fmadd_ps(a, _mm256_loadu_ps(v + 24), acc_3);
-                acc_4 = _mm256_fmadd_ps(a, _mm256_loadu_ps(v + 32), acc_4);
-                acc_5 = _mm256_fmadd_ps(a, _mm256_loadu_ps(v + 40), acc_5);
-                acc_6 = _mm256_fmadd_ps(a, _mm256_loadu_ps(v + 48), acc_6);
-                acc_7 = _mm256_fmadd_ps(a, _mm256_loadu_ps(v + 56), acc_7);
-            }
+                for (size_t t = 0; t <= (pos + b); ++t) {
+                    const float *v = v_head_base + t * head_dim + hd;
 
-            // Store back
-            _mm256_storeu_ps(tb_head + hd, acc_0);
-            _mm256_storeu_ps(tb_head + hd + 8, acc_1);
-            _mm256_storeu_ps(tb_head + hd + 16, acc_2);
-            _mm256_storeu_ps(tb_head + hd + 24, acc_3);
-            _mm256_storeu_ps(tb_head + hd + 32, acc_4);
-            _mm256_storeu_ps(tb_head + hd + 40, acc_5);
-            _mm256_storeu_ps(tb_head + hd + 48, acc_6);
-            _mm256_storeu_ps(tb_head + hd + 56, acc_7);
+                    __m256 v0 = _mm256_loadu_ps(v);
+                    __m256 v1 = _mm256_loadu_ps(v + 8);
+                    __m256 v2 = _mm256_loadu_ps(v + 16);
+                    __m256 v3 = _mm256_loadu_ps(v + 24);
+
+                    for (int m = 0; m < kv_mul; ++m) {
+                        __m256 a = _mm256_broadcast_ss(att_head + seq_len * m + t);
+
+                        acc_0[m] = _mm256_fmadd_ps(a, v0, acc_0[m]);
+                        acc_1[m] = _mm256_fmadd_ps(a, v1, acc_1[m]);
+                        acc_2[m] = _mm256_fmadd_ps(a, v2, acc_2[m]);
+                        acc_3[m] = _mm256_fmadd_ps(a, v3, acc_3[m]);
+                    }
+                }
+
+                // Store back
+                for (int m = 0; m < kv_mul; ++m) {
+                    _mm256_storeu_ps(tb_head + head_dim * m + hd, acc_0[m]);
+                    _mm256_storeu_ps(tb_head + head_dim * m + hd + 8, acc_1[m]);
+                    _mm256_storeu_ps(tb_head + head_dim * m + hd + 16, acc_2[m]);
+                    _mm256_storeu_ps(tb_head + head_dim * m + hd + 24, acc_3[m]);
+                }
+            } 
         }
     }
 }
 
 void apply_rotary(
-    Tensor *__restrict x /*[n_heads*hd]*/,
-    const Tensor *__restrict cos_table /*[seq_len*hd/2]*/,
-    const Tensor *__restrict sin_table /*[seq_len*hd/2]*/,
-    int n_heads, int head_dim, int pos
+    Tensor *__restrict x,               /* [batch_size, n_heads, head_dim] */
+    const Tensor *__restrict cos_table, /* [seq_len, head_dim/2] */
+    const Tensor *__restrict sin_table, /* [seq_len, head_dim/2] */
+    int batch_size, int n_heads, int head_dim, int pos
 ) {
     const int half = head_dim >> 1;
 
@@ -722,46 +708,42 @@ void apply_rotary(
     const float *__restrict sin_buf = (const float *)sin_table->ptr();
     float *__restrict x_buf = (float *)x->ptr();
 
-    const float *__restrict cos_row = cos_buf + pos * half;
-    const float *__restrict sin_row = sin_buf + pos * half;
+    // Tables are indexed by the shared position
+    const float *__restrict cos_row_base = cos_buf + pos * half;
+    const float *__restrict sin_row_base = sin_buf + pos * half;
 
-    constexpr int VEC = 8; // AVX2: 8 floats
+    constexpr int VEC = 8; 
 
-    #pragma omp parallel for schedule(static)
-    for (int h = 0; h < n_heads; h++) {
-        float *__restrict x1p = x_buf + h * head_dim;
-        float *__restrict x2p = x1p + half;
+    // Parallelize across both batch and heads for maximum throughput
+    #pragma omp parallel for schedule(static) collapse(2)
+    for (int b = 0; b < batch_size; b++) {
+        for (int h = 0; h < n_heads; h++) {
+            // Offset: (batch_index * total_elements_per_batch) + (head_index * elements_per_head)
+            float *__restrict x_base = x_buf + (b * n_heads * head_dim) + (h * head_dim);
+            float *__restrict x1p = x_base;
+            float *__restrict x2p = x_base + half;
 
-        int i = 0;
+            const float *__restrict cos_row = cos_row_base + b * half;
+            const float *__restrict sin_row = sin_row_base + b * half;
 
-        // --- AVX2 main loop ---
-        for (; i + VEC <= half; i += VEC) {
-            __m256 x1 = _mm256_loadu_ps(x1p + i);
-            __m256 x2 = _mm256_loadu_ps(x2p + i);
-            __m256 c  = _mm256_loadu_ps(cos_row + i);
-            __m256 s  = _mm256_loadu_ps(sin_row + i);
+            int i = 0;
+            // --- AVX2 main loop ---
+            for (; i <= half - VEC; i += VEC) {
+                __m256 x1 = _mm256_loadu_ps(x1p + i);
+                __m256 x2 = _mm256_loadu_ps(x2p + i);
+                __m256 c  = _mm256_loadu_ps(cos_row + i);
+                __m256 s  = _mm256_loadu_ps(sin_row + i);
 
-            // x1' = x1*c - x2*s
-            __m256 y1 = _mm256_fmsub_ps(x1, c, _mm256_mul_ps(x2, s));
+                // x1' = x1*c - x2*s
+                __m256 y1 = _mm256_fmsub_ps(x1, c, _mm256_mul_ps(x2, s));
 
-            // x2' = x1*s + x2*c
-            __m256 y2 = _mm256_fmadd_ps(x1, s, _mm256_mul_ps(x2, c));
+                // x2' = x1*s + x2*c
+                __m256 y2 = _mm256_fmadd_ps(x1, s, _mm256_mul_ps(x2, c));
 
-            _mm256_storeu_ps(x1p + i, y1);
-            _mm256_storeu_ps(x2p + i, y2);
-        }
-
-        // --- scalar tail --- half % 8 == 0
-        /*
-            for (; i < half; i++) {
-                float c = cos_row[i];
-                float s = sin_row[i];
-                float x1 = x1p[i];
-                float x2 = x2p[i];
-                x1p[i] = x1 * c - x2 * s;
-                x2p[i] = x1 * s + x2 * c;
+                _mm256_storeu_ps(x1p + i, y1);
+                _mm256_storeu_ps(x2p + i, y2);
             }
-        */
+        }
     }    
 }
 
@@ -770,7 +752,7 @@ void apply_rotary_cache(
     float *__restrict k_out      /*[n_heads*seq_len*hd]*/,
     const Tensor *__restrict cos_table /*[seq_len*hd/2]*/,
     const Tensor *__restrict sin_table /*[seq_len*hd/2]*/,
-    int n_heads, int head_dim, int pos, size_t sh_off
+    int batch_size, int n_heads, int head_dim, int pos, size_t sh_off
 ) {
     const int half = head_dim >> 1;
 
@@ -778,48 +760,41 @@ void apply_rotary_cache(
     const float *__restrict cos_buf = (const float *)cos_table->ptr();
     const float *__restrict sin_buf = (const float *)sin_table->ptr();
 
-    const float *__restrict cos_row = cos_buf + pos * half;
-    const float *__restrict sin_row = sin_buf + pos * half;
+    const float *__restrict cos_row_base = cos_buf + pos * half;
+    const float *__restrict sin_row_base = sin_buf + pos * half;
 
     constexpr int VEC = 8; // AVX2
 
-    #pragma omp parallel for schedule(static)
-    for (int h = 0; h < n_heads; h++) {
-        const float *__restrict x1p = in_ptr + h * head_dim;
-        const float *__restrict x2p = x1p + half;
+    #pragma omp parallel for schedule(static) collapse(2)
+    for (int b = 0; b < batch_size; b++) {
+        for (int h = 0; h < n_heads; h++) {
+            const float *__restrict x1p = in_ptr + (b * n_heads * head_dim) + (h * head_dim);
+            const float *__restrict x2p = x1p + half;
 
-        float *__restrict y1p = k_out + h * sh_off;
-        float *__restrict y2p = y1p + half;
+            float *__restrict y1p = k_out + b * head_dim + h * sh_off;
+            float *__restrict y2p = y1p + half;
 
-        int i = 0;
+            const float *__restrict cos_row = cos_row_base + b * half;
+            const float *__restrict sin_row = sin_row_base + b * half;
 
-        // ---- AVX2 main loop ----
-        for (; i + VEC <= half; i += VEC) {
-            __m256 x1 = _mm256_loadu_ps(x1p + i);
-            __m256 x2 = _mm256_loadu_ps(x2p + i);
-            __m256 c  = _mm256_loadu_ps(cos_row + i);
-            __m256 s  = _mm256_loadu_ps(sin_row + i);
+            int i = 0;
 
-            // y1 = x1*c - x2*s
-            __m256 y1 = _mm256_fmsub_ps(x1, c, _mm256_mul_ps(x2, s));
+            // ---- AVX2 main loop ----
+            for (; i + VEC <= half; i += VEC) {
+                __m256 x1 = _mm256_loadu_ps(x1p + i);
+                __m256 x2 = _mm256_loadu_ps(x2p + i);
+                __m256 c  = _mm256_loadu_ps(cos_row + i);
+                __m256 s  = _mm256_loadu_ps(sin_row + i);
 
-            // y2 = x1*s + x2*c
-            __m256 y2 = _mm256_fmadd_ps(x1, s, _mm256_mul_ps(x2, c));
+                // y1 = x1*c - x2*s
+                __m256 y1 = _mm256_fmsub_ps(x1, c, _mm256_mul_ps(x2, s));
 
-            _mm256_storeu_ps(y1p + i, y1);
-            _mm256_storeu_ps(y2p + i, y2);
-        }
+                // y2 = x1*s + x2*c
+                __m256 y2 = _mm256_fmadd_ps(x1, s, _mm256_mul_ps(x2, c));
 
-        // ---- scalar tail ---- half % 8 == 0
-        /*
-            for (; i < half; i++) {
-                float c = cos_row[i];
-                float s = sin_row[i];
-                float x1 = x1p[i];
-                float x2 = x2p[i];
-                y1p[i] = x1 * c - x2 * s;
-                y2p[i] = x1 * s + x2 * c;
+                _mm256_storeu_ps(y1p + i, y1);
+                _mm256_storeu_ps(y2p + i, y2);
             }
-        */
-    }    
+        }    
+    }
 }
