@@ -354,5 +354,6 @@ bool image_processor(
     *out_grid_h = grid_h;
     *out_grid_w = grid_w;
     free(batch_img);
+    free(resized_img_ptr);
     return true;
 }

@@ -81,4 +81,5 @@ void free_tokenizer(TokenizerStruct* t) {
         free(t->merges[i]);
     }
     free(t->merges);
+    free(t->sorted_merge);
 }

@@ -85,12 +85,28 @@ void forward_img(
             config->rms_norm_eps, total_tokens, 1ll * l
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_t->printDebug("vision_t");
-        #endif
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_t->printDebug("vision_t");
+                if (l == 13) {
+                    fprintf(stderr, "After layer_norm\n");
+                    float *vision_x_ptr = (float *)state->vision_x->ptr();
+                    for (size_t i = 0; i < state->vision_x->num_elem(); ++i) {
+                        if (isnan(vision_x_ptr[i])) {
+                            fprintf(stderr, "Error vision_x nan at index %zu\n", i);
+                            break;
+                        }
+                    }
 
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_t->printDebug("vision_t");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_t->ptr();
+                    for (size_t i = 0; i < state->vision_t->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_t nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         PtrPair w_q = weight->vl_attn_qkv_w->ptr_all({l});
@@ -109,12 +125,20 @@ void forward_img(
             vision_gq, vision_group_size
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (l == 13) {
+                    fprintf(stderr, "After linear\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_mlp_out->ptr();
+                    for (size_t i = 0; i < state->vision_mlp_out->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_mlp_out nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         vision_apply_rotary_inplace(
@@ -122,24 +146,40 @@ void forward_img(
             state->vision_mlp_out, total_tokens, VNH, VHD
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (l == 13) {
+                    fprintf(stderr, "After vision_apply_rotary_inplace\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_mlp_out->ptr();
+                    for (size_t i = 0; i < state->vision_mlp_out->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_mlp_out nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         tensor_transpose(
             state->vision_mlp_out, state->vision_q, total_tokens, VNH, VHD
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_q->printDebug("vision_q");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_q->printDebug("vision_q");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_q->printDebug("vision_q");
+                if (l == 13) {
+                    fprintf(stderr, "After tensor_transpose\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_q->ptr();
+                    for (size_t i = 0; i < state->vision_q->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_q nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         // use vl_v as temporary buffer for vision_k
@@ -151,12 +191,20 @@ void forward_img(
             vision_gq, vision_group_size
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (l == 13) {
+                    fprintf(stderr, "After linear\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_mlp_out->ptr();
+                    for (size_t i = 0; i < state->vision_mlp_out->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_mlp_out nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         vision_apply_rotary_inplace(
@@ -164,24 +212,40 @@ void forward_img(
             state->vision_mlp_out, total_tokens, VNH, VHD
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (l == 13) {
+                    fprintf(stderr, "After vision_apply_rotary_inplace\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_mlp_out->ptr();
+                    for (size_t i = 0; i < state->vision_mlp_out->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_mlp_out nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         tensor_transpose(
             state->vision_mlp_out, state->vision_k, total_tokens, VNH, VHD
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_k->printDebug("vision_k");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_k->printDebug("vision_k");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_k->printDebug("vision_k");
+                if (l == 13) {
+                    fprintf(stderr, "After tensor_transpose\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_k->ptr();
+                    for (size_t i = 0; i < state->vision_k->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_k nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         // swap vision_t and vl_v
@@ -193,24 +257,40 @@ void forward_img(
             vision_gq, vision_group_size
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (l == 13) {
+                    fprintf(stderr, "After linear\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_mlp_out->ptr();
+                    for (size_t i = 0; i < state->vision_mlp_out->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_mlp_out nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         tensor_transpose(
             state->vision_mlp_out, state->vision_t, total_tokens, VNH, VHD
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_t->printDebug("vision_t");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_t->printDebug("vision_t");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_t->printDebug("vision_t");
+                if (l == 13) {
+                    fprintf(stderr, "After tensor_transpose\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_t->ptr();
+                    for (size_t i = 0; i < state->vision_t->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_t nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
         
         vision_att(
@@ -219,12 +299,46 @@ void forward_img(
             VNH, total_tokens, VHD, vision_scale
         );
         
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-        #endif
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_attn_scores->printDebug("vision_attn_scores");
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (l == 13) {
+                    fprintf(stderr, "After vision_att\n");
+                    half_cpu *vision_q_ptr = (half_cpu *)state->vision_q->ptr();
+                    for (size_t i = 0; i < state->vision_q->num_elem(); ++i) {
+                        if (isnan((float)vision_q_ptr[i])) {
+                            fprintf(stderr, "Error vision_q nan at index %zu\n", i);
+                            break;
+                        }
+                    }
 
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+                    half_cpu *vision_k_ptr = (half_cpu *)state->vision_k->ptr();
+                    for (size_t i = 0; i < state->vision_k->num_elem(); ++i) {
+                        if (isnan((float)vision_k_ptr[i])) {
+                            fprintf(stderr, "Error vision_k nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_t->ptr();
+                    for (size_t i = 0; i < state->vision_t->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_t nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+
+                    float *print_ptr = (float *)state->vision_attn_scores->ptr();
+                    for (size_t i = 0; i < state->vision_attn_scores->num_elem(); ++i) {
+                        if (isnan(print_ptr[i])) {
+                            fprintf(stderr, "Error vision_attn_scores nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                    exit(1);
+                }
+            }
         #endif
         
         // swap back vision_t and vl_v
@@ -232,12 +346,20 @@ void forward_img(
             state->vision_mlp_out, state->vision_t, VNH, total_tokens, VHD
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_t->printDebug("vision_t");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_t->printDebug("vision_t");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_t->printDebug("vision_t");
+                if (l == 12) {
+                    fprintf(stderr, "After tensor_transpose\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_t->ptr();
+                    for (size_t i = 0; i < state->vision_t->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_t nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         PtrPair w_attn_proj_ptr, b_attn_proj_ptr;
@@ -254,22 +376,38 @@ void forward_img(
             state->vision_q->dtype, vision_gq, vision_group_size
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_q->printDebug("vision_q");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_q->printDebug("vision_q");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_q->printDebug("vision_q");
+                if (l == 12) {
+                    fprintf(stderr, "After linear\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_q->ptr();
+                    for (size_t i = 0; i < state->vision_q->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_q nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         add_vector(state->vision_x, state->vision_q, 1ll * total_tokens * VH);
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_x->printDebug("vision_x");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_x->printDebug("vision_x");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_x->printDebug("vision_x");
+                if (l == 12) {
+                    fprintf(stderr, "After add_vector\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_x->ptr();
+                    for (size_t i = 0; i < state->vision_x->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_x nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         layer_norm(
@@ -278,12 +416,20 @@ void forward_img(
             config->rms_norm_eps, total_tokens, 1ll * l
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_t->printDebug("vision_t");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_t->printDebug("vision_t");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_t->printDebug("vision_t");
+                if (l == 12) {
+                    fprintf(stderr, "After layer_norm\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_t->ptr();
+                    for (size_t i = 0; i < state->vision_t->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_t nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
         
         PtrPair w_mlp1_ptr = weight->vl_mlp1_w->ptr_all({l});
@@ -297,22 +443,38 @@ void forward_img(
             vision_group_size
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (l == 12) {
+                    fprintf(stderr, "After linear\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_mlp_out->ptr();
+                    for (size_t i = 0; i < state->vision_mlp_out->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_mlp_out nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         gelu_tanh(state->vision_mlp_out, 1ll * total_tokens * VI);
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-        #endif
-        
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_mlp_out->printDebug("vision_mlp_out");
+                if (l == 12) {
+                    fprintf(stderr, "After gelu_tanh\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_mlp_out->ptr();
+                    for (size_t i = 0; i < state->vision_mlp_out->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_mlp_out nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
         
         PtrPair w_mlp2_ptr = weight->vl_mlp2_w->ptr_all({l});
@@ -326,22 +488,38 @@ void forward_img(
             vision_group_size
         );
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_t->printDebug("vision_t");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_t->printDebug("vision_t");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_t->printDebug("vision_t");
+                if (l == 12) {
+                    fprintf(stderr, "After linear\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_t->ptr();
+                    for (size_t i = 0; i < state->vision_t->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_t nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         add_vector(state->vision_x, state->vision_t, 1ll * total_tokens * VH);
 
-        #ifdef PRINT_LOGITS
-            if (!warm_up) state->vision_x->printDebug("vision_x");
-        #endif
-
-        #ifdef PRINT_LOGITS_2
-            if (!warm_up) state->vision_x->printDebug("vision_x");
+        #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+            if (!warm_up) {
+                state->vision_x->printDebug("vision_x");
+                if (l == 12) {
+                    fprintf(stderr, "After add_vector\n");
+                    half_cpu *vision_t_ptr = (half_cpu *)state->vision_x->ptr();
+                    for (size_t i = 0; i < state->vision_x->num_elem(); ++i) {
+                        if (isnan((float)vision_t_ptr[i])) {
+                            fprintf(stderr, "Error vision_x nan at index %zu\n", i);
+                            break;
+                        }
+                    }
+                }
+            }
         #endif
 
         if (config->deep_layer[l] > 0) {
@@ -352,12 +530,20 @@ void forward_img(
                 config->rms_norm_eps, d_tokens, 1ll * d_stride
             );
 
-            #ifdef PRINT_LOGITS
-                if (!warm_up) state->vision_t->printDebug("vision_t");
-            #endif
-
-            #ifdef PRINT_LOGITS_2
-                if (!warm_up) state->vision_t->printDebug("vision_t");
+            #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+                if (!warm_up) {
+                    state->vision_t->printDebug("vision_t");
+                    if (l == 12) {
+                        fprintf(stderr, "After layer_norm deep\n");
+                        half_cpu *vision_t_ptr = (half_cpu *)state->vision_t->ptr();
+                        for (size_t i = 0; i < state->vision_t->num_elem(); ++i) {
+                            if (isnan((float)vision_t_ptr[i])) {
+                                fprintf(stderr, "Error vision_t nan at index %zu\n", i);
+                                break;
+                            }
+                        }
+                    }
+                }
             #endif
             
             PtrPair w_mlp1_d_ptr = weight->vl_d_mlp1_w->ptr_all({d_stride});
@@ -371,22 +557,38 @@ void forward_img(
                 vision_gq, vision_group_size
             );
 
-            #ifdef PRINT_LOGITS
-                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-            #endif
-
-            #ifdef PRINT_LOGITS_2
-                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+            #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+                if (!warm_up) {
+                    state->vision_mlp_out->printDebug("vision_mlp_out");
+                    if (l == 12) {
+                        fprintf(stderr, "After linear deep\n");
+                        half_cpu *vision_t_ptr = (half_cpu *)state->vision_mlp_out->ptr();
+                        for (size_t i = 0; i < state->vision_mlp_out->num_elem(); ++i) {
+                            if (isnan((float)vision_t_ptr[i])) {
+                                fprintf(stderr, "Error vision_mlp_out nan at index %zu\n", i);
+                                break;
+                            }
+                        }
+                    }
+                }
             #endif
         
             gelu_tanh(state->vision_mlp_out, 1ll * d_tokens * VI);
 
-            #ifdef PRINT_LOGITS
-                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-            #endif
-
-            #ifdef PRINT_LOGITS_2
-                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+            #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+                if (!warm_up) {
+                    state->vision_mlp_out->printDebug("vision_mlp_out");
+                    if (l == 12) {
+                        fprintf(stderr, "After gelu_tanh deep\n");
+                        half_cpu *vision_t_ptr = (half_cpu *)state->vision_mlp_out->ptr();
+                        for (size_t i = 0; i < state->vision_mlp_out->num_elem(); ++i) {
+                            if (isnan((float)vision_t_ptr[i])) {
+                                fprintf(stderr, "Error vision_mlp_out nan at index %zu\n", i);
+                                break;
+                            }
+                        }
+                    }
+                }
             #endif
 
             PtrPair w_mlp2_d_ptr = weight->vl_d_mlp2_w->ptr_all({d_stride});
@@ -400,12 +602,21 @@ void forward_img(
                 state->vision_deep_stack->dtype, vision_gq, vision_group_size
             );
 
-            #ifdef PRINT_LOGITS
-                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
-            #endif
-
-            #ifdef PRINT_LOGITS_2
-                if (!warm_up) state->vision_mlp_out->printDebug("vision_mlp_out");
+            #if defined(PRINT_LOGITS) || defined(PRINT_LOGITS_2)
+                if (!warm_up) {
+                    state->vision_mlp_out->printDebug("vision_mlp_out");
+                    if (l == 12) {
+                        fprintf(stderr, "After linear deep\n");
+                        half_cpu *vision_t_ptr = (half_cpu *)state->vision_deep_stack->ptr({d_stride});
+                        size_t d_stride_elem = OH * VI;
+                        for (size_t i = 0; i < d_stride_elem; ++i) {
+                            if (isnan((float)vision_t_ptr[i])) {
+                                fprintf(stderr, "Error vision_deep_stack nan at index %zu\n", i);
+                                break;
+                            }
+                        }
+                    }
+                }
             #endif
         }
 
@@ -605,7 +816,7 @@ void forward_text_prefill(
 
         #ifdef PRINT_LOGITS
             if (!warm_up) {
-                if (l == config->num_hidden_layers - 1) printf("pos=%d\n", pos);
+                if (l == config->num_hidden_layers - 1) printf("pos=%ld\n", pos);
                 for (size_t b = 0; b < prefill_size; ++b) {
                     state->q->printDebug("q", {b});
                 }
@@ -617,7 +828,7 @@ void forward_text_prefill(
         // Multi-head attention
 
         // Compute attention scores
-        attn_scores_all_heads(
+        attn_scores_all_heads_prefill(
             k_cache_l, state->q, state->att, num_heads,
             kv_mul, head_dim, kv_dim, kv_all_off, pos, prefill_size
         );
@@ -841,7 +1052,7 @@ float *forward_text_decode(
         PtrPair w_v = weight->w_attn_v->ptr_all({l});
 
         linear(
-            state->t->ptr(), w_q.buf, w_q.scale, w_q.sum_int8, nullptr, nullptr,
+            state->t->ptr(), w_q.buf, w_q.scale, nullptr, nullptr, nullptr,
             state->q->ptr(), 1, hidden_size, hidden_size,
             !weight->w_attn_q->permuted, state->t->dtype, dtype_weight,
             dtype_scale, state->q->dtype, text_gq, text_group_size
@@ -852,13 +1063,13 @@ float *forward_text_decode(
         #endif
 
         linear(
-            state->t->ptr(), w_k.buf, w_k.scale, w_k.sum_int8, nullptr, nullptr,
+            state->t->ptr(), w_k.buf, w_k.scale, nullptr, nullptr, nullptr,
             state->k->ptr(), 1, kv_dim, hidden_size,
             !weight->w_attn_k->permuted, state->t->dtype, dtype_weight,
             dtype_scale, state->k->dtype, text_gq, text_group_size
         );
         linear(
-            state->t->ptr(), w_v.buf, w_v.scale, w_v.sum_int8, nullptr, nullptr,
+            state->t->ptr(), w_v.buf, w_v.scale, nullptr, nullptr, nullptr,
             state->v->ptr(), 1, kv_dim, hidden_size,
             !weight->w_attn_v->permuted, state->t->dtype, dtype_weight,
             dtype_scale, state->v->dtype, text_gq, text_group_size
@@ -912,9 +1123,9 @@ float *forward_text_decode(
         // Multi-head attention
 
         // Compute attention scores
-        attn_scores_all_heads(
+        attn_scores_all_heads_decode(
             k_cache_l, state->q, state->att, num_heads,
-            kv_mul, head_dim, kv_dim, kv_all_off, pos, 1
+            kv_mul, head_dim, kv_dim, kv_all_off, pos
         );
 
         #ifdef PRINT_LOGITS
@@ -935,7 +1146,7 @@ float *forward_text_decode(
         PtrPair w_out_proj = weight->w_attn_o->ptr_all({l});
         linear(
             state->qkv_out->ptr(), w_out_proj.buf, w_out_proj.scale,
-            w_out_proj.sum_int8, nullptr, nullptr, state->t->ptr(), 1,
+            nullptr, nullptr, nullptr, state->t->ptr(), 1,
             hidden_size, hidden_size, !weight->w_attn_o->permuted,
             state->qkv_out->dtype, dtype_weight, dtype_scale,
             state->t->dtype, text_gq, text_group_size
@@ -966,14 +1177,14 @@ float *forward_text_decode(
         PtrPair w_gate = weight->w_mlp_gate->ptr_all({l});
         PtrPair w_up = weight->w_mlp_up->ptr_all({l});
         linear(
-            state->t->ptr(), w_gate.buf, w_gate.scale, w_gate.sum_int8,
+            state->t->ptr(), w_gate.buf, w_gate.scale, nullptr,
             nullptr, nullptr, state->gate->ptr(), 1, config->intermediate_size,
             hidden_size, !weight->w_mlp_gate->permuted, state->t->dtype,
             dtype_weight, dtype_scale, state->gate->dtype,
             text_gq, text_group_size
         );
         linear(
-            state->t->ptr(), w_up.buf, w_up.scale, w_up.sum_int8, nullptr,
+            state->t->ptr(), w_up.buf, w_up.scale, nullptr, nullptr,
             nullptr, state->up->ptr(), 1, config->intermediate_size,
             hidden_size, !weight->w_mlp_up->permuted, state->t->dtype,
             dtype_weight, dtype_scale, state->up->dtype, text_gq,
@@ -997,7 +1208,7 @@ float *forward_text_decode(
         // MLP: Down projection: using state->t for down
         PtrPair w_down = weight->w_mlp_down->ptr_all({l});
         linear(
-            state->gate->ptr(), w_down.buf, w_down.scale, w_down.sum_int8, 
+            state->gate->ptr(), w_down.buf, w_down.scale, nullptr, 
             nullptr, nullptr, state->t->ptr(), 1, hidden_size,
             config->intermediate_size, !weight->w_mlp_down->permuted,
             state->gate->dtype, dtype_weight, dtype_scale, state->t->dtype,

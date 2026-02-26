@@ -110,7 +110,7 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     config->deep_layer[11] = 2; // set index 11 to 2
     config->deep_layer[17] = 3;
 
-    config->max_prefill_size = 2;
+    config->max_prefill_size = 8;
 
     // ==================================================================================
     // 2. Derived Dimensions

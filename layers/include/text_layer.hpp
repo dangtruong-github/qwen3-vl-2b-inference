@@ -55,11 +55,17 @@ void swiglu(
     const Tensor *__restrict up,    // [d]
     size_t size_vec
 );
-void attn_scores_all_heads(
+void attn_scores_all_heads_prefill(
     const float *__restrict key_cache,
     const Tensor *__restrict q, Tensor *__restrict att,
     size_t attn_heads, int kv_mul, int head_dim,
     int kv_dim, size_t sh_offset, int pos, int prefill_size
+);
+void attn_scores_all_heads_decode(
+    const float *__restrict key_cache,
+    const Tensor *__restrict q, Tensor *__restrict att,
+    size_t attn_heads, int kv_mul, int head_dim,
+    int kv_dim, size_t sh_offset, int pos
 );
 void attn_weighted_sum_all_heads(
     const float *__restrict value_cache,

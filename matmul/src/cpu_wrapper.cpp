@@ -139,7 +139,7 @@ void linear_f32a_i8f32sb_f32c(
             );
         }
     #elif defined(__AVX2__) && defined(__FMA__)
-        if (sum_int8_B && false) {
+        if (sum_int8_B) {
             f32a_i8f32sb_f32c_avx2_prefix_kernel(
                 mat_A, mat_B_in, mat_B_scales, sum_int8_B,
                 mat_C, M, N, K, group_size

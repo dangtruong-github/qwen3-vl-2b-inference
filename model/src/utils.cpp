@@ -135,8 +135,8 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         int total_generated_count = 0;
 
         int pos = 0; // position in the sequence
-        for (; pos < input_count; pos += config->max_prefill_size) {
-            size_t cur_prefill_size = std::min(input_count - pos, config->max_prefill_size);
+        for (; pos < input_count - 1; pos += config->max_prefill_size) {
+            size_t cur_prefill_size = std::min(input_count - 1 - pos, config->max_prefill_size);
 
             // Process a chunk of prompt tokens
             forward_text_prefill(config, state, weight, input_tokens + pos, cur_prefill_size, pos);
@@ -153,6 +153,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         
         pos = input_count - 1;
         int token = input_tokens[pos];
+        print_token(tokenizer, token);
 
         while (pos < max_seq_len) {
             float *logits = forward_text_decode(config, state, weight, token, pos);

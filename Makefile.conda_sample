@@ -1,11 +1,26 @@
+# ============================================================
+#                Project Makefile (Conda + ASan)
+# ============================================================
+
 # === Compiler setup ===
 NVCC := nvcc
 GPP  := g++
+
+# === Release flags ===
 CXXFLAGS  := -std=c++17 -O3 -fopenmp -march=native
 NVCCFLAGS := -std=c++17 -O3 -Xcompiler "-fopenmp -march=native"
 
-# === Path to your conda environment ===
-CONDA_PATH := /path/to/conda
+# === Debug flags ===
+DEBUG_FLAGS := -std=c++17 -O0 -g -fopenmp -march=native
+
+# === AddressSanitizer flags ===
+ASAN_FLAGS := -std=c++17 -O1 -g -fopenmp -march=native \
+              -fsanitize=address,undefined \
+              -fno-omit-frame-pointer
+
+# === OpenCV via pkg-config (Conda) ===
+OPENCV_CFLAGS := $(shell pkg-config --cflags opencv4)
+OPENCV_LIBS   := $(shell pkg-config --libs opencv4)
 
 # === Manually list top-level modules ===
 MODULES := tokenizer model utils matmul layers
@@ -25,18 +40,18 @@ SRC_FILES := main.cpp $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
 OBJ_FILES := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 
 # === Include flags ===
-INCLUDE_FLAGS := $(foreach dir,$(INCLUDE_DIRS),-I$(dir)) \
-                 $(foreach dir,$(CONFIG_DIRS),-I$(dir)) \
-                 -I$(CONDA_PATH)/include/opencv4
-
-# === OpenCV linking flags ===
-OPENCV_LIBS := -L$(CONDA_PATH)/lib \
-               -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_imgcodecs
+INCLUDE_FLAGS := \
+	$(foreach dir,$(INCLUDE_DIRS),-I$(dir)) \
+	$(foreach dir,$(CONFIG_DIRS),-I$(dir)) \
+	$(OPENCV_CFLAGS)
 
 # === Output binary ===
 TARGET := main
 
-# === Default target ===
+# ============================================================
+#                       Build Modes
+# ============================================================
+
 all: cpu
 
 # === CPU build ===
@@ -51,20 +66,40 @@ gpu: FLAGS := $(NVCCFLAGS)
 gpu: MODE := GPU
 gpu: $(TARGET)
 
-# === Build rule ===
+# === Debug build ===
+debug: CXX := $(GPP)
+debug: FLAGS := $(DEBUG_FLAGS)
+debug: MODE := DEBUG
+debug: $(TARGET)
+
+# === ASan build (Memory check) ===
+asan: CXX := $(GPP)
+asan: FLAGS := $(ASAN_FLAGS)
+asan: MODE := ASAN
+asan: $(TARGET)
+
+# ============================================================
+#                        Linking
+# ============================================================
+
 $(TARGET): $(OBJ_FILES)
 	@echo "⚙️  Linking for $(MODE) mode..."
 	$(CXX) $(FLAGS) $(OBJ_FILES) $(OPENCV_LIBS) -o $@
 	@echo "✅  Build complete ($(MODE) mode): ./$(TARGET)"
 
-# === Object build rule ===
+# ============================================================
+#                        Compilation
+# ============================================================
+
 $(OBJ_DIR)/%.o: %.cpp $(MODULE_HEADERS)
 	@mkdir -p $(dir $@)
 	@echo "⚙️  Compiling $< ($(MODE) mode)..."
 	$(CXX) $(FLAGS) $(INCLUDE_FLAGS) -c $< -o $@
 
-# === Clean ===
+# ============================================================
+#                          Clean
+# ============================================================
+
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
 	@echo "🧹 Cleaned build files."
-

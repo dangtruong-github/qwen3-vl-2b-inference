@@ -23,7 +23,7 @@ using half_cpu = half_float::half;        // Bring the type into scope
 using std::vector;
 
 struct DType {
-    enum Type { FP32, INT32, FP16, INT8, INT4 };
+    enum Type { FP32, INT32, FP16, INT8, INT4, NONETYPE };
 };
 
 struct PtrPair {
@@ -47,7 +47,7 @@ struct Tensor {
 
     void* scale_buf = nullptr;
     void* sum_int8_buf = nullptr;
-    DType::Type scale_dtype;
+    DType::Type scale_dtype = DType::NONETYPE;
     size_t group_size = 0;
     
     // Constructors & Destructor

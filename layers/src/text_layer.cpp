@@ -306,7 +306,7 @@ void classifier_gemm(
 ) {
     PtrPair emb_ptr = embedding->ptr_all();
     linear(
-        hid_states->ptr(), emb_ptr.buf, emb_ptr.scale, emb_ptr.sum_int8,
+        hid_states->ptr(), emb_ptr.buf, emb_ptr.scale, nullptr,
         nullptr, nullptr, logits->ptr(), 1, vocab_size, hidden_size, true,
         hid_states->dtype, embedding->dtype, embedding->scale_dtype,
         logits->dtype, embedding->group_quantized, embedding->group_size
@@ -399,7 +399,7 @@ void swiglu(
     float *__restrict gate_buf = (float *)gate->ptr();
     const float *__restrict up_buf = (const float *)up->ptr();
 
-    #pragma omp simd
+    #pragma omp parallel for simd
     for (size_t i = 0; i < size_vec; ++i) {
         float x = gate_buf[i];
         float silu = x / (1.0f + expf(-x));  // SiLU(x) = x * sigmoid(x)
@@ -546,7 +546,7 @@ void softmax(float *__restrict x, size_t n) {
 }
 #endif
 
-void attn_scores_all_heads(
+void attn_scores_all_heads_prefill(
     const float *__restrict key_cache,
     const Tensor *__restrict q, Tensor *__restrict att,
     size_t attn_heads, int kv_mul, int head_dim,
@@ -612,17 +612,27 @@ void attn_scores_all_heads(
                 }
             }
 
-            // Tail processing for remaining time steps
-            for (size_t t = t_end; t <= (pos + b); ++t) {
+            #pragma omp parallel for
+            for (size_t t = t_end; t <= pos + b; ++t) {
                 const float *k_head = k_ptr + (size_t)t * head_dim;
+
+                __m256 s_acc[kv_mul];
+
                 for (int m = 0; m < kv_mul; ++m) {
-                    const float *q_head = q_group_base + (m * head_dim);
-                    float score = 0.0f;
-                    #pragma omp simd reduction(+:score)
-                    for (int i = 0; i < head_dim; i++) {
-                        score += q_head[i] * k_head[i];
+                    s_acc[m] = _mm256_setzero_ps();
+                }
+
+                for (int i = 0; i < head_dim; i += 8) {
+                    __m256 k0v = _mm256_loadu_ps(k_head + i);
+
+                    for (int m = 0; m < kv_mul; ++m) {
+                        __m256 q_vec = _mm256_loadu_ps(q_group_base + (m * head_dim) + i);
+                        s_acc[m] = _mm256_fmadd_ps(q_vec, k0v, s_acc[m]);
                     }
-                    att_group_base[m * att_stride + t] = score * inv_sqrt_d;
+                }
+
+                for (int m = 0; m < kv_mul; ++m) {
+                    att_group_base[m * att_stride + t] = add_reduce_mm_256_layer(s_acc[m]) * inv_sqrt_d;
                 }
             }
 
@@ -632,6 +642,103 @@ void attn_scores_all_heads(
             }
         } 
     }
+}
+
+void attn_scores_all_heads_decode(
+    const float *__restrict key_cache,
+    const Tensor *__restrict q, Tensor *__restrict att,
+    size_t attn_heads, int kv_mul, int head_dim,
+    int kv_dim, size_t sh_offset, int pos
+) {
+    const float inv_sqrt_d = 1.0f / sqrtf((float)head_dim);
+
+    // q_offset and att_offset should be the stride between consecutive heads
+    // Usually q->shape[2] is head_dim, so we need the full stride to the next head.
+    const size_t att_stride = att->shape[2]; // Stride for attention scores (usually max_seq_len)
+
+    // Outer loop: iterate through groups of Q heads that share one K head
+    for (size_t h_base = 0; h_base < attn_heads; h_base += kv_mul) {
+        // K pointer remains the same for all kv_mul Q-heads
+        const float *__restrict k_ptr = key_cache + 1ll * (h_base / kv_mul) * sh_offset;
+
+        // Base pointers for the first Q head and first Attention head in this group
+        const float *__restrict q_group_base = (const float *)q->ptr({0, h_base});
+        float       *__restrict att_group_base = (float *)att->ptr({0, h_base});
+
+        size_t t_end = (pos + 1) & ~3; // Round down to multiple of 4
+
+        // Parallelize the time (sequence) dimension
+        #pragma omp parallel for
+        for (size_t t = 0; t < t_end; t += 4) {
+            const float *k0_ptr = k_ptr + (size_t)t * head_dim;
+            const float *k1_ptr = k_ptr + (size_t)(t + 1) * head_dim;
+            const float *k2_ptr = k_ptr + (size_t)(t + 2) * head_dim;
+            const float *k3_ptr = k_ptr + (size_t)(t + 3) * head_dim;
+
+            // Use fixed-size arrays for accumulators (stack allocated)
+            __m256 s0[kv_mul], s1[kv_mul], s2[kv_mul], s3[kv_mul];
+
+            for (int m = 0; m < kv_mul; ++m) {
+                s0[m] = _mm256_setzero_ps();
+                s1[m] = _mm256_setzero_ps();
+                s2[m] = _mm256_setzero_ps();
+                s3[m] = _mm256_setzero_ps();
+            }
+
+            for (int i = 0; i < head_dim; i += 8) {
+                __m256 k0v = _mm256_loadu_ps(k0_ptr + i);
+                __m256 k1v = _mm256_loadu_ps(k1_ptr + i);
+                __m256 k2v = _mm256_loadu_ps(k2_ptr + i);
+                __m256 k3v = _mm256_loadu_ps(k3_ptr + i);
+
+                for (int m = 0; m < kv_mul; ++m) {
+                    __m256 q_vec = _mm256_loadu_ps(q_group_base + (m * head_dim) + i);
+                    s0[m] = _mm256_fmadd_ps(q_vec, k0v, s0[m]);
+                    s1[m] = _mm256_fmadd_ps(q_vec, k1v, s1[m]);
+                    s2[m] = _mm256_fmadd_ps(q_vec, k2v, s2[m]);
+                    s3[m] = _mm256_fmadd_ps(q_vec, k3v, s3[m]);
+                }
+            }
+
+            for (int m = 0; m < kv_mul; ++m) {
+                float *att_ptr = att_group_base + (m * att_stride);
+                att_ptr[t + 0] = add_reduce_mm_256_layer(s0[m]) * inv_sqrt_d;
+                att_ptr[t + 1] = add_reduce_mm_256_layer(s1[m]) * inv_sqrt_d;
+                att_ptr[t + 2] = add_reduce_mm_256_layer(s2[m]) * inv_sqrt_d;
+                att_ptr[t + 3] = add_reduce_mm_256_layer(s3[m]) * inv_sqrt_d;
+            }
+        }
+
+        // Tail processing for remaining time steps
+        #pragma omp parallel for
+        for (size_t t = t_end; t <= pos; ++t) {
+            const float *k_head = k_ptr + (size_t)t * head_dim;
+
+            __m256 s_acc[kv_mul];
+
+            for (int m = 0; m < kv_mul; ++m) {
+                s_acc[m] = _mm256_setzero_ps();
+            }
+
+            for (int i = 0; i < head_dim; i += 8) {
+                __m256 k0v = _mm256_loadu_ps(k_head + i);
+
+                for (int m = 0; m < kv_mul; ++m) {
+                    __m256 q_vec = _mm256_loadu_ps(q_group_base + (m * head_dim) + i);
+                    s_acc[m] = _mm256_fmadd_ps(q_vec, k0v, s_acc[m]);
+                }
+            }
+
+            for (int m = 0; m < kv_mul; ++m) {
+                att_group_base[m * att_stride + t] = add_reduce_mm_256_layer(s_acc[m]) * inv_sqrt_d;
+            }
+        }
+
+        // Final Softmax for each head in the group
+        for (int m = 0; m < kv_mul; ++m) {
+            softmax(att_group_base + m * att_stride, (size_t)(pos + 1));
+        }
+    } 
 }
 
 void attn_weighted_sum_all_heads(
