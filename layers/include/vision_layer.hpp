@@ -49,6 +49,6 @@ void tensor_transpose(
 void vision_att(
     const Tensor *q_tensor, const Tensor *k_tensor,
     const Tensor *v_tensor, Tensor *attn_scores_tensor, 
-    Tensor *out_tensor, int num_heads, int T, int D, float scale
+    Tensor *out_tensor, int num_heads, int T, int D, size_t max_attn_size, float scale
 );
 void gelu_tanh(Tensor *x, size_t x_size);

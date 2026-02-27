@@ -16,8 +16,15 @@ void linear(
 );
 void gemm_att(
     const void *mat_A, const void *mat_B, void *mat_C,
-    const float scale, size_t N, size_t K, bool mat_B_transpose,
-    DType::Type type_a, DType::Type type_b, DType::Type type_c
+    const float scale, size_t M, size_t N, size_t K,
+    bool mat_B_transpose, DType::Type type_a,
+    DType::Type type_b, DType::Type type_c
+);
+void gemm_att_multiple_scale(
+    const void *mat_A, const void *mat_B, void *mat_C,
+    const float *scale, size_t M, size_t N, size_t K,
+    bool mat_B_transpose, DType::Type type_a,
+    DType::Type type_b, DType::Type type_c
 );
 
 #if defined(__AVX2__) && defined(__FMA__)

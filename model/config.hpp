@@ -44,6 +44,7 @@ typedef struct {
     int group_quantized;
 
     int max_prefill_size;
+    int max_vision_attention_size;
 } QwenConfig;
 
 typedef struct {
@@ -140,6 +141,7 @@ typedef struct {
     Tensor *vision_mlp_out;
     Tensor *vision_deep_stack;
     Tensor *vision_attn_scores;
+    Tensor *max_vision_attn_scores;
 
     int vision_embed_tokens;
     int cur_img_token_id;

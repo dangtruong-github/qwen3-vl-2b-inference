@@ -111,6 +111,7 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     config->deep_layer[17] = 3;
 
     config->max_prefill_size = 8;
+    config->max_vision_attention_size = 8;
 
     // ==================================================================================
     // 2. Derived Dimensions
@@ -331,6 +332,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     size_t VDS = config->vision_deep_stack_depth;
     
     size_t MPS = config->max_prefill_size;
+    size_t MVAS = (size_t)config->max_vision_attention_size;
 
     // ---- Hidden / intermediate ----
     state->x = new Tensor({MPS, H});
@@ -374,7 +376,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
 
     state->vision_deep_stack = new Tensor({VDS, VNP_max, H}, DType::FP16);
 
-    state->vision_attn_scores = new Tensor({VNP_max});
+    state->vision_attn_scores = new Tensor({MVAS, VNP_max});
+    state->max_vision_attn_scores = new Tensor({MVAS});
 
     qwen_rope_precompute(
         state->cos_tensor, state->sin_tensor, config
@@ -419,6 +422,7 @@ void free_model_run_state(QwenRunState* state) {
     if (state->vision_deep_stack) delete state->vision_deep_stack;
 
     if (state->vision_attn_scores) delete state->vision_attn_scores;
+    if (state->max_vision_attn_scores) delete state->max_vision_attn_scores;
 }
 
 void qwen_rope_precompute(

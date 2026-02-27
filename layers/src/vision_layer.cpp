@@ -821,7 +821,7 @@ void tensor_transpose(
 void vision_att(
     const Tensor *q_tensor, const Tensor *k_tensor,
     const Tensor *v_tensor, Tensor *attn_scores_tensor, 
-    Tensor *out_tensor, int num_heads, int T, int D, float scale
+    Tensor *out_tensor, int num_heads, int T, int D, size_t max_attn_size, float scale
 ) {
     #ifdef CPU_TIME_GEMM
         CPUTimer timer("gemm_att");
@@ -847,21 +847,45 @@ void vision_att(
 
     float *attn_scores = (float *)attn_scores_tensor->ptr();
 
-    for (int h = 0; h < num_heads; h++) {
-        const char *qh = q + h * head_stride * q_size;
-        const char *kh = k + h * head_stride * k_size;
-        const char *vh = v + h * head_stride * v_size;
-        char *oh = out + h * head_stride * out_size;
+    float max_scores[max_attn_size];  
 
-        for (int i = 0; i < T; i++) {
-            const char *qi = qh + i * D * q_size;
-            char *oi = oh + i * D * out_size;
+    for (int h = 0; h < num_heads; ++h) {
+        const char *qh = q + 1ll * h * head_stride * q_size;
+        const char *kh = k + 1ll * h * head_stride * k_size;
+        const char *vh = v + 1ll * h * head_stride * v_size;
+        char *oh = out + 1ll * h * head_stride * out_size;
 
-            gemm_att(qi, kh, attn_scores, scale, T, D, true, q_type, k_type, att_s_type);
-            float max_score = avx2_max(attn_scores, T);
+        for (size_t i = 0; i < T; i += max_attn_size) {
+            const size_t cur_attn_size = std::min(T - i, max_attn_size);
+
+            const char *qi = qh + 1ll * i * D * q_size;
+            char *oi = oh + 1ll * i * D * out_size;
+
+            gemm_att(qi, kh, attn_scores, scale, cur_attn_size, T, D, true, q_type, k_type, att_s_type);
+            avx2_max_multiple(attn_scores, T, cur_attn_size, max_scores);
             // float max_score = avx2_max_and_scale(attn_scores, T, scale);
-            float sum = avx2_sum_exp_max(attn_scores, T, max_score);
-            gemm_att(attn_scores, vh, oi, 1.0f / sum, D, T, false, att_s_type, v_type, out_type);
+            avx2_sum_exp_max_multiple(attn_scores, T, cur_attn_size, max_scores);
+            gemm_att_multiple_scale(attn_scores, vh, oi, max_scores, cur_attn_size, D, T, false, att_s_type, v_type, out_type);
+
+            /*
+            for (size_t i_sm = 0; i_sm < cur_attn_size; ++i_sm) {
+                char *oi_sm = oi + 1ll * i_sm * D * out_size;
+
+                if (out_type == DType::FP16) {
+                    half_cpu *oi_cpu = (half_cpu *)oi_sm;
+
+                    for (size_t d = 0; d < D; ++d) {
+                        oi_cpu[d] *= max_scores[i_sm];
+                    }
+                } else {
+                    float *oi_cpu = (float *)oi_sm;
+
+                    for (size_t d = 0; d < D; ++d) {
+                        oi_cpu[d] *= max_scores[i_sm];
+                    }
+                }
+            }
+            */
         }
     }
 }

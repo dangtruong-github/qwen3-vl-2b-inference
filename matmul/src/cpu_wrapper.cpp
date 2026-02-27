@@ -396,113 +396,232 @@ void linear(
 
 void gemm_att_fp32_full(
     const float *mat_A, const float *mat_B, float *mat_C,
-    const float scale, size_t N, size_t K, bool mat_B_transpose
+    const float scale, size_t M, size_t N, size_t K,
+    bool mat_B_transpose
 ) {
     #if defined(__AVX2__) && defined(__FMA__)
-        att_fp32_full_avx2_kernel(mat_A, mat_B, mat_C, scale, N, K, mat_B_transpose);
-    #else
-        #pragma omp parallel for schedule(static)
+        // Only use optimized kernel when M == 1
+        if (M == 1) {
+            att_fp32_full_avx2_kernel(
+                mat_A, mat_B, mat_C,
+                scale, N, K, mat_B_transpose
+            );
+            return;
+        }
+    #endif
+
+    #pragma omp parallel for schedule(static)
+    for (size_t m = 0; m < M; ++m) {
+
+        const float* A_row = mat_A + m * K;
+        float* C_row = mat_C + m * N;
+
         for (size_t n = 0; n < N; ++n) {
+
             float sum = 0.0f;
 
             for (size_t k = 0; k < K; ++k) {
-                if (!mat_B_transpose) {
-                    // B: (K, N)
-                    sum += mat_A[k] * mat_B[k * N + n];
-                } else {
-                    // B: (N, K)
-                    sum += mat_A[k] * mat_B[n * K + k];
-                }
+
+                float a = A_row[k];
+
+                float b = (!mat_B_transpose)
+                    ? mat_B[k * N + n]     // B[K,N]
+                    : mat_B[n * K + k];    // B[N,K]
+
+                sum += a * b;
             }
 
-            sum *= scale;
-            mat_C[n] = sum;
+            C_row[n] = sum * scale;
         }
-    #endif
+    }
 }
 
 void gemm_att_f16ab_f32c(
     const half_cpu *mat_A, const half_cpu *mat_B, float *mat_C,
-    const float scale, size_t N, size_t K, bool mat_B_transpose
+    const float scale, size_t M, size_t N, size_t K,
+    bool mat_B_transpose
 ) {
     #pragma omp parallel for schedule(static)
-    for (size_t n = 0; n < N; ++n) {
-        float sum = 0.0f;
+    for (size_t m = 0; m < M; ++m) {
 
-        for (size_t k = 0; k < K; ++k) {
-            if (!mat_B_transpose) {
-                // B: (K, N)
-                sum += (float)(mat_A[k]) * (float)(mat_B[k * N + n]);
-            } else {
-                // B: (N, K)
-                sum += (float)(mat_A[k]) * (float)(mat_B[n * K + k]);
-            }
-        }
+        const half_cpu* A_row = mat_A + m * K;
+        float* C_row = mat_C + m * N;
 
-        sum *= scale;
-        mat_C[n] = sum;
-    }
-}
+        for (size_t n = 0; n < N; ++n) {
 
-void gemm_att_f32a_f16bc(
-    const float *mat_A, const half_cpu *mat_B, half_cpu *mat_C,
-    float scale, size_t N, size_t K, bool mat_B_transpose
-) {
-    #pragma omp parallel for
-    for (size_t n = 0; n < N; ++n) {
-        float sum = 0.0f;
+            float sum = 0.0f;
 
-        for (size_t k = 0; k < K; ++k) {
-            float a = mat_A[k];
-            float b;
+            for (size_t k = 0; k < K; ++k) {
 
-            if (!mat_B_transpose) {
-                // B shape: (K, N)
-                b = (float)(mat_B[k * N + n]);
-            } else {
-                // B shape: (N, K)
-                b = (float)(mat_B[n * K + k]);
+                float a = (float)A_row[k];
+
+                float b = (!mat_B_transpose)
+                    ? (float)mat_B[k * N + n]
+                    : (float)mat_B[n * K + k];
+
+                sum += a * b;
             }
 
-            sum += a * b;
+            C_row[n] = sum * scale;
         }
-
-        sum *= scale;
-        mat_C[n] = (half_cpu)(sum);
     }
 }
 
 void gemm_att(
     const void *mat_A, const void *mat_B, void *mat_C,
-    const float scale, size_t N, size_t K, bool mat_B_transpose,
-    DType::Type type_a, DType::Type type_b, DType::Type type_c
+    const float scale, size_t M, size_t N, size_t K,
+    bool mat_B_transpose, DType::Type type_a,
+    DType::Type type_b, DType::Type type_c
 ) {
-    if (type_a == DType::FP32 && type_b == DType::FP32 && type_c == DType::FP32) {
+
+    if (type_a == DType::FP32 &&
+        type_b == DType::FP32 &&
+        type_c == DType::FP32)
+    {
         gemm_att_fp32_full(
             static_cast<const float*>(mat_A),
             static_cast<const float*>(mat_B),
             static_cast<float*>(mat_C),
-            scale, N, K, mat_B_transpose
-        );
-        return;
-    } else if (type_a == DType::FP32 && type_b == DType::FP16 && type_c == DType::FP16) {
-        gemm_att_f32a_f16bc(
-            static_cast<const float*>(mat_A),
-            static_cast<const half_cpu*>(mat_B),
-            static_cast<half_cpu*>(mat_C),
-            scale, N, K, mat_B_transpose
-        );
-        return;
-    } else if (type_a == DType::FP16 && type_b == DType::FP16 && type_c == DType::FP32) {
-        gemm_att_f16ab_f32c(
-            static_cast<const half_cpu*>(mat_A),
-            static_cast<const half_cpu*>(mat_B),
-            static_cast<float*>(mat_C),
-            scale, N, K, mat_B_transpose
+            scale, M, N, K, mat_B_transpose
         );
         return;
     }
 
-    fprintf(stderr, "DType gemm att not supported: type_a=%s, type_b=%s, type_c=%s\n", dtypeToStr(type_a), dtypeToStr(type_b), dtypeToStr(type_c));
+    if (type_a == DType::FP16 &&
+        type_b == DType::FP16 &&
+        type_c == DType::FP32)
+    {
+        gemm_att_f16ab_f32c(
+            static_cast<const half_cpu*>(mat_A),
+            static_cast<const half_cpu*>(mat_B),
+            static_cast<float*>(mat_C),
+            scale, M, N, K, mat_B_transpose
+        );
+        return;
+    }
+
+    fprintf(stderr,
+        "DType gemm att not supported: type_a=%s, type_b=%s, type_c=%s\n",
+        dtypeToStr(type_a),
+        dtypeToStr(type_b),
+        dtypeToStr(type_c)
+    );
+    exit(1);
+}
+
+void gemm_att_fp32_full_multiple_scale(
+    const float *mat_A, const float *mat_B, float *mat_C,
+    const float *scale, size_t M, size_t N, size_t K,
+    bool mat_B_transpose
+) {
+    #if defined(__AVX2__) && defined(__FMA__)
+        if (M == 1) {
+            // For M=1 just reuse old kernel
+            att_fp32_full_avx2_kernel(
+                mat_A, mat_B, mat_C,
+                scale[0], N, K, mat_B_transpose
+            );
+            return;
+        }
+    #endif
+
+    #pragma omp parallel for schedule(static)
+    for (size_t m = 0; m < M; ++m) {
+
+        const float* A_row = mat_A + m * K;
+        float* C_row = mat_C + m * N;
+        float row_scale = scale[m];
+
+        for (size_t n = 0; n < N; ++n) {
+
+            float sum = 0.0f;
+
+            for (size_t k = 0; k < K; ++k) {
+
+                float a = A_row[k];
+
+                float b = (!mat_B_transpose)
+                    ? mat_B[k * N + n]
+                    : mat_B[n * K + k];
+
+                sum += a * b;
+            }
+
+            C_row[n] = sum * row_scale;
+        }
+    }
+}
+
+void gemm_att_f32a_f16bc_multiple_scale(
+    const float *mat_A, const half_cpu *mat_B, half_cpu *mat_C,
+    const float *scale, size_t M, size_t N, size_t K,
+    bool mat_B_transpose
+) {
+    #pragma omp parallel for schedule(static)
+    for (size_t m = 0; m < M; ++m) {
+
+        const float* A_row = mat_A + m * K;
+        half_cpu* C_row = mat_C + m * N;
+        float row_scale = scale ? scale[m] : 1.0f;
+
+        for (size_t n = 0; n < N; ++n) {
+
+            float sum = 0.0f;
+
+            for (size_t k = 0; k < K; ++k) {
+
+                float a = A_row[k];
+
+                float b = (!mat_B_transpose)
+                    ? (float)mat_B[k * N + n]
+                    : (float)mat_B[n * K + k];
+
+                sum += a * b;
+            }
+
+            C_row[n] = (half_cpu)(sum * row_scale);
+        }
+    }
+}
+
+void gemm_att_multiple_scale(
+    const void *mat_A, const void *mat_B, void *mat_C,
+    const float *scale, size_t M, size_t N, size_t K,
+    bool mat_B_transpose, DType::Type type_a,
+    DType::Type type_b, DType::Type type_c
+) {
+
+    if (type_a == DType::FP32 &&
+        type_b == DType::FP32 &&
+        type_c == DType::FP32)
+    {
+        gemm_att_fp32_full_multiple_scale(
+            static_cast<const float*>(mat_A),
+            static_cast<const float*>(mat_B),
+            static_cast<float*>(mat_C),
+            scale, M, N, K, mat_B_transpose
+        );
+        return;
+    }
+
+    if (type_a == DType::FP32 &&
+        type_b == DType::FP16 &&
+        type_c == DType::FP16)
+    {
+        gemm_att_f32a_f16bc_multiple_scale(
+            static_cast<const float*>(mat_A),
+            static_cast<const half_cpu*>(mat_B),
+            static_cast<half_cpu*>(mat_C),
+            scale, M, N, K, mat_B_transpose
+        );
+        return;
+    }
+
+    fprintf(stderr,
+        "DType gemm att not supported: type_a=%s, type_b=%s, type_c=%s\n",
+        dtypeToStr(type_a),
+        dtypeToStr(type_b),
+        dtypeToStr(type_c)
+    );
     exit(1);
 }
