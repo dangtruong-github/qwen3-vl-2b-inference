@@ -1,4 +1,4 @@
-Qwen3-VL-2B C++ Inference Engine (CPU-Optimized)
+# Qwen3-VL-2B C++ Inference Engine (CPU-Optimized)
 
 A lightweight C++ inference engine for Qwen3-VL-2B, built for efficient multimodal inference on low-power CPUs without relying on external deep learning frameworks.
 
@@ -21,6 +21,12 @@ Quantization Strategy
 - Vision branch preserved in FP16 for numerical stability
 
 Designed with a focus on reducing memory movement, improving cache efficiency, and enabling practical LLM/VLM deployment on ultrabook-class CPUs.
+
+You can see the full optimization at [CPU Branch](https://github.com/truongchu/qwen3-cpp/tree/int8-optimized)
+
+# Incoming optimization
+- KV cache quantization
+- Pascal-GPU integration
 
 # Installation (incoming)
 
