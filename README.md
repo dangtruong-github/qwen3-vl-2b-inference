@@ -3,6 +3,7 @@
 A lightweight C++ inference engine for Qwen3-VL-2B, built for efficient multimodal inference on low-power CPUs without relying on external deep learning frameworks.
 
 Key Optimizations
+
 🔧 Quantized & Packed GEMM
 - Blocked weight prepacking for improved cache locality
 - Vision module weight transpose for contiguous SIMD access
