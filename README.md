@@ -27,7 +27,9 @@ You can see the full optimization at [CPU Branch](https://github.com/truongchu/q
 
 # Incoming optimization
 - KV cache quantization
-- Pascal-GPU integration
+- Pascal GPU integration
+- Operator fusion
+- CPU Flash-style attention (if targeting long context)
 
 # Installation (incoming)
 
