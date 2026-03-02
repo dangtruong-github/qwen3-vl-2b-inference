@@ -125,8 +125,10 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
             forward_img(config, state, weight, img_true ? img_processed_output : nullptr, img_processed_h, img_processed_w, img_grid_h, img_grid_w);
         }
 
-        printf("Finish forward images\n");
-        printf("max_seq_len=%d, input_count=%d\n", max_seq_len, input_count);
+        #if !defined(CPU_TIME_OUTSIDE)
+            printf("Finish forward images\n");
+            printf("max_seq_len=%d, input_count=%d\n", max_seq_len, input_count);
+        #endif
         
         // ------------------------------------------------------------
         // 4. Generation loop - matching the structure from run.cpp
@@ -142,9 +144,11 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
             forward_text_prefill(config, state, weight, input_tokens + pos, cur_prefill_size, pos);
 
             // Print each prompt token properly
-            for (size_t i = 0; i < cur_prefill_size; ++i) {
-                print_token(tokenizer, input_tokens[pos + i]);
-            }
+            #if !defined(CPU_TIME_OUTSIDE)
+                for (size_t i = 0; i < cur_prefill_size; ++i) {
+                    print_token(tokenizer, input_tokens[pos + i]);
+                }
+            #endif
         }
 
         #ifdef PRINT_LOGITS
@@ -153,7 +157,9 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
         
         pos = input_count - 1;
         int token = input_tokens[pos];
-        print_token(tokenizer, token);
+        #if !defined(CPU_TIME_OUTSIDE)
+            print_token(tokenizer, token);
+        #endif
 
         while (pos < max_seq_len) {
             float *logits = forward_text_decode(config, state, weight, token, pos);
@@ -174,13 +180,13 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                     printf("%.6f ", logits[i]);
                 }
                 printf("\n");
-            #else
+            #elif !defined(CPU_TIME_OUTSIDE)
                 print_token(tokenizer, next);
             #endif
 
             // EOS handling
             if (next == 151645) {  // <im_end>
-                printf("\nStopping generation: <im_end> token encountered twice\n");
+                printf("\nStopping generation: <im_end> token encountered\n");
                 break;
             }
 

@@ -1,14 +1,41 @@
-import numpy as np
+import csv
+from collections import defaultdict
 
-txt_path_to_read = "/home/dangtruongdefault/qwen3-vl-2b-inference/scripts/run_out.txt"
+def analyze_and_convert(input_file, output_file):
+    func_counts = defaultdict(int)
+    func_times = defaultdict(list)
 
-# Use a list comprehension to feed NumPy
-with open(txt_path_to_read, 'r') as f:
-    data = [np.array(line.split(), dtype=float) for line in f]
+    try:
+        with open(input_file, 'r') as txt_file, open(output_file, 'w', newline='') as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(['index_appear', 'name_of_func', 'time_in_float_6f'])
+            
+            for line in txt_file:
+                line = line.strip()
+                if not line or "CPU time:" not in line:
+                    continue
+                
+                parts = line.split()
+                func_name = parts[0]
+                cpu_time = float(parts[3])
+                
+                # Update counters and storage
+                func_counts[func_name] += 1
+                func_times[func_name].append(cpu_time)
+                
+                # Write to CSV
+                writer.writerow([func_counts[func_name], func_name, "{:.6f}".format(cpu_time)])
+        
+        print(f"--- Analysis Complete: {output_file} generated ---\n")
+        print(f"{'Function Name':<25} | {'Calls':<6} | {'Avg Time (s)':<12} | {'Max (s)':<8}")
+        print("-" * 60)
 
-# Accessing the second number of the first row
-c16 = data[2]
-c8 = data[5]
+        for func, times in func_times.items():
+            avg_time = sum(times) / len(times)
+            max_time = max(times)
+            print(f"{func:<25} | {len(times):<6} | {avg_time:<12.6f} | {max_time:<8.6f}")
 
-print(c16 - c8)
-    
+    except Exception as e:
+        print(f"Error: {e}")
+
+analyze_and_convert('scripts/run.txt', 'scripts/output.csv')

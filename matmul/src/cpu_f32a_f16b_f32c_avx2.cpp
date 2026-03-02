@@ -1,6 +1,6 @@
 #include "../include/cpu_wrapper.hpp"
 
-// #if defined(__AVX2__) && defined(__FMA__)
+#if defined(__AVX2__) && defined(__FMA__)
 void sm_M_lg_K_N_transpose(
     const float *__restrict mat_A,
     const half_cpu *__restrict mat_B,
@@ -935,4 +935,4 @@ void f32a_f16b_f32c_avx2_kernel(
         }
     }
 }
-// #endif
+#endif

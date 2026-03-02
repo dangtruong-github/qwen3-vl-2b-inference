@@ -87,12 +87,29 @@ void f32a_i8f32sb_f32c_avx2_prefix_kernel(
     float *__restrict mat_C,
     size_t M, size_t N, size_t K, size_t group_size
 );
+void f32a_i8f32sb_f32bias_f32c_avx2_kernel(
+    const float *__restrict mat_A,
+    const int8_t *__restrict mat_B_in,
+    const float *__restrict mat_B_scales,
+    const float *__restrict mat_bias,
+    float *__restrict mat_C, size_t M, size_t N, size_t K, size_t group_size
+);
 #endif
 
 #if defined(__AVX2__) && defined(__FMA__)
 void att_fp32_full_avx2_kernel(
     const float *mat_A, const float *mat_B, float *mat_C,
     const float scale, size_t N, size_t K, bool mat_B_transpose
+);
+void att_f32a_f16bc_mul_scale_avx2_kernel(
+    const float *mat_A, const half_cpu *mat_B, half_cpu *mat_C,
+    const float *scale, size_t M, size_t N, size_t K,
+    bool mat_B_transpose
+);
+void att_f16ab_f32c_avx2_kernel(
+    const half_cpu *mat_A, const half_cpu *mat_B, float *mat_C,
+    const float scale, size_t M, size_t N, size_t K,
+    bool mat_B_transpose
 );
 #endif
 

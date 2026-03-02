@@ -111,7 +111,7 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     config->deep_layer[17] = 3;
 
     config->max_prefill_size = 8;
-    config->max_vision_attention_size = 8;
+    config->max_vision_attention_size = 128;
 
     // ==================================================================================
     // 2. Derived Dimensions
