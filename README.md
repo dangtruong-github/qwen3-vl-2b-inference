@@ -23,7 +23,7 @@ Quantization Strategy
 
 Designed with a focus on reducing memory movement, improving cache efficiency, and enabling practical LLM/VLM deployment on ultrabook-class CPUs.
 
-You can see the full optimization at [CPU Branch](https://github.com/truongchu/qwen3-cpp/tree/int8-optimized)
+You can see the full optimization at [CPU Branch](https://github.com/dangtruong-github/qwen3-vl-2b-inference/tree/cpu)
 
 # Incoming optimization
 - KV cache quantization
