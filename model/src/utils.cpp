@@ -150,15 +150,15 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                 }
             #endif
         }
-
-        #ifdef PRINT_LOGITS
-            exit(1);
-        #endif
         
         pos = input_count - 1;
         int token = input_tokens[pos];
         #if !defined(CPU_TIME_OUTSIDE)
             print_token(tokenizer, token);
+        #endif
+
+        #ifdef PRINT_LOGITS
+            int orig_pos = pos;
         #endif
 
         while (pos < max_seq_len) {
@@ -180,6 +180,9 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                     printf("%.6f ", logits[i]);
                 }
                 printf("\n");
+                if (pos >= orig_pos + 10) {
+                    exit(1);
+                }
             #elif !defined(CPU_TIME_OUTSIDE)
                 print_token(tokenizer, next);
             #endif

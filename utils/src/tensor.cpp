@@ -44,7 +44,10 @@ Tensor::Tensor(
     const std::vector<size_t> &shape_, void *buf_, void *scale_buf_,
     size_t group_size_, bool group_quantized_,
     DType::Type dtype_, DType::Type scale_dtype_
-) : shape(shape_), buf(buf_), scale_buf(scale_buf_), group_size(group_size_), group_quantized(group_quantized_), dtype(dtype_), scale_dtype(scale_dtype_), owns_host_buf(false) {
+) : shape(shape_), buf(buf_), scale_buf(scale_buf_), group_size(group_size_),
+    group_quantized(group_quantized_), dtype(dtype_), scale_dtype(scale_dtype_),
+    owns_host_buf(false), is_weight(true) 
+{
     ndim = shape_.size();
 
     size_t size_buf = num_elem() * get_dtype_size();
@@ -84,8 +87,10 @@ Tensor::~Tensor() {
         if (owns_host_buf) {
             free(buf);
         } else {
-            size_t data_size = num_elem() * get_dtype_size();
-            safe_munmap(buf, data_size);
+            if (is_weight) {
+                size_t data_size = num_elem() * get_dtype_size();
+                safe_munmap(buf, data_size);
+            }
         }
         buf = nullptr;
     }
@@ -93,7 +98,7 @@ Tensor::~Tensor() {
     // --------------------
     // Free scale buffer
     // --------------------
-    if (scale_buf) {
+    if (scale_buf && is_weight) {
         size_t stride = group_quantized ? group_size : shape[ndim - 1];
         size_t num_scales = (num_elem() + stride - 1) / stride;
         size_t data_size = num_scales * get_dtype_size(true);
@@ -102,7 +107,7 @@ Tensor::~Tensor() {
         scale_buf = nullptr;
     }
 
-    if (sum_int8_buf) {
+    if (sum_int8_buf && is_weight) {
         free(sum_int8_buf);
     }
 }

@@ -205,6 +205,46 @@ def reorder_keys_by_group(ordered_keys: List[str]):
 
     return new_ordered_keys
 
+def reorder_keys_qkv(ordered_keys: List[str]):
+    new_ordered_keys = []
+    tmp_keys = {}
+    
+    keys_to_append = ["self_attn.q_proj.weight", "self_attn.k_proj.weight", "self_attn.v_proj.weight"]
+
+    def check_qkv_key(each_item) -> str:
+        for subitem in each_item:
+            for subkey in keys_to_append:
+                if subkey in subitem:
+                    # Extract the character between 'self_attn.' and '_proj'
+                    if ".q_proj" in subkey: return "q"
+                    if ".k_proj" in subkey: return "k"
+                    if ".v_proj" in subkey: return "v"
+                    
+        return None
+
+    for item in ordered_keys:
+        print("now", item)
+        subkey_now = check_qkv_key(item)
+        if subkey_now:
+            tmp_keys[subkey_now] = item
+            if 'q' in subkey_now:
+                new_ordered_keys.append(-1)
+        else:
+            new_ordered_keys.append(item)
+
+    new_qkv_key = []
+
+    while len(tmp_keys['q']) or len(tmp_keys['k']) or len(tmp_keys['v']):
+        new_qkv_key.append(tmp_keys['q'].pop(0))
+        new_qkv_key.append(tmp_keys['k'].pop(0))
+        new_qkv_key.append(tmp_keys['v'].pop(0))
+
+    for i in range(len(new_ordered_keys)):
+        if new_ordered_keys[i] == -1:
+            new_ordered_keys[i] = new_qkv_key
+
+    return new_ordered_keys
+
 # ----------------------------------------------------------------------
 # Config Header Writer
 # ----------------------------------------------------------------------
@@ -385,7 +425,8 @@ def main():
         providers = collect_effective_keys(f)
         ordered = reorder_keys_for_write(list(providers.keys()))
 
-        ordered_new = reorder_keys_by_group(ordered)
+        ordered_new_no_qkv = reorder_keys_by_group(ordered)
+        ordered_new = reorder_keys_qkv(ordered_new_no_qkv)
 
         with open(args.output, "wb") as fout:
             # 1️⃣ config header

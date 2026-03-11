@@ -321,8 +321,11 @@ void forward_text_prefill(
     long kv_dim = config->num_key_value_heads * head_dim;
     int kv_mul = num_heads / num_kv_heads;
 
+    const size_t qkv_stride = (num_heads + 2 * num_kv_heads) * head_dim;
+
     const size_t kv_pos_off = 1ll * pos * head_dim;
     const size_t kv_all_off = 1ll * seq_len * head_dim;
+    const size_t kv_pos_off_bytes = kv_pos_off * state->key_cache->get_dtype_size();
 
     const DType::Type dtype_weight = weight->token_embedding_table->dtype;
     const DType::Type dtype_scale = weight->token_embedding_table->scale_dtype;
@@ -352,90 +355,127 @@ void forward_text_prefill(
                 state->cur_img_token_id++;
             }
         }
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                for (size_t i = 0; i < prefill_size; ++i) { 
+                    state->x->printDebug("x", {i});
+                }
+            }
+        #endif
     }
 
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_pre_attn_norm");
+                CPUTimer timer("text_rms_linear_qkv");
             #endif
-            rms_norm(
-                state->x, weight->rms_ffn_w, state->t,
-                config->rms_norm_eps, prefill_size, 1ll * l
+            fused_rms_linear_qkv_dispatch(
+                weight->rms_ffn_w, weight->w_attn_qkv, state->x,
+                state->t, state->qkv, prefill_size, kv_dim,
+                hidden_size, dtype_weight,  dtype_scale, text_gq,
+                text_group_size, config->rms_norm_eps, 1ll * l, warm_up
             );
         }
 
-        PtrPair w_q = weight->w_attn_q->ptr_all({l});
-        PtrPair w_k = weight->w_attn_k->ptr_all({l});
-        PtrPair w_v = weight->w_attn_v->ptr_all({l});
-
-        {
-            #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_qkv_linear");
-            #endif
-            linear(
-                state->t->ptr(), w_q.buf, w_q.scale, w_q.sum_int8, nullptr, nullptr,
-                state->q->ptr(), prefill_size, hidden_size, hidden_size,
-                !weight->w_attn_q->permuted, state->t->dtype, dtype_weight,
-                dtype_scale, state->q->dtype, text_gq, text_group_size
-            );
-            linear(
-                state->t->ptr(), w_k.buf, w_k.scale, w_k.sum_int8, nullptr, nullptr,
-                state->k->ptr(), prefill_size, kv_dim, hidden_size,
-                !weight->w_attn_k->permuted, state->t->dtype, dtype_weight,
-                dtype_scale, state->k->dtype, text_gq, text_group_size
-            );
-            linear(
-                state->t->ptr(), w_v.buf, w_v.scale, w_v.sum_int8, nullptr, nullptr,
-                state->v->ptr(), prefill_size, kv_dim, hidden_size,
-                !weight->w_attn_v->permuted, state->t->dtype, dtype_weight,
-                dtype_scale, state->v->dtype, text_gq, text_group_size
-            );
-        }
+        float *q_ptr = (float *)state->qkv->ptr();
+        float *k_ptr = q_ptr + num_heads * head_dim;
 
         {
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("text_qk_norm");
             #endif
             rms_norm_inplace(
-                state->q, weight->w_attn_q_norm, config->rms_norm_eps,
-                prefill_size * num_heads, 1ll * l
+                q_ptr, weight->w_attn_q_norm, config->rms_norm_eps,
+                num_heads, 1ll * l, prefill_size, qkv_stride
             );
             rms_norm_inplace(
-                state->k, weight->w_attn_k_norm, config->rms_norm_eps,
-                prefill_size * num_kv_heads, 1ll * l
+                k_ptr, weight->w_attn_k_norm, config->rms_norm_eps,
+                num_kv_heads, 1ll * l, prefill_size, qkv_stride
             );
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    for (size_t i = 0; i < prefill_size; ++i) { 
+                        state->qkv->printDebug("q", {i}); 
+                        state->qkv->printDebug("k", {i, (size_t)num_heads});
+                    }
+                }
+            #endif
         }
+
+        const char *k_cache_l = (const char *)state->key_cache->ptr({0, l});
+        const char *v_cache_l = (const char *)state->value_cache->ptr({0, l});
 
         {
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("text_apply_rope");
             #endif
             apply_rotary(
-                state->q, state->cos_tensor, state->sin_tensor,
-                prefill_size, num_heads, head_dim, pos
+                state->qkv, state->cos_tensor, state->sin_tensor,
+                prefill_size, num_heads, head_dim, pos, qkv_stride
             );
 
-            const float *k_cache_l = (const float *)state->key_cache->ptr({0, l});
-            float *k_cache_ptr = (float *)k_cache_l + kv_pos_off;
+            char *k_cache_ptr = (char *)(k_cache_l + kv_pos_off_bytes);
             apply_rotary_cache(
-                state->k, k_cache_ptr, state->cos_tensor, state->sin_tensor,
-                prefill_size, num_kv_heads, head_dim, pos, kv_all_off
+                k_ptr, k_cache_ptr, state->cos_tensor, state->sin_tensor,
+                prefill_size, num_kv_heads, head_dim, pos,
+                kv_all_off, state->key_cache->dtype, qkv_stride
             );
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    for (size_t i = 0; i < prefill_size; ++i) { 
+                        state->qkv->printDebug("q", {i});
+                    }
+                }
+            #endif
         }
 
         {
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("text_kv_cache_update");
             #endif
-            const float *v_cache_l = (const float *)state->value_cache->ptr({0, l});
-            float *v_cache_base_ptr = (float *)v_cache_l + kv_pos_off;
 
-            for (size_t b = 0; b < prefill_size; ++b) {
-                const float *v_now_ptr = (const float *)state->v->ptr({b});
-                float *v_cache_ptr = v_cache_base_ptr + b * head_dim;
-                for (int h = 0; h < num_kv_heads; h++) {
-                    memcpy(v_cache_ptr + h * kv_all_off, v_now_ptr + h * head_dim, head_dim * sizeof(float));
+            if (state->value_cache->dtype == DType::FP32) {
+                float *v_cache_base_ptr = (float *)(v_cache_l) + kv_pos_off;
+                const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
+
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    const float *v_now_ptr = v_now_base_ptr + b * qkv_stride;
+                    float *v_cache_ptr = v_cache_base_ptr + b * head_dim;
+                    for (int h = 0; h < num_kv_heads; h++) {
+                        memcpy(v_cache_ptr + h * kv_all_off, v_now_ptr + h * head_dim, head_dim * sizeof(float));
+                    }
+                }
+            } else {
+                // fp16 path
+                uint16_t *v_cache_base_ptr = (uint16_t *)(v_cache_l) + kv_pos_off;
+                const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
+
+                #pragma omp parallel for
+                for (size_t b = 0; b < prefill_size; ++b) {
+                    const float *v_now_ptr = v_now_base_ptr + b * qkv_stride;
+                    uint16_t *v_cache_ptr = v_cache_base_ptr + b * head_dim;
+                    for (int h = 0; h < num_kv_heads; h++) {
+                        const float *src = v_now_ptr + h * head_dim;
+                        uint16_t *dst = v_cache_ptr + h * kv_all_off;
+
+                        // process 8 floats at a time
+                        int i = 0;
+
+                        #if defined(__F16C__)
+                            for (; i + 8 <= head_dim; i += 8) {
+                                __m256 v = _mm256_loadu_ps(src + i);                     // load 8 floats
+                                __m128i h16 = _mm256_cvtps_ph(v, _MM_FROUND_TO_NEAREST_INT); // convert to 8 fp16
+                                _mm_storeu_si128((__m128i*)(dst + i), h16);              // store 8 fp16 (16 bytes)
+                            }
+                        #endif
+
+                        for (; i < head_dim; i++) {
+                            dst[i] = (half_cpu)(src[i]);
+                        }
+                    }
                 }
             }
         }
@@ -446,18 +486,27 @@ void forward_text_prefill(
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("text_attention_mechanism");
             #endif
-            const float *k_cache_l = (const float *)state->key_cache->ptr({0, l});
-            const float *v_cache_l = (const float *)state->value_cache->ptr({0, l});
 
             attn_scores_all_heads_prefill(
-                k_cache_l, state->q, state->att, num_heads,
-                kv_mul, head_dim, kv_dim, kv_all_off, pos, prefill_size
+                k_cache_l, state->qkv, state->att, num_heads,
+                kv_mul, head_dim, kv_dim, kv_all_off,
+                pos, prefill_size, state->key_cache->dtype
             );
 
             attn_weighted_sum_all_heads(
                 v_cache_l, state->att, state->qkv_out, num_heads,
-                kv_mul, head_dim, kv_dim, kv_all_off, pos, prefill_size
+                kv_mul, head_dim, kv_dim, kv_all_off,
+                pos, prefill_size, state->key_cache->dtype
             );
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    for (size_t i = 0; i < prefill_size; ++i) {
+                        state->att->printDebug("att", {i});
+                        state->qkv_out->printDebug("qkv_out", {i});
+                    }
+                }
+            #endif
         }
 
         {
@@ -472,7 +521,24 @@ void forward_text_prefill(
                 state->qkv_out->dtype, dtype_weight, dtype_scale,
                 state->t->dtype, text_gq, text_group_size
             );
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    for (size_t i = 0; i < prefill_size; ++i) { 
+                        state->t->printDebug("t", {i});
+                    }
+                }
+            #endif
+
             add_vector(state->x, state->t, prefill_size * hidden_size);
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    for (size_t i = 0; i < prefill_size; ++i) { 
+                        state->x->printDebug("x", {i});
+                    }
+                }
+            #endif
         }
 
         {
@@ -483,30 +549,34 @@ void forward_text_prefill(
                 state->x, weight->rms_attn_w, state->t,
                 config->rms_norm_eps, prefill_size, 1ll * l
             );
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    for (size_t i = 0; i < prefill_size; ++i) { 
+                        state->t->printDebug("t", {i});
+                    }
+                }
+            #endif
         }
 
         {
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("text_mlp_block");
             #endif
-            PtrPair w_gate = weight->w_mlp_gate->ptr_all({l});
-            PtrPair w_up = weight->w_mlp_up->ptr_all({l});
-            linear(
-                state->t->ptr(), w_gate.buf, w_gate.scale, w_gate.sum_int8,
-                nullptr, nullptr, state->gate->ptr(), prefill_size, config->intermediate_size,
-                hidden_size, !weight->w_mlp_gate->permuted, state->t->dtype,
-                dtype_weight, dtype_scale, state->gate->dtype,
-                text_gq, text_group_size
+            fused_text_mlp_swiglu_dispatch(
+                weight->w_mlp_gate, weight->w_mlp_up, state->t, state->gate,
+                state->up, prefill_size, hidden_size, config->intermediate_size, 
+                weight->w_mlp_gate->dtype, weight->w_mlp_gate->scale_dtype,
+                text_gq, text_group_size, 1ll * l
             );
-            linear(
-                state->t->ptr(), w_up.buf, w_up.scale, w_up.sum_int8, nullptr,
-                nullptr, state->up->ptr(), prefill_size, config->intermediate_size,
-                hidden_size, !weight->w_mlp_up->permuted, state->t->dtype,
-                dtype_weight, dtype_scale, state->up->dtype, text_gq,
-                text_group_size
-            );
-            
-            swiglu(state->gate, state->up, prefill_size * config->intermediate_size);
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    for (size_t i = 0; i < prefill_size; ++i) { 
+                        state->gate->printDebug("gate", {i});
+                    }
+                }
+            #endif
 
             PtrPair w_down = weight->w_mlp_down->ptr_all({l});
             linear(
@@ -517,7 +587,23 @@ void forward_text_prefill(
                 text_gq, text_group_size
             );
 
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    for (size_t i = 0; i < prefill_size; ++i) { 
+                        state->t->printDebug("t", {i});
+                    }
+                }
+            #endif
+
             add_vector(state->x, state->t, prefill_size * hidden_size);
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    for (size_t i = 0; i < prefill_size; ++i) { 
+                        state->x->printDebug("x", {i});
+                    }
+                }
+            #endif
         }
 
         if (l < config->vision_deep_stack_depth) {
@@ -550,8 +636,11 @@ float *forward_text_decode(
     long kv_dim = config->num_key_value_heads * head_dim;
     int kv_mul = num_heads / num_kv_heads;
 
+    const size_t qkv_stride = (num_heads + 2 * num_kv_heads) * head_dim;
+
     const size_t kv_pos_off = 1ll * pos * head_dim;
     const size_t kv_all_off = 1ll * seq_len * head_dim;
+    const size_t kv_pos_off_bytes = kv_pos_off * state->key_cache->get_dtype_size();
 
     const DType::Type dtype_weight = weight->token_embedding_table->dtype;
     const DType::Type dtype_scale = weight->token_embedding_table->scale_dtype;
@@ -573,70 +662,69 @@ float *forward_text_decode(
             const float *src = (const float *)state->vision_x->ptr() + 1ll * hidden_size * state->cur_img_token_id;
             memcpy(state->x->ptr(), src, 1ll * hidden_size * sizeof(float));
         }
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                state->x->printDebug("x");
+            }
+        #endif
     }
 
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_pre_attn_norm");
+                CPUTimer timer("decode_text_rms_linear_qkv");
             #endif
-            rms_norm(
-                state->x, weight->rms_ffn_w, state->t,
-                config->rms_norm_eps, 1, 1ll * l
+            fused_rms_linear_qkv_dispatch(
+                weight->rms_ffn_w, weight->w_attn_qkv, state->x,
+                state->t, state->qkv, 1, kv_dim, hidden_size,
+                dtype_weight, dtype_scale, text_gq, text_group_size,
+                config->rms_norm_eps, 1ll * l, warm_up
             );
         }
 
-        PtrPair w_q = weight->w_attn_q->ptr_all({l});
-        PtrPair w_k = weight->w_attn_k->ptr_all({l});
-        PtrPair w_v = weight->w_attn_v->ptr_all({l});
+        float *q_ptr = (float *)state->qkv->ptr();
+        float *k_ptr = q_ptr + num_heads * head_dim;
 
-        {
-            #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_qkv_linear");
-            #endif
-            linear(
-                state->t->ptr(), w_q.buf, w_q.scale, nullptr, nullptr, nullptr,
-                state->q->ptr(), 1, hidden_size, hidden_size,
-                !weight->w_attn_q->permuted, state->t->dtype, dtype_weight,
-                dtype_scale, state->q->dtype, text_gq, text_group_size
-            );
-            linear(
-                state->t->ptr(), w_k.buf, w_k.scale, nullptr, nullptr, nullptr,
-                state->k->ptr(), 1, kv_dim, hidden_size,
-                !weight->w_attn_k->permuted, state->t->dtype, dtype_weight,
-                dtype_scale, state->k->dtype, text_gq, text_group_size
-            );
-            linear(
-                state->t->ptr(), w_v.buf, w_v.scale, nullptr, nullptr, nullptr,
-                state->v->ptr(), 1, kv_dim, hidden_size,
-                !weight->w_attn_v->permuted, state->t->dtype, dtype_weight,
-                dtype_scale, state->v->dtype, text_gq, text_group_size
-            );
-        }
+        const char *k_cache_l = (const char *)state->key_cache->ptr({0, l});
+        const char *v_cache_l = (const char *)state->value_cache->ptr({0, l});
 
         {
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("decode_qk_norm_rope");
             #endif
             rms_norm_inplace(
-                state->q, weight->w_attn_q_norm, config->rms_norm_eps,
-                num_heads, 1ll * l
+                q_ptr, weight->w_attn_q_norm, config->rms_norm_eps,
+                num_heads, 1ll * l, 1, 0
             );
             rms_norm_inplace(
-                state->k, weight->w_attn_k_norm, config->rms_norm_eps,
-                num_kv_heads, 1ll * l
+                k_ptr, weight->w_attn_k_norm, config->rms_norm_eps,
+                num_kv_heads, 1ll * l, 1, 0
             );
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    state->q->printDebug("q");
+                    state->k->printDebug("k");
+                }
+            #endif
 
             apply_rotary(
-                state->q, state->cos_tensor, state->sin_tensor,
-                1, num_heads, head_dim, pos
+                state->qkv, state->cos_tensor, state->sin_tensor,
+                1, num_heads, head_dim, pos, qkv_stride
             );
 
-            const float *k_cache_l = (const float *)state->key_cache->ptr({0, l});
-            float *k_cache_ptr = (float *)k_cache_l + kv_pos_off;
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    state->q->printDebug("q");
+                }
+            #endif
+
+            char *k_cache_ptr = (char *)k_cache_l + kv_pos_off_bytes;
             apply_rotary_cache(
-                state->k, k_cache_ptr, state->cos_tensor, state->sin_tensor,
-                1, num_kv_heads, head_dim, pos, kv_all_off
+                k_ptr, k_cache_ptr, state->cos_tensor, state->sin_tensor,
+                1, num_kv_heads, head_dim, pos, kv_all_off,
+                state->key_cache->dtype, qkv_stride
             );
         }
 
@@ -644,11 +732,38 @@ float *forward_text_decode(
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("decode_v_cache_update");
             #endif
-            const float *v_cache_l = (const float *)state->value_cache->ptr({0, l});
-            float *v_cache_ptr = (float *)v_cache_l + kv_pos_off;
 
-            for (int h = 0; h < num_kv_heads; h++) {
-                memcpy(v_cache_ptr + h * kv_all_off, (const float *)state->v->ptr() + h*head_dim, head_dim*sizeof(float));
+            if (state->value_cache->dtype == DType::FP32) {
+                float *v_cache_ptr = (float *)(v_cache_l) + kv_pos_off;
+                const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
+
+                for (int h = 0; h < num_kv_heads; h++) {
+                    memcpy(v_cache_ptr + h * kv_all_off, v_now_base_ptr + h*head_dim, head_dim*sizeof(float));
+                }
+            } else {
+                // fp16 path
+                uint16_t *v_cache_ptr = (uint16_t *)(v_cache_l) + kv_pos_off;
+                const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
+
+                for (size_t h = 0; h < num_kv_heads; h++) {
+                    const float *src = v_now_base_ptr + h*head_dim;
+                    uint16_t *dst = v_cache_ptr + h * kv_all_off;
+
+                    // process 8 floats at a time
+                    int i = 0;
+                    
+                    #if defined(__F16C__)
+                        for (; i + 8 <= head_dim; i += 8) {
+                            __m256 v = _mm256_loadu_ps(src + i);                     // load 8 floats
+                            __m128i h16 = _mm256_cvtps_ph(v, _MM_FROUND_TO_NEAREST_INT); // convert to 8 fp16
+                            _mm_storeu_si128((__m128i*)(dst + i), h16);              // store 8 fp16 (16 bytes)
+                        }
+                    #endif
+
+                    for (; i < head_dim; i++) {
+                        dst[i] = (half_cpu)(src[i]);
+                    }
+                }
             }
         }
 
@@ -656,18 +771,25 @@ float *forward_text_decode(
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("decode_attention_mechanism");
             #endif
-            const float *k_cache_l = (const float *)state->key_cache->ptr({0, l});
-            const float *v_cache_l = (const float *)state->value_cache->ptr({0, l});
 
             attn_scores_all_heads_decode(
-                k_cache_l, state->q, state->att, num_heads,
-                kv_mul, head_dim, kv_dim, kv_all_off, pos
+                k_cache_l, state->qkv, state->att, num_heads,
+                kv_mul, head_dim, kv_dim, kv_all_off,
+                pos, state->key_cache->dtype
             );
 
             attn_weighted_sum_all_heads(
                 v_cache_l, state->att, state->qkv_out, num_heads,
-                kv_mul, head_dim, kv_dim, kv_all_off, pos, 1
+                kv_mul, head_dim, kv_dim, kv_all_off,
+                pos, 1, state->key_cache->dtype
             );
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    state->att->printDebug("att");
+                    state->qkv_out->printDebug("qkv_out");
+                }
+            #endif
         }
 
         {
@@ -683,6 +805,12 @@ float *forward_text_decode(
                 state->t->dtype, text_gq, text_group_size
             );
             // add_vector(state->x, state->t, hidden_size);
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    state->t->printDebug("t");
+                }
+            #endif
         }
 
         {
@@ -693,30 +821,30 @@ float *forward_text_decode(
                 state->t, weight->rms_attn_w, state->x,
                 config->rms_norm_eps, 1, 1ll * l
             );
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    state->x->printDebug("x");
+                }
+            #endif
         }
 
         {
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("decode_mlp_block");
             #endif
-            PtrPair w_gate = weight->w_mlp_gate->ptr_all({l});
-            PtrPair w_up = weight->w_mlp_up->ptr_all({l});
-            linear(
-                state->x->ptr(), w_gate.buf, w_gate.scale, nullptr,
-                nullptr, nullptr, state->gate->ptr(), 1, config->intermediate_size,
-                hidden_size, !weight->w_mlp_gate->permuted, state->t->dtype,
-                dtype_weight, dtype_scale, state->gate->dtype,
-                text_gq, text_group_size
+            fused_text_mlp_swiglu_dispatch(
+                weight->w_mlp_gate, weight->w_mlp_up, state->x, state->gate,
+                state->up, 1, hidden_size, config->intermediate_size, 
+                weight->w_mlp_gate->dtype, weight->w_mlp_gate->scale_dtype,
+                text_gq, text_group_size, 1ll * l
             );
-            linear(
-                state->x->ptr(), w_up.buf, w_up.scale, nullptr, nullptr,
-                nullptr, state->up->ptr(), 1, config->intermediate_size,
-                hidden_size, !weight->w_mlp_up->permuted, state->t->dtype,
-                dtype_weight, dtype_scale, state->up->dtype, text_gq,
-                text_group_size
-            );
-            
-            swiglu(state->gate, state->up, config->intermediate_size);
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    state->gate->printDebug("gate");
+                }
+            #endif
 
             PtrPair w_down = weight->w_mlp_down->ptr_all({l});
             linear(
@@ -727,6 +855,12 @@ float *forward_text_decode(
                 text_gq, text_group_size
             );
             // add_vector(state->x, state->t, hidden_size);
+
+            #ifdef PRINT_LOGITS
+                if (!warm_up) {
+                    state->x->printDebug("x");
+                }
+            #endif
         }
 
         if (l < config->vision_deep_stack_depth && img_token_true) {
@@ -747,14 +881,27 @@ float *forward_text_decode(
         #endif
         // Final RMSNorm
         rms_norm_inplace(
-            state->x, weight->rms_out_w, config->rms_norm_eps, 1, 0ll
+            (float *)state->x->ptr(), weight->rms_out_w,
+            config->rms_norm_eps, 1, 0ll, 1, 0
         );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                state->x->printDebug("x");
+            }
+        #endif
 
         // Classifier (LM Head)
         classifier_gemm(
             weight->token_embedding_table, state->x, state->logits,
             config->vocab_size, hidden_size
         );
+
+        #ifdef PRINT_LOGITS
+            if (!warm_up) {
+                state->logits->printDebug("x");
+            }
+        #endif
     }
 
     if (img_token_true) {

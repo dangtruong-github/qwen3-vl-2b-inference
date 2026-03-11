@@ -254,6 +254,28 @@ static inline float add_reduce_mm_256_layer(__m256 vec) {
     return _mm_cvtss_f32(sum128);
 }
 
+static inline float max_reduce_mm_256_layer(__m256 vec) {
+    // Step 1: Split 256-bit to 128-bit and get the max of both halves
+    // [a, b, c, d | e, f, g, h] -> max([a, b, c, d], [e, f, g, h])
+    __m128 upper = _mm256_extractf128_ps(vec, 1);
+    __m128 lower = _mm256_castps256_ps128(vec);
+    __m128 res128 = _mm_max_ps(upper, lower);
+
+    // Step 2: Fold the 128-bit register in half (4 floats -> 2 floats)
+    // [A, B, C, D] -> max([A, B, C, D], [B, A, D, C]) 
+    // This puts max(A,B) in the 1st/2nd slots and max(C,D) in the 3rd/4th
+    __m128 shuffle1 = _mm_shuffle_ps(res128, res128, _MM_SHUFFLE(2, 3, 0, 1));
+    res128 = _mm_max_ps(res128, shuffle1);
+
+    // Step 3: Fold again (2 floats -> 1 float)
+    // Now compare the results of the previous step
+    __m128 shuffle2 = _mm_shuffle_ps(res128, res128, _MM_SHUFFLE(1, 0, 3, 2));
+    res128 = _mm_max_ps(res128, shuffle2);
+
+    // Step 4: Extract the scalar float from the first lane
+    return _mm_cvtss_f32(res128);
+}
+
 static inline float load_x(const void *ptr, DType::Type dtype, size_t idx) {
     if (dtype == DType::FP32)
         return static_cast<const float*>(ptr)[idx];

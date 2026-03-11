@@ -21,7 +21,7 @@ void gemv_lg_N_K(
         // 1. Find Max Absolute instead of RMS for better range coverage
         __m256 v_max = _mm256_setzero_ps();
         __m256 abs_0 = _mm256_set1_ps(-0.0f);
-        for (int k = kk; k < kk + 128; k += 8) {
+        for (int k = kk; k < kk + group_size; k += 8) {
             __m256 f0 = _mm256_loadu_ps(mat_A + k);
             __m256 abs_f0 = _mm256_andnot_ps(abs_0, f0);
             v_max = _mm256_max_ps(v_max, abs_f0);

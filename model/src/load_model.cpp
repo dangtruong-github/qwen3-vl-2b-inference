@@ -193,15 +193,17 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     weights->w_mlp_up->offline_sum_int8();
     map_tensor(&weights->rms_attn_w, {L, H}, "rms_attn_w", text_bits, true);
     map_tensor(&weights->w_attn_k_norm, {L, head_dim}, "w_attn_k_norm", text_bits, true);
-    map_tensor(&weights->w_attn_k, {L, KVAD, H}, "w_attn_k", text_bits);
-    weights->w_attn_k->offline_sum_int8();
+    // map_tensor(&weights->w_attn_k, {L, KVAD, H}, "w_attn_k", text_bits);
+    // weights->w_attn_k->offline_sum_int8();
     map_tensor(&weights->w_attn_o, {L, H, H}, "w_attn_o", text_bits);
     weights->w_attn_o->offline_sum_int8();
     map_tensor(&weights->w_attn_q_norm, {L, head_dim}, "w_attn_q_norm", text_bits, true);
-    map_tensor(&weights->w_attn_q, {L, QD, H}, "w_attn_q", text_bits);
-    weights->w_attn_q->offline_sum_int8();
-    map_tensor(&weights->w_attn_v, {L, KVAD, H}, "w_attn_v", text_bits);
-    weights->w_attn_v->offline_sum_int8();
+    // map_tensor(&weights->w_attn_q, {L, QD, H}, "w_attn_q", text_bits);
+    // weights->w_attn_q->offline_sum_int8();
+    // map_tensor(&weights->w_attn_v, {L, KVAD, H}, "w_attn_v", text_bits);
+    // weights->w_attn_v->offline_sum_int8();
+    map_tensor(&weights->w_attn_qkv, {L, QD + 2 * KVAD, H}, "w_attn_qkv", text_bits);
+    weights->w_attn_qkv->offline_sum_int8();
     map_tensor(&weights->rms_out_w, {H}, "rms_out_w", text_bits, true);
 
     // --- VISION WEIGHTS ---
@@ -273,11 +275,12 @@ void free_model_weights(QwenWeight* weights) {
     delete weights->w_mlp_up;
     delete weights->rms_attn_w;
     delete weights->w_attn_k_norm;
-    delete weights->w_attn_k;
+    // delete weights->w_attn_k;
     delete weights->w_attn_o;
     delete weights->w_attn_q_norm;
-    delete weights->w_attn_q;
-    delete weights->w_attn_v;
+    // delete weights->w_attn_q;
+    // delete weights->w_attn_v;
+    delete weights->w_attn_qkv;
 
     // Vision Model Weights (General)
     delete weights->vl_patch_emb_b;
@@ -339,9 +342,10 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
 
     state->t = new Tensor({MPS, H});
 
-    state->q = new Tensor({MPS, NH, D});
-    state->k = new Tensor({MPS, NKV, D});
-    state->v = new Tensor({MPS, NKV, D});
+    // state->q = new Tensor({MPS, NH, D});
+    // state->k = new Tensor({MPS, NKV, D});
+    // state->v = new Tensor({MPS, NKV, D});
+    state->qkv = new Tensor({MPS, NH + 2 * NKV, D});
 
     state->att = new Tensor({MPS, NH, S});
 
@@ -357,8 +361,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->logits = new Tensor({MPS, V});
 
     // ---- KV cache ----
-    state->key_cache = new Tensor({1, L, NKV, S, D}); //, DType::FP16);
-    state->value_cache = new Tensor({1, L, NKV, S, D}); //, DType::FP16);
+    state->key_cache = new Tensor({1, L, NKV, S, D}, DType::FP16);
+    state->value_cache = new Tensor({1, L, NKV, S, D}, DType::FP16);
 
     // -- Vision states --
     state->vision_x = new Tensor({VNP_max, VH});
@@ -393,9 +397,10 @@ void free_model_run_state(QwenRunState* state) {
 
     if (state->x) delete state->x;
     if (state->t) delete state->t;
-    if (state->q) delete state->q;
-    if (state->k) delete state->k;
-    if (state->v) delete state->v;
+    // if (state->q) delete state->q;
+    // if (state->k) delete state->k;
+    // if (state->v) delete state->v;
+    if (state->qkv) delete state->qkv;
     if (state->att) delete state->att;
     if (state->qkv_out) delete state->qkv_out;
     if (state->gate) delete state->gate;

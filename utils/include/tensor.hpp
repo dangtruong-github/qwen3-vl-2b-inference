@@ -44,6 +44,7 @@ struct Tensor {
     bool permuted = false;
     bool group_quantized = false;
     bool has_sum_int8 = false;
+    bool is_weight = false;
 
     void* scale_buf = nullptr;
     void* sum_int8_buf = nullptr;

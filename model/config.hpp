@@ -59,11 +59,12 @@ typedef struct {
     Tensor *w_mlp_up;              // [L, I, H]
     Tensor *rms_attn_w; // [L, H]
     Tensor *w_attn_k_norm;         // [L, KVA_Dim]
-    Tensor *w_attn_k;         // [L, KVA_Dim, H]
+    // Tensor *w_attn_k;         // [L, KVA_Dim, H]
     Tensor *w_attn_o;         // [L, H, H]
     Tensor *w_attn_q_norm;         // [L, Q_Dim]
-    Tensor *w_attn_q;         // [L, Q_Dim, H]
-    Tensor *w_attn_v;         // [L, KVA_Dim, H]
+    // Tensor *w_attn_q;         // [L, Q_Dim, H]
+    // Tensor *w_attn_v;         // [L, KVA_Dim, H]
+    Tensor *w_attn_qkv;
 
     // Vision Model Weights (General)
     Tensor *vl_patch_emb_b;
@@ -104,9 +105,10 @@ typedef struct {
     Tensor *t;            // normalized hidden before attention [hidden_size]
 
     // ---- Attention projections ----
-    Tensor *q;            // query [num_attention_heads * head_dim]
-    Tensor *k;            // query [num_attention_heads * head_dim]
-    Tensor *v;            // query [num_attention_heads * head_dim]
+    // Tensor *q;            // query [num_attention_heads * head_dim]
+    // Tensor *k;            // key [num_kv_heads * head_dim]
+    // Tensor *v;            // value [num_kv_heads * head_dim]
+    Tensor *qkv;            // qkv merge [(num_attention_heads + 2 * num_kv_heads) * head_dim]
 
     Tensor *att;          // attention scores (temporary buffer) [num_attention_heads * max_position_embeddings]
     Tensor *qkv_out;      // attention output before projection [hidden_size]
