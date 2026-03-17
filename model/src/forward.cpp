@@ -380,18 +380,24 @@ void forward_text_prefill(
 
         float *q_ptr = (float *)state->qkv->ptr();
         float *k_ptr = q_ptr + num_heads * head_dim;
+        const char *k_cache_l = (const char *)state->key_cache->ptr({0, l});
+        const char *v_cache_l = (const char *)state->value_cache->ptr({0, l});
 
         {
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("text_qk_norm");
             #endif
-            rms_norm_inplace(
-                q_ptr, weight->w_attn_q_norm, config->rms_norm_eps,
-                num_heads, 1ll * l, prefill_size, qkv_stride
+            fused_rms_rotary_q_dispatch(
+                state->qkv, weight->w_attn_q_norm, state->cos_tensor,
+                state->sin_tensor, num_heads, head_dim, prefill_size,
+                qkv_stride, 1ll * l, pos, config->rms_norm_eps
             );
-            rms_norm_inplace(
-                k_ptr, weight->w_attn_k_norm, config->rms_norm_eps,
-                num_kv_heads, 1ll * l, prefill_size, qkv_stride
+            char *k_cache_ptr = (char *)(k_cache_l + kv_pos_off_bytes);
+            fused_rms_rotary_k_dispatch(
+                k_ptr, k_cache_ptr, weight->w_attn_k_norm, state->cos_tensor,
+                state->sin_tensor, num_kv_heads, head_dim, prefill_size,
+                qkv_stride, state->qkv->dtype, state->key_cache->dtype,
+                1ll * l, kv_all_off, pos, config->rms_norm_eps
             );
 
             #ifdef PRINT_LOGITS
@@ -399,34 +405,6 @@ void forward_text_prefill(
                     for (size_t i = 0; i < prefill_size; ++i) { 
                         state->qkv->printDebug("q", {i}); 
                         state->qkv->printDebug("k", {i, (size_t)num_heads});
-                    }
-                }
-            #endif
-        }
-
-        const char *k_cache_l = (const char *)state->key_cache->ptr({0, l});
-        const char *v_cache_l = (const char *)state->value_cache->ptr({0, l});
-
-        {
-            #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_apply_rope");
-            #endif
-            apply_rotary(
-                state->qkv, state->cos_tensor, state->sin_tensor,
-                prefill_size, num_heads, head_dim, pos, qkv_stride
-            );
-
-            char *k_cache_ptr = (char *)(k_cache_l + kv_pos_off_bytes);
-            apply_rotary_cache(
-                k_ptr, k_cache_ptr, state->cos_tensor, state->sin_tensor,
-                prefill_size, num_kv_heads, head_dim, pos,
-                kv_all_off, state->key_cache->dtype, qkv_stride
-            );
-
-            #ifdef PRINT_LOGITS
-                if (!warm_up) {
-                    for (size_t i = 0; i < prefill_size; ++i) { 
-                        state->qkv->printDebug("q", {i});
                     }
                 }
             #endif
@@ -688,18 +666,22 @@ float *forward_text_decode(
 
         const char *k_cache_l = (const char *)state->key_cache->ptr({0, l});
         const char *v_cache_l = (const char *)state->value_cache->ptr({0, l});
-
+        
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_qk_norm_rope");
+                CPUTimer timer("text_qk_norm");
             #endif
-            rms_norm_inplace(
-                q_ptr, weight->w_attn_q_norm, config->rms_norm_eps,
-                num_heads, 1ll * l, 1, 0
+            fused_rms_rotary_q_dispatch(
+                state->qkv, weight->w_attn_q_norm, state->cos_tensor,
+                state->sin_tensor, num_heads, head_dim, 1,
+                qkv_stride, 1ll * l, pos, config->rms_norm_eps
             );
-            rms_norm_inplace(
-                k_ptr, weight->w_attn_k_norm, config->rms_norm_eps,
-                num_kv_heads, 1ll * l, 1, 0
+            char *k_cache_ptr = (char *)(k_cache_l + kv_pos_off_bytes);
+            fused_rms_rotary_k_dispatch(
+                k_ptr, k_cache_ptr, weight->w_attn_k_norm, state->cos_tensor,
+                state->sin_tensor, num_kv_heads, head_dim, 1,
+                qkv_stride, state->qkv->dtype, state->key_cache->dtype,
+                1ll * l, kv_all_off, pos, config->rms_norm_eps
             );
 
             #ifdef PRINT_LOGITS
@@ -708,24 +690,6 @@ float *forward_text_decode(
                     state->k->printDebug("k");
                 }
             #endif
-
-            apply_rotary(
-                state->qkv, state->cos_tensor, state->sin_tensor,
-                1, num_heads, head_dim, pos, qkv_stride
-            );
-
-            #ifdef PRINT_LOGITS
-                if (!warm_up) {
-                    state->q->printDebug("q");
-                }
-            #endif
-
-            char *k_cache_ptr = (char *)k_cache_l + kv_pos_off_bytes;
-            apply_rotary_cache(
-                k_ptr, k_cache_ptr, state->cos_tensor, state->sin_tensor,
-                1, num_kv_heads, head_dim, pos, kv_all_off,
-                state->key_cache->dtype, qkv_stride
-            );
         }
 
         {

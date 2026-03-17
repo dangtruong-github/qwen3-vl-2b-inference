@@ -105,3 +105,16 @@ void fused_text_mlp_swiglu_dispatch(
     const size_t inter_dim, const DType::Type dtype_w, const DType::Type dtype_s,
     const bool text_gq, const size_t group_size, const size_t layer_offset
 );
+void fused_rms_rotary_q_dispatch(
+    Tensor *qkv, const Tensor *w_attn_q_norm, const Tensor *cos_tensor,
+    const Tensor *sin_tensor, const size_t num_heads, const size_t head_dim,
+    const size_t prefill_size, const size_t qkv_stride,
+    const size_t layer_offset, const int pos, const float eps
+);
+void fused_rms_rotary_k_dispatch(
+    float *k_ptr, char *k_cache_ptr, const Tensor *w_attn_k_norm, const Tensor *cos_tensor,
+    const Tensor *sin_tensor, const size_t num_kv_heads, const size_t head_dim,
+    const size_t prefill_size, const size_t qkv_stride, const DType::Type k_type,
+    const DType::Type cache_type, const size_t layer_offset, const size_t kv_all_off,
+    const int pos, const float eps
+);

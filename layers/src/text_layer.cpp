@@ -239,12 +239,10 @@ void rms_norm_inplace(
         if (scale->group_quantized) {
             const size_t group_size = scale->group_size;
 
+            #pragma omp parallel for collapse(2) schedule(static)
             for (size_t g_id = 0; g_id < groups; ++g_id) {
-                float *x_now = x + g_id * group_offset;
-                
-                #pragma omp parallel for
                 for (size_t i = 0; i < batches; ++i) {
-                    float *x_ptr = x_now + i * hidden_size;
+                    float *x_ptr = x + g_id * group_offset + i * hidden_size;
 
                     // 1. RMS
                     float ss = 0.0f;
@@ -1155,13 +1153,9 @@ void apply_rotary(
 ) {
     const int half = head_dim >> 1;
 
-    const float *__restrict cos_buf = (const float *)cos_table->ptr();
-    const float *__restrict sin_buf = (const float *)sin_table->ptr();
+    const float *__restrict cos_row_base = (const float *)cos_table->ptr({0, (size_t)pos});
+    const float *__restrict sin_row_base = (const float *)sin_table->ptr({0, (size_t)pos});
     float *__restrict x_buf = (float *)x->ptr();
-
-    // Tables are indexed by the shared position
-    const float *__restrict cos_row_base = cos_buf + pos * half;
-    const float *__restrict sin_row_base = sin_buf + pos * half;
 
     constexpr int VEC = 8; 
 
