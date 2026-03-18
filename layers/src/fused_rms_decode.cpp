@@ -1,6 +1,6 @@
 #include "../include/text_layer.hpp"
 
-// #if defined(__AVX2__) && defined(__FMA__)
+#if defined(__AVX2__) && defined(__FMA__)
 size_t fused_rms_decode(
     const Tensor *w_rms_tensor, const Tensor *w_emb_tensor, float *x_ptr,
     float *logits_ptr, const size_t hidden_size, const size_t vocab_size,
@@ -227,7 +227,7 @@ size_t fused_rms_decode(
 
     return (size_t)final_idx;
 }
-// #endif
+#endif
 
 size_t fused_rms_decode_dispatch(
     const Tensor *rms_out_w, const Tensor *emb_table,
@@ -236,22 +236,32 @@ size_t fused_rms_decode_dispatch(
     DType::Type dtype_w, DType::Type dtype_s,
     bool text_gq, size_t group_size
 ) {
-    // Final RMSNorm
-
     size_t token;
 
-    // #if defined(__AVX2__) && defined(__FMA__)
-    if (
-        x->dtype == DType::FP32 && logits->dtype == DType::FP32
-        && dtype_w == DType::INT8 && dtype_s == DType::FP32
-        && text_gq
-    ) {
-        token = fused_rms_decode(
-            rms_out_w, emb_table, (float *)x->ptr(),
-            (float *)logits->ptr(), hidden_size,
-            vocab_size, group_size, eps
-        );
-    } else {
+    #if defined(__AVX2__) && defined(__FMA__)
+        if (
+            x->dtype == DType::FP32 && logits->dtype == DType::FP32
+            && dtype_w == DType::INT8 && dtype_s == DType::FP32
+            && text_gq
+        ) {
+            token = fused_rms_decode(
+                rms_out_w, emb_table, (float *)x->ptr(),
+                (float *)logits->ptr(), hidden_size,
+                vocab_size, group_size, eps
+            );
+        } else {
+            rms_norm_inplace(
+                (float *)x->ptr(), rms_out_w, eps, 1, 0ll, 1, 0
+            );
+
+            // Classifier (LM Head)
+            classifier_gemm(
+                emb_table, x, logits, vocab_size, hidden_size
+            );
+
+            token = greedy_decode((float *)logits->ptr(), vocab_size);
+        }
+    #else
         rms_norm_inplace(
             (float *)x->ptr(), rms_out_w, eps, 1, 0ll, 1, 0
         );
@@ -262,10 +272,7 @@ size_t fused_rms_decode_dispatch(
         );
 
         token = greedy_decode((float *)logits->ptr(), vocab_size);
-    }
-    // #else
-    
-    // #endif
+    #endif
 
     return token;
 }
