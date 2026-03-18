@@ -524,17 +524,22 @@ void fused_text_mlp_swiglu_m4(
     */
 }
 
-void fused_text_mlp_swiglu_dispatch(
-    const Tensor *w_mlp_gate, const Tensor *w_mlp_up, const Tensor *t,
-    Tensor *gate, Tensor *up, const size_t M, const size_t hidden_size,
-    const size_t inter_dim, const DType::Type dtype_w, const DType::Type dtype_s,
-    const bool text_gq, const size_t group_size, const size_t layer_offset
+void fused_text_rms_mlp_swiglu_dispatch(
+    const Tensor *rms_attn_w, const Tensor *w_mlp_gate, const Tensor *w_mlp_up,
+    const Tensor *x, Tensor *t, Tensor *gate, Tensor *up, const size_t M,
+    const size_t hidden_size, const size_t inter_dim, const DType::Type dtype_w, 
+    const DType::Type dtype_s, const bool text_gq, const float eps,
+    const size_t group_size, const size_t layer_offset
 ) {
     if (
         dtype_w == DType::INT8 && dtype_s == DType::FP32 && text_gq && !w_mlp_gate->permuted
         && !w_mlp_gate->permuted && t->dtype == DType::FP32 && gate->dtype == DType::FP32
         && up->dtype == DType::FP32
     ) {
+        rms_norm(
+            x, rms_attn_w, t, eps, M, layer_offset
+        );
+
         PtrPair w_gate = w_mlp_gate->ptr_all({layer_offset});
         PtrPair w_up = w_mlp_up->ptr_all({layer_offset});
 
@@ -550,7 +555,6 @@ void fused_text_mlp_swiglu_dispatch(
             );
             t_ptr += 4 * hidden_size;
             gate_ptr += 4 * inter_dim;
-            up_ptr += 4 * inter_dim;
         }
 
         if (i + 2 <= M) {
@@ -560,7 +564,6 @@ void fused_text_mlp_swiglu_dispatch(
             );
             t_ptr += 2 * hidden_size;
             gate_ptr += 2 * inter_dim;
-            up_ptr += 2 * inter_dim;
         }
 
         if (i < M) {
@@ -570,16 +573,12 @@ void fused_text_mlp_swiglu_dispatch(
             );
         }
 
-        /*
-        for (size_t i = 0; i < M; ++i) {
-            fused_text_mlp_swiglu_m1(
-                w_gate, w_up, t_ptr + i * hidden_size, gate_ptr + i * inter_dim,
-                up_ptr + i * inter_dim, inter_dim, hidden_size, group_size
-            );
-        }
-        */
-
     } else {
+        rms_norm(
+            x, rms_attn_w, t, eps, M, layer_offset
+        );
+
+
         PtrPair w_gate = w_mlp_gate->ptr_all({layer_offset});
         PtrPair w_up = w_mlp_up->ptr_all({layer_offset});
         linear(
@@ -596,15 +595,6 @@ void fused_text_mlp_swiglu_dispatch(
             dtype_w, dtype_s, up->dtype, text_gq,
             group_size
         );
-
-        #ifdef PRINT_LOGITS
-            if (!warm_up) {
-                for (size_t i = 0; i < M; ++i) { 
-                    gate->printDebug("gate", {i});
-                    up->printDebug("up", {i});
-                }
-            }
-        #endif
         
         swiglu(gate, up, M * inter_dim);
     }

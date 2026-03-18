@@ -521,31 +521,15 @@ void forward_text_prefill(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_post_attn_norm");
-            #endif
-            rms_norm(
-                state->x, weight->rms_attn_w, state->t,
-                config->rms_norm_eps, prefill_size, 1ll * l
-            );
-
-            #ifdef PRINT_LOGITS
-                if (!warm_up) {
-                    for (size_t i = 0; i < prefill_size; ++i) { 
-                        state->t->printDebug("t", {i});
-                    }
-                }
-            #endif
-        }
-
-        {
-            #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("text_mlp_block");
             #endif
-            fused_text_mlp_swiglu_dispatch(
-                weight->w_mlp_gate, weight->w_mlp_up, state->t, state->gate,
-                state->up, prefill_size, hidden_size, config->intermediate_size, 
-                weight->w_mlp_gate->dtype, weight->w_mlp_gate->scale_dtype,
-                text_gq, text_group_size, 1ll * l
+
+            fused_text_rms_mlp_swiglu_dispatch(
+                weight->rms_attn_w, weight->w_mlp_gate, weight->w_mlp_up,
+                state->x, state->t, state->gate, state->up, prefill_size,
+                hidden_size, config->intermediate_size, weight->w_mlp_gate->dtype,
+                weight->w_mlp_gate->scale_dtype, text_gq, config->rms_norm_eps,
+                text_group_size, 1ll * l
             );
 
             #ifdef PRINT_LOGITS
@@ -779,29 +763,14 @@ float *forward_text_decode(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_post_attn_norm");
-            #endif
-            rms_norm(
-                state->t, weight->rms_attn_w, state->x,
-                config->rms_norm_eps, 1, 1ll * l
-            );
-
-            #ifdef PRINT_LOGITS
-                if (!warm_up) {
-                    state->x->printDebug("x");
-                }
-            #endif
-        }
-
-        {
-            #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("decode_mlp_block");
             #endif
-            fused_text_mlp_swiglu_dispatch(
-                weight->w_mlp_gate, weight->w_mlp_up, state->x, state->gate,
-                state->up, 1, hidden_size, config->intermediate_size, 
-                weight->w_mlp_gate->dtype, weight->w_mlp_gate->scale_dtype,
-                text_gq, text_group_size, 1ll * l
+            fused_text_rms_mlp_swiglu_dispatch(
+                weight->rms_attn_w, weight->w_mlp_gate, weight->w_mlp_up,
+                state->t, state->x, state->gate, state->up, 1,
+                hidden_size, config->intermediate_size, weight->w_mlp_gate->dtype,
+                weight->w_mlp_gate->scale_dtype, text_gq, config->rms_norm_eps,
+                text_group_size, 1ll * l
             );
 
             #ifdef PRINT_LOGITS
