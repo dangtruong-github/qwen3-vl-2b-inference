@@ -586,7 +586,7 @@ void forward_text_prefill(
     }
 }
 
-float *forward_text_decode(
+size_t forward_text_decode(
     QwenConfig *config, QwenRunState *state, QwenWeight *weight,
     int token_id, size_t pos, bool warm_up
 ) {
@@ -808,38 +808,23 @@ float *forward_text_decode(
         }
     }
 
-    {
+    size_t token;
+    {        
         #ifdef CPU_TIME_OUTSIDE
             CPUTimer timer("decode_final_head");
         #endif
-        // Final RMSNorm
-        rms_norm_inplace(
-            (float *)state->x->ptr(), weight->rms_out_w,
-            config->rms_norm_eps, 1, 0ll, 1, 0
+
+        token = fused_rms_decode_dispatch(
+            weight->rms_out_w, weight->token_embedding_table,
+            state->x, state->logits, config->rms_norm_eps,
+            config->vocab_size, hidden_size, weight->rms_out_w->dtype,
+            weight->rms_out_w->scale_dtype, text_gq, text_group_size
         );
-
-        #ifdef PRINT_LOGITS
-            if (!warm_up) {
-                state->x->printDebug("x");
-            }
-        #endif
-
-        // Classifier (LM Head)
-        classifier_gemm(
-            weight->token_embedding_table, state->x, state->logits,
-            config->vocab_size, hidden_size
-        );
-
-        #ifdef PRINT_LOGITS
-            if (!warm_up) {
-                state->logits->printDebug("x");
-            }
-        #endif
     }
 
     if (img_token_true) {
         state->cur_img_token_id += 1;
     }
 
-    return (float *)state->logits->ptr();
+    return token;
 }

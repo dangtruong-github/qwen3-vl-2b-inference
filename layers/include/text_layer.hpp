@@ -91,6 +91,7 @@ void apply_rotary_cache(
     int batch_size, int n_heads, int head_dim, int pos,
     size_t sh_off, DType::Type cache_dtype, size_t in_stride
 );
+size_t greedy_decode(float* logits, int vocab_size);
 
 // fused kernels
 void fused_rms_linear_qkv_dispatch(
@@ -118,4 +119,11 @@ void fused_rms_mlp_swiglu_dispatch(
     const size_t hidden_size, const size_t inter_dim, const DType::Type dtype_w, 
     const DType::Type dtype_s, const bool text_gq, const float eps,
     const size_t group_size, const size_t layer_offset
+);
+size_t fused_rms_decode_dispatch(
+    const Tensor *rms_out_w, const Tensor *emb_table,
+    Tensor *x, Tensor *logits, const float eps,
+    const size_t vocab_size, const size_t hidden_size,
+    DType::Type dtype_w, DType::Type dtype_s,
+    bool text_gq, size_t group_size
 );
