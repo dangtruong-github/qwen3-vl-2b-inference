@@ -112,7 +112,7 @@ void fused_rms_rotary_k_dispatch(
     const DType::Type cache_type, const size_t layer_offset, const size_t kv_all_off,
     const int pos, const float eps
 );
-void fused_text_rms_mlp_swiglu_dispatch(
+void fused_rms_mlp_swiglu_dispatch(
     const Tensor *rms_attn_w, const Tensor *w_mlp_gate, const Tensor *w_mlp_up,
     const Tensor *x, Tensor *t, Tensor *gate, Tensor *up, const size_t M,
     const size_t hidden_size, const size_t inter_dim, const DType::Type dtype_w, 

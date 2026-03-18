@@ -524,7 +524,7 @@ void forward_text_prefill(
                 CPUTimer timer("text_mlp_block");
             #endif
 
-            fused_text_rms_mlp_swiglu_dispatch(
+            fused_rms_mlp_swiglu_dispatch(
                 weight->rms_attn_w, weight->w_mlp_gate, weight->w_mlp_up,
                 state->x, state->t, state->gate, state->up, prefill_size,
                 hidden_size, config->intermediate_size, weight->w_mlp_gate->dtype,
@@ -765,7 +765,7 @@ float *forward_text_decode(
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("decode_mlp_block");
             #endif
-            fused_text_rms_mlp_swiglu_dispatch(
+            fused_rms_mlp_swiglu_dispatch(
                 weight->rms_attn_w, weight->w_mlp_gate, weight->w_mlp_up,
                 state->t, state->x, state->gate, state->up, 1,
                 hidden_size, config->intermediate_size, weight->w_mlp_gate->dtype,
