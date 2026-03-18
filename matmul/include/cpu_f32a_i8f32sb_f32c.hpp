@@ -14,12 +14,6 @@ void gemv_lg_N_K(
     const float *__restrict mat_B_scales,
     float *__restrict mat_C, size_t N, size_t K, size_t group_size
 );
-void gemv_lg_N_K_g128(
-    const float *__restrict mat_A,
-    const int8_t *__restrict mat_B_in,
-    const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t N, size_t K
-);
 void gemv_lg_N_K_g64(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
