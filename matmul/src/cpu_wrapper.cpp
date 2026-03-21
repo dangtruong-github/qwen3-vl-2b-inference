@@ -692,3 +692,176 @@ void gemm_att_multiple_scale(
     );
     exit(1);
 }
+
+void qk_att_fp32(
+    const float *mat_A, const float *mat_B, float *mat_C,
+    const float scale, size_t kv_mul, size_t seq_len,
+    size_t head_dim, const size_t max_pos
+) {
+    #pragma omp parallel for collapse(2)
+    for (size_t i = 0; i < kv_mul; ++i) {
+        for (size_t j = 0; j < max_pos; ++j) {
+
+            float sum = 0.0f;
+
+            for (size_t k = 0; k < head_dim; ++k) {
+                float a = mat_A[i * head_dim + k];
+                float b = (float)(mat_B[j * head_dim + k]);
+
+                sum += a * b;
+            }
+
+            mat_C[i * seq_len + j] = sum * scale;
+        }
+    }
+}
+
+void qk_att_f32a_f16b_f32c(
+    const float *mat_A, const half_cpu *mat_B, float *mat_C,
+    const float scale, size_t kv_mul, size_t seq_len,
+    size_t head_dim, const size_t max_pos
+) {
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+        qk_att_f32a_f16b_f32c_avx2_wrapper(
+            mat_A, mat_B, mat_C, scale,
+            kv_mul, seq_len, head_dim, max_pos
+        );
+    #elif defined(__AVX2__) && defined(__FMA__)
+        qk_att_f32a_f16b_f32c_avx2_wrapper(
+            mat_A, mat_B, mat_C, scale,
+            kv_mul, seq_len, head_dim, max_pos
+        );
+    #else
+        #pragma omp parallel for collapse(2)
+        for (size_t i = 0; i < kv_mul; ++i) {
+            for (size_t j = 0; j < max_pos; ++j) {
+
+                float sum = 0.0f;
+
+                for (size_t k = 0; k < head_dim; ++k) {
+                    float a = mat_A[i * head_dim + k];
+                    float b = (float)(mat_B[j * head_dim + k]);
+
+                    sum += a * b;
+                }
+
+                mat_C[i * seq_len + j] = sum * scale;
+            }
+        }
+    #endif
+}
+
+void gemm_text_qk_att(
+    const void *mat_A, const void *mat_B, void *mat_C,
+    const float scale, size_t kv_mul, size_t seq_len,
+    size_t head_dim, const size_t max_pos,
+    DType::Type type_a, DType::Type type_b, DType::Type type_c
+) {
+    if (
+        type_a == DType::FP32 && type_b == DType::FP16
+        && type_c == DType::FP32
+    ) {
+        qk_att_f32a_f16b_f32c(
+            static_cast<const float *>(mat_A),
+            static_cast<const half_cpu *>(mat_B),
+            static_cast<float *>(mat_C),
+            scale, kv_mul, seq_len, head_dim, max_pos
+        );
+        return;
+    } else if (
+        type_a == DType::FP32 && type_b == DType::FP32
+        && type_c == DType::FP32
+    ) {
+        qk_att_fp32(
+            static_cast<const float *>(mat_A),
+            static_cast<const float *>(mat_B),
+            static_cast<float *>(mat_C),
+            scale, kv_mul, seq_len, head_dim, max_pos
+        );
+        return;
+    }
+
+    fprintf(stderr, "DType gemm_text_att not supported: type_a=%s, type_b=%s, type_c=%s\n", dtypeToStr(type_a), dtypeToStr(type_b), dtypeToStr(type_c));
+    exit(1);
+}
+
+void kv_att_fp32(
+    const float *mat_A, const float *mat_B, float *mat_C,
+    size_t kv_mul, size_t head_dim, size_t seq_len, const size_t max_pos
+) {
+    // A: [kv_mul, seq_len]
+    // B: [seq_len, head_dim] (row-major, NOT transposed)
+    // C: [kv_mul, head_dim]
+
+    for (size_t m = 0; m < kv_mul; ++m) {
+        for (size_t n = 0; n < head_dim; ++n) {
+
+            float acc = 0.0f;
+
+            for (size_t k = 0; k < max_pos; ++k) {
+                float a = mat_A[m * seq_len + k];
+                float b = mat_B[k * head_dim + n];
+                acc += a * b;
+            }
+
+            mat_C[m * head_dim + n] = acc;
+        }
+    }
+}
+
+void kv_att_f32a_f16b_f32c(
+    const float *mat_A, const half_cpu *mat_B, float *mat_C,
+    size_t kv_mul, size_t head_dim, size_t seq_len, const size_t max_pos
+) {
+    // A: [kv_mul, seq_len]
+    // B: [seq_len, head_dim] (row-major, NOT transposed)
+    // C: [kv_mul, head_dim]
+
+    for (size_t m = 0; m < kv_mul; ++m) {
+        for (size_t n = 0; n < head_dim; ++n) {
+
+            float acc = 0.0f;
+
+            for (size_t k = 0; k < max_pos; ++k) {
+                float a = mat_A[m * seq_len + k];
+                float b = (float)(mat_B[k * head_dim + n]);
+                acc += a * b;
+            }
+
+            mat_C[m * head_dim + n] = acc;
+        }
+    }
+}
+
+void gemm_text_kv_att(
+    const void *mat_A, const void *mat_B, void *mat_C,
+    size_t kv_mul, size_t head_dim, size_t seq_len, const size_t max_pos,
+    DType::Type type_a, DType::Type type_b, DType::Type type_c
+) {
+    if (
+        type_a == DType::FP32 && type_b == DType::FP16
+        && type_c == DType::FP32
+    ) {
+        kv_att_f32a_f16b_f32c(
+            static_cast<const float *>(mat_A),
+            static_cast<const half_cpu *>(mat_B),
+            static_cast<float *>(mat_C),
+            kv_mul, head_dim, seq_len, max_pos
+        );
+        return;
+    } else if (
+        type_a == DType::FP32 && type_b == DType::FP32
+        && type_c == DType::FP32
+    ) {
+        kv_att_fp32(
+            static_cast<const float *>(mat_A),
+            static_cast<const float *>(mat_B),
+            static_cast<float *>(mat_C),
+            kv_mul, head_dim, seq_len, max_pos
+        );
+        return;
+    }
+
+    fprintf(stderr, "DType gemm_text_att not supported: type_a=%s, type_b=%s, type_c=%s\n", dtypeToStr(type_a), dtypeToStr(type_b), dtypeToStr(type_c));
+    exit(1);
+}

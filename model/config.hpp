@@ -105,9 +105,6 @@ typedef struct {
     Tensor *t;            // normalized hidden before attention [hidden_size]
 
     // ---- Attention projections ----
-    // Tensor *q;            // query [num_attention_heads * head_dim]
-    // Tensor *k;            // key [num_kv_heads * head_dim]
-    // Tensor *v;            // value [num_kv_heads * head_dim]
     Tensor *qkv;            // qkv merge [(num_attention_heads + 2 * num_kv_heads) * head_dim]
 
     Tensor *att;          // attention scores (temporary buffer) [num_attention_heads * max_position_embeddings]

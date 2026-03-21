@@ -26,6 +26,17 @@ void gemm_att_multiple_scale(
     bool mat_B_transpose, DType::Type type_a,
     DType::Type type_b, DType::Type type_c
 );
+void gemm_text_qk_att(
+    const void *mat_A, const void *mat_B, void *mat_C,
+    const float scale, size_t kv_mul, size_t seq_len,
+    size_t head_dim, const size_t max_pos,
+    DType::Type type_a, DType::Type type_b, DType::Type type_c
+);
+void gemm_text_kv_att(
+    const void *mat_A, const void *mat_B, void *mat_C,
+    size_t kv_mul, size_t head_dim, size_t seq_len, const size_t max_pos,
+    DType::Type type_a, DType::Type type_b, DType::Type type_c
+);
 
 #if defined(__AVX2__) && defined(__FMA__)
 void fp32_full_avx2_kernel(
@@ -110,6 +121,14 @@ void att_f16ab_f32c_avx2_kernel(
     const half_cpu *mat_A, const half_cpu *mat_B, float *mat_C,
     const float scale, size_t M, size_t N, size_t K,
     bool mat_B_transpose
+);
+#endif
+
+#if defined(__AVX2__) && defined(__FMA__)
+void qk_att_f32a_f16b_f32c_avx2_wrapper(
+    const float *mat_A, const half_cpu *mat_B, float *mat_C,
+    const float scale, size_t M, size_t N,
+    size_t K, const size_t max_pos
 );
 #endif
 

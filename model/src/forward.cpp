@@ -332,28 +332,39 @@ void forward_text_prefill(
     const size_t text_group_size = weight->token_embedding_table->group_size;
     const bool text_gq = config->group_quantized ? true : false;
 
-    int img_token_id[prefill_size];
+    int num_img_tokens = 0;
+    size_t first_img_token = 0;
+    size_t first_img_token_id = 0;
 
     {
         #ifdef CPU_TIME_OUTSIDE
             CPUTimer timer("text_embedding_lookup");
         #endif
         // Embed layer
+
         for (size_t i = 0; i < prefill_size; ++i) { 
             int token_id = token_list[i];
-            bool img_token_true = (token_id == config->image_token_id) || (token_id == config->video_token_id);
-            if (!img_token_true) {
+            if ((token_id == config->image_token_id) || (token_id == config->video_token_id)) {
+                if (num_img_tokens == 0) {
+                    first_img_token = i;
+                    first_img_token_id = state->cur_img_token_id;
+                }
+                num_img_tokens++;
+            } else {
                 embedding_lookup(
                     weight->token_embedding_table,
                     state->x, i, token_id, hidden_size
                 );
-                img_token_id[i] = -1;
-            } else {
-                const float *src = (const float *)state->vision_x->ptr() + 1ll * hidden_size * state->cur_img_token_id;
-                memcpy(state->x->ptr({i}), src, 1ll * hidden_size * sizeof(float));
-                img_token_id[i] = state->cur_img_token_id;
-                state->cur_img_token_id++;
             }
+        }
+
+        if (num_img_tokens > 0) {
+            const float *src = (const float *)state->vision_x->ptr() + 1ll * hidden_size * first_img_token_id;
+            memcpy(
+                state->x->ptr({first_img_token}), src,
+                1ll * num_img_tokens * hidden_size * sizeof(float)
+            );
+            state->cur_img_token_id += num_img_tokens;
         }
 
         #ifdef PRINT_LOGITS
@@ -465,16 +476,10 @@ void forward_text_prefill(
                 CPUTimer timer("text_attention_mechanism");
             #endif
 
-            attn_scores_all_heads_prefill(
-                k_cache_l, state->qkv, state->att, num_heads,
-                kv_mul, head_dim, kv_dim, kv_all_off,
-                pos, prefill_size, state->key_cache->dtype
-            );
-
-            attn_weighted_sum_all_heads(
-                v_cache_l, state->att, state->qkv_out, num_heads,
-                kv_mul, head_dim, kv_dim, kv_all_off,
-                pos, prefill_size, state->key_cache->dtype
+            fused_att_dispatch(
+                k_cache_l, v_cache_l, state->qkv, state->att,
+                state->qkv_out, num_heads, head_dim, kv_mul, kv_dim, 
+                kv_all_off, pos, state->key_cache->dtype, prefill_size
             );
 
             #ifdef PRINT_LOGITS
@@ -572,14 +577,12 @@ void forward_text_prefill(
             #ifdef CPU_TIME_OUTSIDE
                 CPUTimer timer("text_vision_deep_stack_add");
             #endif
-            for (size_t i = 0; i < prefill_size; ++i) {
-                if (img_token_id[i] < 0) continue;
-                
-                const void *deep_ptr = state->vision_deep_stack->ptr({l, (size_t)img_token_id[i]});
-                void *x_ptr = state->x->ptr({i});
+            if (num_img_tokens > 0) {
+                const void *deep_ptr = state->vision_deep_stack->ptr({l, first_img_token_id});
+                void *x_ptr = state->x->ptr({first_img_token});
 
                 add_vector(
-                    x_ptr, deep_ptr, state->vision_deep_stack->dtype, state->x->dtype, hidden_size
+                    x_ptr, deep_ptr, state->vision_deep_stack->dtype, state->x->dtype, num_img_tokens * hidden_size
                 );
             }
         }
@@ -608,22 +611,16 @@ size_t forward_text_decode(
     const DType::Type dtype_scale = weight->token_embedding_table->scale_dtype;
     const size_t text_group_size = weight->token_embedding_table->group_size;
     const bool text_gq = config->group_quantized ? true : false;
-
-    bool img_token_true = (token_id == config->image_token_id) || (token_id == config->video_token_id);
     
     {
         #ifdef CPU_TIME_OUTSIDE
             CPUTimer timer("decode_embedding");
         #endif
+        
         // Embed layer
-        if (!img_token_true) {
-            embedding_lookup(
-                weight->token_embedding_table, state->x, 0ll, token_id, hidden_size
-            );
-        } else {
-            const float *src = (const float *)state->vision_x->ptr() + 1ll * hidden_size * state->cur_img_token_id;
-            memcpy(state->x->ptr(), src, 1ll * hidden_size * sizeof(float));
-        }
+        embedding_lookup(
+            weight->token_embedding_table, state->x, 0ll, token_id, hidden_size
+        );
 
         #ifdef PRINT_LOGITS
             if (!warm_up) {
@@ -720,21 +717,14 @@ size_t forward_text_decode(
                 CPUTimer timer("decode_attention_mechanism");
             #endif
 
-            attn_scores_all_heads_decode(
-                k_cache_l, state->qkv, state->att, num_heads,
-                kv_mul, head_dim, kv_dim, kv_all_off,
-                pos, state->key_cache->dtype
-            );
-
-            attn_weighted_sum_all_heads(
-                v_cache_l, state->att, state->qkv_out, num_heads,
-                kv_mul, head_dim, kv_dim, kv_all_off,
-                pos, 1, state->key_cache->dtype
+            fused_att_dispatch(
+                k_cache_l, v_cache_l, state->qkv, state->att,
+                state->qkv_out, num_heads, head_dim, kv_mul, kv_dim, 
+                kv_all_off, pos, state->key_cache->dtype, 1
             );
 
             #ifdef PRINT_LOGITS
                 if (!warm_up) {
-                    state->att->printDebug("att");
                     state->qkv_out->printDebug("qkv_out");
                 }
             #endif
@@ -795,17 +785,6 @@ size_t forward_text_decode(
                 }
             #endif
         }
-
-        if (l < config->vision_deep_stack_depth && img_token_true) {
-            #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_vision_deep_stack");
-            #endif
-            const void *deep_ptr = state->vision_deep_stack->ptr({l, (size_t)state->cur_img_token_id});
-            add_vector(
-                state->x, deep_ptr,
-                state->vision_deep_stack->dtype, hidden_size
-            );
-        }
     }
 
     size_t token;
@@ -820,10 +799,6 @@ size_t forward_text_decode(
             config->vocab_size, hidden_size, weight->rms_out_w->dtype,
             weight->rms_out_w->scale_dtype, text_gq, text_group_size
         );
-    }
-
-    if (img_token_true) {
-        state->cur_img_token_id += 1;
     }
 
     return token;

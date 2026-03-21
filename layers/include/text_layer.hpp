@@ -127,3 +127,9 @@ size_t fused_rms_decode_dispatch(
     DType::Type dtype_w, DType::Type dtype_s,
     bool text_gq, size_t group_size
 );
+void fused_att_dispatch(
+    const char *k_cache_l, const char *v_cache_l, const Tensor *qkv,
+    Tensor *att, Tensor *qkv_out, const int num_heads, const int head_dim,
+    const int kv_mul, const int kv_dim, const size_t kv_all_off,
+    const int pos, const DType::Type kv_dtype, const size_t prefill_size
+);
