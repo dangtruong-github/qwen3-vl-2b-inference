@@ -797,7 +797,7 @@ void fused_rms_linear_qkv_dispatch(
             linear(
                 t->ptr(), w_qkv.buf, w_qkv.scale, w_qkv.sum_int8, nullptr, nullptr,
                 qkv->ptr(), M, hidden_size + kv_dim * 2, hidden_size, !w_attn_qkv->permuted,
-                t->dtype, dtype_w, dtype_s, qkv->dtype, text_gq, group_size
+                t->dtype, dtype_w, dtype_s, qkv->dtype, text_gq, group_size, false
             );
         }
     #else
@@ -806,7 +806,7 @@ void fused_rms_linear_qkv_dispatch(
         linear(
             t->ptr(), w_qkv.buf, w_qkv.scale, w_qkv.sum_int8, nullptr, nullptr,
             qkv->ptr(), M, hidden_size + kv_dim * 2, hidden_size, !w_attn_qkv->permuted,
-            t->dtype, dtype_w, dtype_s, qkv->dtype, text_gq, group_size
+            t->dtype, dtype_w, dtype_s, qkv->dtype, text_gq, group_size, false
         );
     #endif
 

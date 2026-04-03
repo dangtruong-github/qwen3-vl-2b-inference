@@ -1070,14 +1070,14 @@ void fused_rms_mlp_swiglu_dispatch(
                 nullptr, nullptr, gate->ptr(), M, inter_dim,
                 hidden_size, !w_mlp_gate->permuted, t->dtype,
                 dtype_w, dtype_s, gate->dtype,
-                text_gq, group_size
+                text_gq, group_size, false
             );
             linear(
                 t->ptr(), w_up.buf, w_up.scale, w_up.sum_int8, nullptr,
                 nullptr, up->ptr(), M, inter_dim,
                 hidden_size, !w_mlp_up->permuted, t->dtype,
                 dtype_w, dtype_s, up->dtype, text_gq,
-                group_size
+                group_size, false
             );
             
             swiglu(gate, up, M * inter_dim);
@@ -1095,14 +1095,14 @@ void fused_rms_mlp_swiglu_dispatch(
             nullptr, nullptr, gate->ptr(), M, inter_dim,
             hidden_size, !w_mlp_gate->permuted, t->dtype,
             dtype_w, dtype_s, gate->dtype,
-            text_gq, group_size
+            text_gq, group_size, false
         );
         linear(
             t->ptr(), w_up.buf, w_up.scale, w_up.sum_int8, nullptr,
             nullptr, up->ptr(), M, inter_dim,
             hidden_size, !w_mlp_up->permuted, t->dtype,
             dtype_w, dtype_s, up->dtype, text_gq,
-            group_size
+            group_size, false
         );
         
         swiglu(gate, up, M * inter_dim);

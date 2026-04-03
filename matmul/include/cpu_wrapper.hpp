@@ -12,7 +12,7 @@ void linear(
     const void *sum_int8_B, const void *mat_bias_in, const void *mat_bias_scale,
     void *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,
     DType::Type type_a, DType::Type type_b, DType::Type type_b_scale,
-    DType::Type type_c, bool group_quantized, size_t group_size
+    DType::Type type_c, bool group_quantized, size_t group_size, bool add_to_c
 );
 void gemm_att(
     const void *mat_A, const void *mat_B, void *mat_C,

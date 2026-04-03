@@ -98,7 +98,7 @@ void forward_img(
                 b_q.buf, b_q.scale, state->vision_mlp_out->ptr(), total_tokens, VH,
                 VH, !weight->vl_attn_qkv_w->permuted, state->vision_t->dtype,
                 dtype_weight, dtype_scale, state->vision_mlp_out->dtype,
-                vision_gq, vision_group_size
+                vision_gq, vision_group_size, false
             );
         }
 
@@ -124,7 +124,7 @@ void forward_img(
                 b_k.scale, state->vision_mlp_out->ptr(), total_tokens, VH, VH,
                 !weight->vl_attn_qkv_w->permuted, state->vision_t->dtype,
                 dtype_weight, dtype_scale, state->vision_mlp_out->dtype,
-                vision_gq, vision_group_size
+                vision_gq, vision_group_size, false
             );
         }
 
@@ -150,7 +150,7 @@ void forward_img(
                 b_v.scale, state->vision_mlp_out->ptr(), total_tokens, VH, VH,
                 !weight->vl_attn_qkv_w->permuted, state->vision_t->dtype,
                 dtype_weight, dtype_scale, state->vision_mlp_out->dtype,
-                vision_gq, vision_group_size
+                vision_gq, vision_group_size, false
             );
             tensor_transpose(
                 state->vision_mlp_out, state->vision_t, total_tokens, VNH, VHD
@@ -184,7 +184,7 @@ void forward_img(
                 b_attn_proj_ptr.scale, state->vision_q->ptr(),
                 total_tokens, VH, VH, !weight->vl_attn_proj_w->permuted,
                 state->vision_t->dtype, dtype_weight, dtype_scale,
-                state->vision_q->dtype, vision_gq, vision_group_size
+                state->vision_q->dtype, vision_gq, vision_group_size, false
             );
             add_vector(state->vision_x, state->vision_q, 1ll * total_tokens * VH);
         }
@@ -212,7 +212,7 @@ void forward_img(
                 state->vision_mlp_out->ptr(), total_tokens, VI, VH,
                 !weight->vl_mlp1_w->permuted, state->vision_t->dtype, dtype_weight,
                 dtype_scale, state->vision_mlp_out->dtype, vision_gq,
-                vision_group_size
+                vision_group_size, false
             );
 
             gelu_tanh(state->vision_mlp_out, 1ll * total_tokens * VI);
@@ -225,7 +225,7 @@ void forward_img(
                 state->vision_t->ptr(), total_tokens, VH, VI,
                 !weight->vl_mlp2_w->permuted, state->vision_mlp_out->dtype,
                 dtype_weight, dtype_scale, state->vision_t->dtype, vision_gq,
-                vision_group_size
+                vision_group_size, false
             );
 
             add_vector(state->vision_x, state->vision_t, 1ll * total_tokens * VH);
@@ -250,7 +250,7 @@ void forward_img(
                 state->vision_mlp_out->ptr(), d_tokens, VI, VI,
                 !weight->vl_d_mlp1_w->permuted, state->vision_t->dtype,
                 dtype_weight, dtype_scale, state->vision_mlp_out->dtype,
-                vision_gq, vision_group_size
+                vision_gq, vision_group_size, false
             );
         
             gelu_tanh(state->vision_mlp_out, 1ll * d_tokens * VI);
@@ -263,7 +263,8 @@ void forward_img(
                 b_mlp2_d_ptr.scale, state->vision_deep_stack->ptr({d_stride}),
                 d_tokens, OH, VI, !weight->vl_d_mlp2_w->permuted,
                 state->vision_mlp_out->dtype, dtype_weight, dtype_scale,
-                state->vision_deep_stack->dtype, vision_gq, vision_group_size
+                state->vision_deep_stack->dtype, vision_gq,
+                vision_group_size, false
             );
         }
     }
@@ -287,7 +288,7 @@ void forward_img(
             state->vision_mlp_out->ptr(), d_tokens, VI, VI,
             !weight->vl_merge_mlp1_w->permuted, state->vision_t->dtype,
             dtype_weight, dtype_scale, state->vision_mlp_out->dtype,
-            vision_gq, vision_group_size
+            vision_gq, vision_group_size, false
         );
 
         gelu_tanh(state->vision_mlp_out, 1ll * d_tokens * VI);
@@ -301,7 +302,7 @@ void forward_img(
             state->vision_x->ptr(), d_tokens, OH, VI,
             !weight->vl_merge_mlp2_w->permuted, state->vision_mlp_out->dtype,
             dtype_weight, dtype_scale, state->vision_x->dtype,
-            vision_gq, vision_group_size
+            vision_gq, vision_group_size, false
         );
     }
     
@@ -464,7 +465,7 @@ void forward_text_prefill(
                 w_out_proj.sum_int8, nullptr, nullptr, state->t->ptr(), prefill_size,
                 hidden_size, hidden_size, !weight->w_attn_o->permuted,
                 state->qkv_out->dtype, dtype_weight, dtype_scale,
-                state->t->dtype, text_gq, text_group_size
+                state->t->dtype, text_gq, text_group_size, false
             );
 
             #ifdef PRINT_LOGITS
@@ -505,7 +506,7 @@ void forward_text_prefill(
                 nullptr, nullptr, state->t->ptr(), prefill_size, hidden_size,
                 config->intermediate_size, !weight->w_mlp_down->permuted,
                 state->gate->dtype, dtype_weight, dtype_scale, state->t->dtype,
-                text_gq, text_group_size
+                text_gq, text_group_size, false
             );
 
             #ifdef PRINT_LOGITS
@@ -668,9 +669,8 @@ size_t forward_text_decode(
                 nullptr, state->x->ptr(), nullptr, state->t->ptr(), 1,
                 hidden_size, hidden_size, !weight->w_attn_o->permuted,
                 state->qkv_out->dtype, dtype_weight, dtype_scale,
-                state->t->dtype, text_gq, text_group_size
+                state->t->dtype, text_gq, text_group_size, false
             );
-            // add_vector(state->x, state->t, hidden_size);
 
             #ifdef PRINT_LOGITS
                 if (!warm_up) {
@@ -697,9 +697,8 @@ size_t forward_text_decode(
                 state->t->ptr(), nullptr, state->x->ptr(), 1, hidden_size,
                 config->intermediate_size, !weight->w_mlp_down->permuted,
                 state->gate->dtype, dtype_weight, dtype_scale, state->t->dtype,
-                text_gq, text_group_size
+                text_gq, text_group_size, false
             );
-            // add_vector(state->x, state->t, hidden_size);
 
             #ifdef PRINT_LOGITS
                 if (!warm_up) {

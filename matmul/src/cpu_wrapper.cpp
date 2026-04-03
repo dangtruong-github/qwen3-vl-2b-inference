@@ -123,31 +123,31 @@ void linear_fp32_full(
 void linear_f32a_i8f32sb_f32c(
     const float* mat_A, const int8_t* mat_B_in,
     const float* mat_B_scales, const int *sum_int8_B, float* mat_C,
-    size_t M, size_t N, size_t K, size_t group_size
+    size_t M, size_t N, size_t K, size_t group_size, bool add_to_c
 ) {
     #if defined(__AVX512F__) && defined(__AVX512DQ__)
         // Must implement AVX512
         if (sum_int8_B) {
             f32a_i8f32sb_f32c_avx512_prefix_kernel(
                 mat_A, mat_B_in, mat_B_scales, sum_int8_B,
-                mat_C, M, N, K, group_size
+                mat_C, M, N, K, group_size, add_to_c
             );
         } else {
             f32a_i8f32sb_f32c_avx512_kernel(
                 mat_A, mat_B_in, mat_B_scales,
-                mat_C, M, N, K, group_size
+                mat_C, M, N, K, group_size, add_to_c
             );
         }
     #elif defined(__AVX2__) && defined(__FMA__)
         if (sum_int8_B) {
             f32a_i8f32sb_f32c_avx2_prefix_kernel(
                 mat_A, mat_B_in, mat_B_scales, sum_int8_B,
-                mat_C, M, N, K, group_size
+                mat_C, M, N, K, group_size, add_to_c
             );
         } else {
             f32a_i8f32sb_f32c_avx2_kernel(
                 mat_A, mat_B_in, mat_B_scales,
-                mat_C, M, N, K, group_size
+                mat_C, M, N, K, group_size, add_to_c
             );
         }
     #else
@@ -171,7 +171,11 @@ void linear_f32a_i8f32sb_f32c(
                     acc += a * b;
                 }
 
-                mat_C[i * N + j] = acc;
+                if (add_to_c) {
+                    mat_C[i * N + j] += acc;
+                } else {
+                    mat_C[i * N + j] = acc;
+                }
             }
         }
     #endif
@@ -352,7 +356,7 @@ void linear(
     const void *sum_int8_B, const void *mat_bias_in, const void *mat_bias_scale,
     void *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose,
     DType::Type type_a, DType::Type type_b, DType::Type type_b_scale,
-    DType::Type type_c, bool group_quantized, size_t group_size
+    DType::Type type_c, bool group_quantized, size_t group_size, bool add_to_c
 ) {
     #ifdef CPU_TIME
         CPUTimer timer("linear");
@@ -386,7 +390,8 @@ void linear(
                         static_cast<const int8_t*>(mat_B_in),
                         static_cast<const float*>(mat_B_scale),
                         static_cast<const int*>(sum_int8_B),
-                        static_cast<float*>(mat_C), M, N, K, group_size
+                        static_cast<float*>(mat_C),
+                        M, N, K, group_size, add_to_c
                     );
                     return;
                 } else {
