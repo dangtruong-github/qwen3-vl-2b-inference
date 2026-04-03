@@ -1,156 +1,464 @@
 #include "../include/text_layer.hpp"
 
-void fused_att_decode(
+void flash_attn_decode(
     const char *__restrict key_cache,
     const char *__restrict value_cache,
     const Tensor *__restrict q, Tensor *__restrict att,
-    Tensor *__restrict tb,  size_t attn_heads, int kv_mul,
-    int head_dim, int kv_dim, size_t sh_offset, int pos
+    Tensor *__restrict tb,  size_t attn_heads,
+    int head_dim, int kv_dim, size_t sh_offset,
+    int pos, const size_t group_size
 ) {
     const float inv_sqrt_d = 1.0f / sqrtf((float)head_dim);
-    const size_t att_stride = att->shape[2];
-    const size_t seq_len = att->shape[att->ndim - 1];
 
-    const uint16_t *key_cache_fp16 = (const uint16_t *)(key_cache);
-    const uint16_t *value_cache_fp16 = (const uint16_t *)(value_cache);
+    const half_cpu *key_cache_fp16 = (const half_cpu *)(key_cache);
+    const half_cpu *value_cache_fp16 = (const half_cpu *)(value_cache);
     float *__restrict tb_base = (float *)tb->ptr();
 
-    for (size_t h_base = 0; h_base < attn_heads; h_base += kv_mul) {
+    memset(tb_base, 0, attn_heads * head_dim * sizeof(float));
 
-        const uint16_t *__restrict k_ptr =
-            key_cache_fp16 + 1ll * (h_base / kv_mul) * sh_offset;
+    #pragma omp parallel for schedule(static)
+    for (size_t h_base = 0; h_base < attn_heads; h_base += 2) {
 
-        const float *__restrict q_group_base =
-            (const float *)q->ptr({0, h_base});
+        const size_t cache_offset = 1ll * (h_base >> 1) * sh_offset;
 
-        float *__restrict att_group_base =
-            (float *)att->ptr({0, h_base});
+        const half_cpu *__restrict k_ptr = key_cache_fp16 + cache_offset;
+        const half_cpu *__restrict v_ptr = value_cache_fp16 + cache_offset;
 
-        float *__restrict tb_head =
-            tb_base + 1ll * h_base * head_dim;
+        const float *__restrict q_group_base = (const float *)q->ptr({0, h_base});
+        float *__restrict tb_head = tb_base + 1ll * h_base * head_dim;
 
-        const uint16_t *__restrict v_head_base =
-            value_cache_fp16 + 1ll * (h_base / kv_mul) * sh_offset;
+        float max_row[2], sum_row[2];
+        for (int i = 0; i < 2; ++i) {
+            max_row[i] = -INFINITY;
+            sum_row[i] = 0.0f;
+        }
+        float max_row_new, x, alpha, beta;
+        
+        for (size_t j = 0; j < pos + 1; ++j) {
+            __m256 acc_0, acc_1;
+            acc_0 = acc_1 =_mm256_setzero_ps();
 
-        gemm_text_qk_att(
-            q_group_base, k_ptr, att_group_base,
-            inv_sqrt_d, kv_mul, seq_len, head_dim,
-            pos + 1, DType::FP32, DType::FP16, DType::FP32
-        );
+            const half_cpu* k_j = k_ptr + j * head_dim;
+            const half_cpu* v_j = v_ptr + j * head_dim;
 
-        for (int m = 0; m < kv_mul; ++m) {
-            softmax(att_group_base + m * seq_len,
-                    (size_t)(pos + 1));
+            for (size_t k = 0; k < head_dim; k += 8) {
+                // load k_j
+                __m128i k_half = _mm_loadu_si128((__m128i const*)(k_j + k)); // 8 x fp16
+                __m256 k_vec = _mm256_cvtph_ps(k_half); // → 8 x fp32
+                
+                    __m256 q0_vec = _mm256_loadu_ps(q_group_base + k);
+                    __m256 q1_vec = _mm256_loadu_ps(q_group_base + head_dim + k);
+
+                    acc_0 = _mm256_fmadd_ps(q0_vec, k_vec, acc_0);
+                    acc_1 = _mm256_fmadd_ps(q1_vec, k_vec, acc_1);
+            }
+
+            // --- KV_ID 0 ---
+            float x0 = add_reduce_mm_256(acc_0) * inv_sqrt_d;
+            float max_row_new0 = max(max_row[0], x0);
+
+            float alpha0 = expf(max_row[0] - max_row_new0);
+            float beta0  = expf(x0 - max_row_new0);
+
+            sum_row[0] = sum_row[0] * alpha0 + beta0;
+            max_row[0] = max_row_new0;
+
+            __m256 alpha_vec0 = _mm256_set1_ps(alpha0);
+            __m256 beta_vec0  = _mm256_set1_ps(beta0);
+
+            // --- KV_ID 1 ---
+            float x1 = add_reduce_mm_256(acc_1) * inv_sqrt_d;
+            float max_row_new1 = max(max_row[1], x1);
+
+            float alpha1 = expf(max_row[1] - max_row_new1);
+            float beta1  = expf(x1 - max_row_new1);
+
+            sum_row[1] = sum_row[1] * alpha1 + beta1;
+            max_row[1] = max_row_new1;
+
+            __m256 alpha_vec1 = _mm256_set1_ps(alpha1);
+            __m256 beta_vec1  = _mm256_set1_ps(beta1);
+
+            for (size_t k = 0; k < head_dim; k += 8) {
+                // load k_j
+                __m128i v_half = _mm_loadu_si128((__m128i const*)(v_j + k)); // 8 x fp16
+                __m256 v_vec = _mm256_cvtph_ps(v_half); // → 8 x fp32
+                
+                __m256 tb_vec0 = _mm256_loadu_ps(tb_head + k);
+                __m256 tb_vec1 = _mm256_loadu_ps(tb_head + head_dim + k);
+
+                tb_vec0 = _mm256_fmadd_ps(tb_vec0, alpha_vec0, _mm256_mul_ps(v_vec, beta_vec0));
+                tb_vec1 = _mm256_fmadd_ps(tb_vec1, alpha_vec1, _mm256_mul_ps(v_vec, beta_vec1));
+
+                _mm256_storeu_ps(tb_head + k, tb_vec0);
+                _mm256_storeu_ps(tb_head + head_dim + k, tb_vec1);
+            }
         }
 
-        gemm_text_kv_att(
-            att_group_base, v_head_base, tb_head,
-            kv_mul, head_dim, seq_len, pos + 1,
-            DType::FP32, DType::FP16, DType::FP32
-        );
+        float inv_sum0 = 1 / (sum_row[0] + 1e-9f);
+        __m256 sum_row_vec0 = _mm256_set1_ps(inv_sum0);
+        float inv_sum1 = 1 / (sum_row[1] + 1e-9f);
+        __m256 sum_row_vec1 = _mm256_set1_ps(inv_sum1);
+
+        for (size_t k = 0; k < head_dim; k += 8) {
+            __m256 tb_vec0 = _mm256_loadu_ps(tb_head + k);
+            __m256 tb_vec1 = _mm256_loadu_ps(tb_head + head_dim + k);
+
+            tb_vec0 = _mm256_mul_ps(tb_vec0, sum_row_vec0);
+            tb_vec1 = _mm256_mul_ps(tb_vec1, sum_row_vec1);
+
+            _mm256_storeu_ps(tb_head + k, tb_vec0);
+            _mm256_storeu_ps(tb_head + head_dim + k, tb_vec1);
+        }
     }
 }
 
-void fused_att_prefill(
+void flash_attn_prefill(
     const char *__restrict key_cache,
     const char *__restrict value_cache,
     const Tensor *__restrict q, Tensor *__restrict att,
-    Tensor *__restrict tb,  size_t attn_heads, int kv_mul,
-    int head_dim, int kv_dim, size_t sh_offset,
-    int pos, const size_t prefill_size
+    Tensor *__restrict tb, size_t attn_heads,
+    int head_dim, int kv_dim, size_t sh_offset, int pos,
+    const size_t group_size, const size_t prefill_size
 ) {
     const float inv_sqrt_d = 1.0f / sqrtf((float)head_dim);
-    const size_t seq_len = att->shape[att->ndim - 1];
 
-    const uint16_t *value_cache_fp16 = (const uint16_t *)(value_cache);
-    const uint16_t *key_cache_fp16 = (const uint16_t *)(key_cache);
+    const half_cpu *key_cache_fp16 = (const half_cpu *)(key_cache);
+    const half_cpu *value_cache_fp16 = (const half_cpu *)(value_cache);
+    float *__restrict tb_base = (float *)tb->ptr();
 
-    for (size_t b = 0; b < prefill_size; ++b) {
+    memset(tb_base, 0, prefill_size * attn_heads * head_dim * sizeof(float));
 
-        float *__restrict tb_base =
-            (float *)tb->ptr({b});
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (size_t b = 0; b < prefill_size; b += 2) {
+        for (size_t h_base = 0; h_base < attn_heads; h_base += 2) {
+            const size_t b_size = std::min(prefill_size - b, (size_t)2);
+            const size_t cache_offset = 1ll * (h_base >> 1) * sh_offset;
 
-        const float *__restrict att_base =
-            (const float *)att->ptr({b});
+            const half_cpu *__restrict k_ptr = key_cache_fp16 + cache_offset;
+            const half_cpu *__restrict v_ptr = value_cache_fp16 + cache_offset;
 
-        for (size_t h_base = 0; h_base < attn_heads; h_base += kv_mul) {
+            if (b_size == 2) {
+                const float *__restrict q0_base = (const float *)q->ptr({b, h_base});
+                const float *__restrict q1_base = (const float *)q->ptr({b + 1, h_base});
+                float *__restrict tb0_head = (float *)tb->ptr({b}) + 1ll * h_base * head_dim;
+                float *__restrict tb1_head = (float *)tb->ptr({b + 1}) + 1ll * h_base * head_dim;;
 
-            const uint16_t *__restrict k_ptr =
-                key_cache_fp16 + 1ll * (h_base / kv_mul) * sh_offset;
+                float max_row[4], sum_row[4];
+                for (int i = 0; i < 4; ++i) {
+                    max_row[i] = -INFINITY;
+                    sum_row[i] = 0.0f;
+                }
+                float max_row_new, x, alpha, beta;
+                
+                for (size_t j = 0; j < pos + b + 1; ++j) {
+                    __m256 acc_00, acc_01, acc_10, acc_11;
+                    acc_00 = acc_01 = acc_10 = acc_11 = _mm256_setzero_ps();
 
-            const float *__restrict q_group_base =
-                (const float *)q->ptr({b, h_base});
+                    const half_cpu* k_j = k_ptr + j * head_dim;
+                    const half_cpu* v_j = v_ptr + j * head_dim;
 
-            float *__restrict att_group_base =
-                (float *)att->ptr({b, h_base});
+                    for (size_t k = 0; k < head_dim; k += 8) {
+                        // load k_j
+                        __m128i k_half = _mm_loadu_si128((__m128i const*)(k_j + k)); // 8 x fp16
+                        __m256 k_vec = _mm256_cvtph_ps(k_half); // → 8 x fp32
+                        
+                            __m256 q00_vec = _mm256_loadu_ps(q0_base + k);
+                            __m256 q01_vec = _mm256_loadu_ps(q0_base + head_dim + k);
+                            __m256 q10_vec = _mm256_loadu_ps(q1_base + k);
+                            __m256 q11_vec = _mm256_loadu_ps(q1_base + head_dim + k);
 
-            float *__restrict tb_head =
-                tb_base + 1ll * h_base * head_dim;
+                            acc_00 = _mm256_fmadd_ps(q00_vec, k_vec, acc_00);
+                            acc_01 = _mm256_fmadd_ps(q01_vec, k_vec, acc_01);
+                            acc_10 = _mm256_fmadd_ps(q10_vec, k_vec, acc_10);
+                            acc_11 = _mm256_fmadd_ps(q11_vec, k_vec, acc_11);
+                    }
 
-            const uint16_t *__restrict v_head_base =
-                value_cache_fp16 + 1ll * (h_base / kv_mul) * sh_offset;
+                    // --- KV_ID 00 (Batch 0, Head 0) ---
+                    float x00 = add_reduce_mm_256(acc_00) * inv_sqrt_d;
+                    float max_row_new00 = max(max_row[0], x00);
+                    float alpha00 = expf(max_row[0] - max_row_new00);
+                    float beta00  = expf(x00 - max_row_new00);
+                    sum_row[0] = sum_row[0] * alpha00 + beta00;
+                    max_row[0] = max_row_new00;
+                    __m256 alpha_vec00 = _mm256_set1_ps(alpha00);
+                    __m256 beta_vec00  = _mm256_set1_ps(beta00);
 
-            gemm_text_qk_att(
-                q_group_base, k_ptr, att_group_base,
-                inv_sqrt_d, kv_mul, seq_len, head_dim,
-                pos + b + 1, DType::FP32,
-                DType::FP16, DType::FP32
-            );
+                    // --- KV_ID 01 (Batch 0, Head 1) ---
+                    float x01 = add_reduce_mm_256(acc_01) * inv_sqrt_d;
+                    float max_row_new01 = max(max_row[1], x01);
+                    float alpha01 = expf(max_row[1] - max_row_new01);
+                    float beta01  = expf(x01 - max_row_new01);
+                    sum_row[1] = sum_row[1] * alpha01 + beta01;
+                    max_row[1] = max_row_new01;
+                    __m256 alpha_vec01 = _mm256_set1_ps(alpha01);
+                    __m256 beta_vec01  = _mm256_set1_ps(beta01);
 
-            for (int m = 0; m < kv_mul; ++m) {
-                softmax(att_group_base + m * seq_len,
-                        (size_t)(pos + b + 1));
+                    // --- KV_ID 10 (Batch 1, Head 0) ---
+                    float x10 = add_reduce_mm_256(acc_10) * inv_sqrt_d;
+                    float max_row_new10 = max(max_row[2], x10);
+                    float alpha10 = expf(max_row[2] - max_row_new10);
+                    float beta10  = expf(x10 - max_row_new10);
+                    sum_row[2] = sum_row[2] * alpha10 + beta10;
+                    max_row[2] = max_row_new10;
+                    __m256 alpha_vec10 = _mm256_set1_ps(alpha10);
+                    __m256 beta_vec10  = _mm256_set1_ps(beta10);
+
+                    // --- KV_ID 11 (Batch 1, Head 1) ---
+                    float x11 = add_reduce_mm_256(acc_11) * inv_sqrt_d;
+                    float max_row_new11 = max(max_row[3], x11);
+                    float alpha11 = expf(max_row[3] - max_row_new11);
+                    float beta11  = expf(x11 - max_row_new11);
+                    sum_row[3] = sum_row[3] * alpha11 + beta11;
+                    max_row[3] = max_row_new11;
+                    __m256 alpha_vec11 = _mm256_set1_ps(alpha11);
+                    __m256 beta_vec11  = _mm256_set1_ps(beta11);
+
+                    for (size_t k = 0; k < head_dim; k += 8) {
+                        // load k_j
+                        __m128i v_half = _mm_loadu_si128((__m128i const*)(v_j + k)); // 8 x fp16
+                        __m256 v_vec = _mm256_cvtph_ps(v_half); // → 8 x fp32
+                        
+                        __m256 tb_vec00 = _mm256_loadu_ps(tb0_head + k);
+                        __m256 tb_vec01 = _mm256_loadu_ps(tb0_head + head_dim + k);
+                        __m256 tb_vec10 = _mm256_loadu_ps(tb1_head + k);
+                        __m256 tb_vec11 = _mm256_loadu_ps(tb1_head + head_dim + k);
+
+                        tb_vec00 = _mm256_fmadd_ps(tb_vec00, alpha_vec00, _mm256_mul_ps(v_vec, beta_vec00));
+                        tb_vec01 = _mm256_fmadd_ps(tb_vec01, alpha_vec01, _mm256_mul_ps(v_vec, beta_vec01));
+                        tb_vec10 = _mm256_fmadd_ps(tb_vec10, alpha_vec10, _mm256_mul_ps(v_vec, beta_vec10));
+                        tb_vec11 = _mm256_fmadd_ps(tb_vec11, alpha_vec11, _mm256_mul_ps(v_vec, beta_vec11));
+
+                        _mm256_storeu_ps(tb0_head + k, tb_vec00);
+                        _mm256_storeu_ps(tb0_head + head_dim + k, tb_vec01);
+                        _mm256_storeu_ps(tb1_head + k, tb_vec10);
+                        _mm256_storeu_ps(tb1_head + head_dim + k, tb_vec11);
+                    }
+                }
+
+                {
+                    __m256 acc_10, acc_11;
+                    acc_10 = acc_11 = _mm256_setzero_ps();
+
+                    const half_cpu* k_j = k_ptr + (pos + b + 1) * head_dim;
+                    const half_cpu* v_j = v_ptr + (pos + b + 1) * head_dim;
+
+                    for (size_t k = 0; k < head_dim; k += 8) {
+                        // load k_j
+                        __m128i k_half = _mm_loadu_si128((__m128i const*)(k_j + k)); // 8 x fp16
+                        __m256 k_vec = _mm256_cvtph_ps(k_half); // → 8 x fp32
+                        
+                        __m256 q10_vec = _mm256_loadu_ps(q1_base + k);
+                        __m256 q11_vec = _mm256_loadu_ps(q1_base + head_dim + k);
+
+                        acc_10 = _mm256_fmadd_ps(q10_vec, k_vec, acc_10);
+                        acc_11 = _mm256_fmadd_ps(q11_vec, k_vec, acc_11);
+                    }
+
+                    // --- KV_ID 10 (Batch 1, Head 0) ---
+                    float x10 = add_reduce_mm_256(acc_10) * inv_sqrt_d;
+                    float max_row_new10 = max(max_row[2], x10);
+                    float alpha10 = expf(max_row[2] - max_row_new10);
+                    float beta10  = expf(x10 - max_row_new10);
+                    sum_row[2] = sum_row[2] * alpha10 + beta10;
+                    max_row[2] = max_row_new10;
+                    __m256 alpha_vec10 = _mm256_set1_ps(alpha10);
+                    __m256 beta_vec10  = _mm256_set1_ps(beta10);
+
+                    // --- KV_ID 11 (Batch 1, Head 1) ---
+                    float x11 = add_reduce_mm_256(acc_11) * inv_sqrt_d;
+                    float max_row_new11 = max(max_row[3], x11);
+                    float alpha11 = expf(max_row[3] - max_row_new11);
+                    float beta11  = expf(x11 - max_row_new11);
+                    sum_row[3] = sum_row[3] * alpha11 + beta11;
+                    max_row[3] = max_row_new11;
+                    __m256 alpha_vec11 = _mm256_set1_ps(alpha11);
+                    __m256 beta_vec11  = _mm256_set1_ps(beta11);
+
+                    for (size_t k = 0; k < head_dim; k += 8) {
+                        // load k_j
+                        __m128i v_half = _mm_loadu_si128((__m128i const*)(v_j + k)); // 8 x fp16
+                        __m256 v_vec = _mm256_cvtph_ps(v_half); // → 8 x fp32
+                        
+                        __m256 tb_vec10 = _mm256_loadu_ps(tb1_head + k);
+                        __m256 tb_vec11 = _mm256_loadu_ps(tb1_head + head_dim + k);
+
+                        tb_vec10 = _mm256_fmadd_ps(tb_vec10, alpha_vec10, _mm256_mul_ps(v_vec, beta_vec10));
+                        tb_vec11 = _mm256_fmadd_ps(tb_vec11, alpha_vec11, _mm256_mul_ps(v_vec, beta_vec11));
+
+                        _mm256_storeu_ps(tb1_head + k, tb_vec10);
+                        _mm256_storeu_ps(tb1_head + head_dim + k, tb_vec11);
+                    }
+                }
+
+                __m256 sum_row_vec[4];
+                for (int i = 0; i < 4; ++i) {
+                    float inv_sum = 1 / (sum_row[i] + 1e-9f);
+                    sum_row_vec[i] = _mm256_set1_ps(inv_sum);
+                }
+
+                for (size_t k = 0; k < head_dim; k += 8) {
+                    __m256 tb_vec00 = _mm256_loadu_ps(tb0_head + k);
+                    __m256 tb_vec01 = _mm256_loadu_ps(tb0_head + head_dim + k);
+                    __m256 tb_vec10 = _mm256_loadu_ps(tb1_head + k);
+                    __m256 tb_vec11 = _mm256_loadu_ps(tb1_head + head_dim + k);
+
+                    tb_vec00 = _mm256_mul_ps(tb_vec00, sum_row_vec[0]);
+                    tb_vec01 = _mm256_mul_ps(tb_vec01, sum_row_vec[1]);
+                    tb_vec10 = _mm256_mul_ps(tb_vec10, sum_row_vec[2]);
+                    tb_vec11 = _mm256_mul_ps(tb_vec11, sum_row_vec[3]);
+
+                    _mm256_storeu_ps(tb0_head + k, tb_vec00);
+                    _mm256_storeu_ps(tb0_head + head_dim + k, tb_vec01);
+                    _mm256_storeu_ps(tb1_head + k, tb_vec10);
+                    _mm256_storeu_ps(tb1_head + head_dim + k, tb_vec11);
+                }
+            } else {
+                const float *__restrict q_group_base = (const float *)q->ptr({b, h_base});
+                float *__restrict tb_head = (float *)tb->ptr({b}) + 1ll * h_base * head_dim;
+
+                float max_row[2], sum_row[2];
+                for (int i = 0; i < 2; ++i) {
+                    max_row[i] = -INFINITY;
+                    sum_row[i] = 0.0f;
+                }
+                float max_row_new, x, alpha, beta;
+                
+                for (size_t j = 0; j < pos + b + 1; ++j) {
+                    __m256 acc_0, acc_1;
+                    acc_0 = acc_1 =_mm256_setzero_ps();
+
+                    const half_cpu* k_j = k_ptr + j * head_dim;
+                    const half_cpu* v_j = v_ptr + j * head_dim;
+
+                    for (size_t k = 0; k < head_dim; k += 8) {
+                        // load k_j
+                        __m128i k_half = _mm_loadu_si128((__m128i const*)(k_j + k)); // 8 x fp16
+                        __m256 k_vec = _mm256_cvtph_ps(k_half); // → 8 x fp32
+                        
+                            __m256 q0_vec = _mm256_loadu_ps(q_group_base + k);
+                            __m256 q1_vec = _mm256_loadu_ps(q_group_base + head_dim + k);
+
+                            acc_0 = _mm256_fmadd_ps(q0_vec, k_vec, acc_0);
+                            acc_1 = _mm256_fmadd_ps(q1_vec, k_vec, acc_1);
+                    }
+
+                    // --- KV_ID 0 ---
+                    float x0 = add_reduce_mm_256(acc_0) * inv_sqrt_d;
+                    float max_row_new0 = max(max_row[0], x0);
+
+                    float alpha0 = expf(max_row[0] - max_row_new0);
+                    float beta0  = expf(x0 - max_row_new0);
+
+                    sum_row[0] = sum_row[0] * alpha0 + beta0;
+                    max_row[0] = max_row_new0;
+
+                    __m256 alpha_vec0 = _mm256_set1_ps(alpha0);
+                    __m256 beta_vec0  = _mm256_set1_ps(beta0);
+
+                    // --- KV_ID 1 ---
+                    float x1 = add_reduce_mm_256(acc_1) * inv_sqrt_d;
+                    float max_row_new1 = max(max_row[1], x1);
+
+                    float alpha1 = expf(max_row[1] - max_row_new1);
+                    float beta1  = expf(x1 - max_row_new1);
+
+                    sum_row[1] = sum_row[1] * alpha1 + beta1;
+                    max_row[1] = max_row_new1;
+
+                    __m256 alpha_vec1 = _mm256_set1_ps(alpha1);
+                    __m256 beta_vec1  = _mm256_set1_ps(beta1);
+
+                    for (size_t k = 0; k < head_dim; k += 8) {
+                        // load k_j
+                        __m128i v_half = _mm_loadu_si128((__m128i const*)(v_j + k)); // 8 x fp16
+                        __m256 v_vec = _mm256_cvtph_ps(v_half); // → 8 x fp32
+                        
+                        __m256 tb_vec0 = _mm256_loadu_ps(tb_head + k);
+                        __m256 tb_vec1 = _mm256_loadu_ps(tb_head + head_dim + k);
+
+                        tb_vec0 = _mm256_fmadd_ps(tb_vec0, alpha_vec0, _mm256_mul_ps(v_vec, beta_vec0));
+                        tb_vec1 = _mm256_fmadd_ps(tb_vec1, alpha_vec1, _mm256_mul_ps(v_vec, beta_vec1));
+
+                        _mm256_storeu_ps(tb_head + k, tb_vec0);
+                        _mm256_storeu_ps(tb_head + head_dim + k, tb_vec1);
+                    }
+                }
+
+                float inv_sum0 = 1 / (sum_row[0] + 1e-9f);
+                __m256 sum_row_vec0 = _mm256_set1_ps(inv_sum0);
+                float inv_sum1 = 1 / (sum_row[1] + 1e-9f);
+                __m256 sum_row_vec1 = _mm256_set1_ps(inv_sum1);
+
+                for (size_t k = 0; k < head_dim; k += 8) {
+                    __m256 tb_vec0 = _mm256_loadu_ps(tb_head + k);
+                    __m256 tb_vec1 = _mm256_loadu_ps(tb_head + head_dim + k);
+
+                    tb_vec0 = _mm256_mul_ps(tb_vec0, sum_row_vec0);
+                    tb_vec1 = _mm256_mul_ps(tb_vec1, sum_row_vec1);
+
+                    _mm256_storeu_ps(tb_head + k, tb_vec0);
+                    _mm256_storeu_ps(tb_head + head_dim + k, tb_vec1);
+                }
             }
-
-            gemm_text_kv_att(
-                att_group_base, v_head_base, tb_head,
-                kv_mul, head_dim, seq_len, pos + b + 1,
-                DType::FP32, DType::FP16, DType::FP32
-            );
         }
     }
 }
 
 void fused_att_dispatch(
-    const char *k_cache_l, const char *v_cache_l, const Tensor *qkv,
-    Tensor *att, Tensor *qkv_out, const int num_heads, const int head_dim,
-    const int kv_mul, const int kv_dim, const size_t kv_all_off,
-    const int pos, const DType::Type kv_dtype, const size_t prefill_size
+    const char *k_cache_l, const char *v_cache_l, const float *k_cache_s,
+    const float *v_cache_s, const Tensor *qkv, Tensor *att, Tensor *qkv_out,
+    const int num_heads, const int head_dim, const int kv_mul, const int kv_dim,
+    const size_t kv_all_off, const int pos, const DType::Type key_dtype,
+    const DType::Type value_dtype, const size_t group_size,
+    const size_t prefill_size, bool warm_up
 ) {
-    if (kv_dtype == DType::FP16) {
+    if (key_dtype == DType::FP16 && value_dtype == DType::FP16 && kv_mul == 2) {
 
         if (prefill_size > 1) {
-            fused_att_prefill(
+            flash_attn_prefill(
                 k_cache_l, v_cache_l, qkv, att,
-                qkv_out, num_heads, kv_mul, head_dim,
-                kv_dim, kv_all_off, pos, prefill_size
+                qkv_out, num_heads, head_dim,
+                kv_dim, kv_all_off, pos,
+                group_size, prefill_size
             );
         } else {
-            fused_att_decode(
+            flash_attn_decode(
                 k_cache_l, v_cache_l, qkv, att,
-                qkv_out, num_heads, kv_mul,
-                head_dim, kv_dim, kv_all_off, pos
+                qkv_out, num_heads, head_dim,
+                kv_dim, kv_all_off, pos, group_size
             );
         }
     } else {
         if (prefill_size > 1) {
             attn_scores_all_heads_prefill(
-                k_cache_l, qkv, att, num_heads,
-                kv_mul, head_dim, kv_dim, kv_all_off,
-                pos, prefill_size, kv_dtype
+                k_cache_l, k_cache_s, qkv, att,
+                num_heads, kv_mul, head_dim,
+                kv_dim, kv_all_off, pos,
+                group_size, prefill_size, key_dtype
             );
         } else {
             attn_scores_all_heads_decode(
-                k_cache_l, qkv, att, num_heads,
-                kv_mul, head_dim, kv_dim,
-                kv_all_off, pos, kv_dtype
+                k_cache_l, k_cache_s, qkv, att,
+                num_heads, kv_mul, head_dim, kv_dim,
+                kv_all_off, pos, group_size, key_dtype
             );
         }
 
         attn_weighted_sum_all_heads(
-            v_cache_l, att, qkv_out, num_heads,
-            kv_mul, head_dim, kv_dim, kv_all_off,
-            pos, prefill_size, kv_dtype
+            v_cache_l, v_cache_s, att, qkv_out,
+            num_heads, kv_mul, head_dim, kv_dim,
+            kv_all_off, pos, group_size,
+            prefill_size, value_dtype
         );
     }
+
+    #ifdef PRINT_LOGITS
+        if (!warm_up) {
+            for (size_t i = 0; i < prefill_size; ++i) {
+                state->att->printDebug("att", {i});
+                state->qkv_out->printDebug("qkv_out", {i});
+            }
+        }
+    #endif
 }

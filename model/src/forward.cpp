@@ -323,14 +323,16 @@ void forward_text_prefill(
 
     const size_t qkv_stride = (num_heads + 2 * num_kv_heads) * head_dim;
 
-    const size_t kv_pos_off = 1ll * pos * head_dim;
-    const size_t kv_all_off = 1ll * seq_len * head_dim;
-    const size_t kv_pos_off_bytes = kv_pos_off * state->key_cache->get_dtype_size();
-
     const DType::Type dtype_weight = weight->token_embedding_table->dtype;
     const DType::Type dtype_scale = weight->token_embedding_table->scale_dtype;
     const size_t text_group_size = weight->token_embedding_table->group_size;
+    const size_t cache_group_size = config->cache_group_size;
     const bool text_gq = config->group_quantized ? true : false;
+
+    const size_t kv_pos_off = 1ll * pos * head_dim;
+    const size_t kv_all_off = 1ll * seq_len * head_dim;
+    const size_t kv_pos_off_bytes = kv_pos_off * state->key_cache->get_dtype_size();
+    const size_t kv_pos_scale_off = kv_pos_off / text_group_size;
 
     int num_img_tokens = 0;
     size_t first_img_token = 0;
@@ -376,6 +378,10 @@ void forward_text_prefill(
         #endif
     }
 
+    float *q_ptr = (float *)state->qkv->ptr();
+    float *k_ptr = q_ptr + num_heads * head_dim;
+    const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
+
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         {
             #ifdef CPU_TIME_OUTSIDE
@@ -389,10 +395,12 @@ void forward_text_prefill(
             );
         }
 
-        float *q_ptr = (float *)state->qkv->ptr();
-        float *k_ptr = q_ptr + num_heads * head_dim;
-        const char *k_cache_l = (const char *)state->key_cache->ptr({0, l});
-        const char *v_cache_l = (const char *)state->value_cache->ptr({0, l});
+        PtrPair k_cache_l_pair = state->key_cache->ptr_all({0, l});
+        PtrPair v_cache_l_pair = state->value_cache->ptr_all({0, l});
+        const char *k_cache_l = (const char *)(k_cache_l_pair.buf);
+        const char *v_cache_l = (const char *)(v_cache_l_pair.buf);
+        float *k_cache_s = (float *)(k_cache_l_pair.scale);
+        float *v_cache_s = (float *)(v_cache_l_pair.scale);
 
         {
             #ifdef CPU_TIME_OUTSIDE
@@ -401,24 +409,19 @@ void forward_text_prefill(
             fused_rms_rotary_q_dispatch(
                 state->qkv, weight->w_attn_q_norm, state->cos_tensor,
                 state->sin_tensor, num_heads, head_dim, prefill_size,
-                qkv_stride, 1ll * l, pos, config->rms_norm_eps
+                qkv_stride, 1ll * l, pos, config->rms_norm_eps, warm_up
             );
             char *k_cache_ptr = (char *)(k_cache_l + kv_pos_off_bytes);
+            float *k_cache_s_ptr = state->key_cache->dtype == DType::INT8
+                ? (k_cache_s + kv_pos_scale_off) : nullptr;
             fused_rms_rotary_k_dispatch(
-                k_ptr, k_cache_ptr, weight->w_attn_k_norm, state->cos_tensor,
-                state->sin_tensor, num_kv_heads, head_dim, prefill_size,
-                qkv_stride, state->qkv->dtype, state->key_cache->dtype,
-                1ll * l, kv_all_off, pos, config->rms_norm_eps
+                k_ptr, k_cache_ptr, k_cache_s_ptr, state->key_cache,
+                weight->w_attn_k_norm, state->cos_tensor, state->sin_tensor,
+                num_kv_heads, head_dim, prefill_size, qkv_stride,
+                state->qkv->dtype, state->key_cache->dtype, 1ll * l,
+                kv_all_off, pos, config->rms_norm_eps,
+                cache_group_size, warm_up
             );
-
-            #ifdef PRINT_LOGITS
-                if (!warm_up) {
-                    for (size_t i = 0; i < prefill_size; ++i) { 
-                        state->qkv->printDebug("q", {i}); 
-                        state->qkv->printDebug("k", {i, (size_t)num_heads});
-                    }
-                }
-            #endif
         }
 
         {
@@ -426,47 +429,12 @@ void forward_text_prefill(
                 CPUTimer timer("text_kv_cache_update");
             #endif
 
-            if (state->value_cache->dtype == DType::FP32) {
-                float *v_cache_base_ptr = (float *)(v_cache_l) + kv_pos_off;
-                const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
-
-                for (size_t b = 0; b < prefill_size; ++b) {
-                    const float *v_now_ptr = v_now_base_ptr + b * qkv_stride;
-                    float *v_cache_ptr = v_cache_base_ptr + b * head_dim;
-                    for (int h = 0; h < num_kv_heads; h++) {
-                        memcpy(v_cache_ptr + h * kv_all_off, v_now_ptr + h * head_dim, head_dim * sizeof(float));
-                    }
-                }
-            } else {
-                // fp16 path
-                uint16_t *v_cache_base_ptr = (uint16_t *)(v_cache_l) + kv_pos_off;
-                const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
-
-                #pragma omp parallel for
-                for (size_t b = 0; b < prefill_size; ++b) {
-                    const float *v_now_ptr = v_now_base_ptr + b * qkv_stride;
-                    uint16_t *v_cache_ptr = v_cache_base_ptr + b * head_dim;
-                    for (int h = 0; h < num_kv_heads; h++) {
-                        const float *src = v_now_ptr + h * head_dim;
-                        uint16_t *dst = v_cache_ptr + h * kv_all_off;
-
-                        // process 8 floats at a time
-                        int i = 0;
-
-                        #if defined(__F16C__)
-                            for (; i + 8 <= head_dim; i += 8) {
-                                __m256 v = _mm256_loadu_ps(src + i);                     // load 8 floats
-                                __m128i h16 = _mm256_cvtps_ph(v, _MM_FROUND_TO_NEAREST_INT); // convert to 8 fp16
-                                _mm_storeu_si128((__m128i*)(dst + i), h16);              // store 8 fp16 (16 bytes)
-                            }
-                        #endif
-
-                        for (; i < head_dim; i++) {
-                            dst[i] = (half_cpu)(src[i]);
-                        }
-                    }
-                }
-            }
+            copy_to_v_cache(
+                v_now_base_ptr, (char *)v_cache_l, v_cache_s,
+                state->value_cache->dtype, prefill_size, qkv_stride,
+                head_dim, num_kv_heads, kv_pos_off, kv_all_off,
+                kv_pos_scale_off, cache_group_size, warm_up
+            );
         }
 
         if (l == config->num_hidden_layers - 1) return;
@@ -477,19 +445,13 @@ void forward_text_prefill(
             #endif
 
             fused_att_dispatch(
-                k_cache_l, v_cache_l, state->qkv, state->att,
-                state->qkv_out, num_heads, head_dim, kv_mul, kv_dim, 
-                kv_all_off, pos, state->key_cache->dtype, prefill_size
+                k_cache_l, v_cache_l, k_cache_s, v_cache_s,
+                state->qkv, state->att, state->qkv_out,
+                num_heads, head_dim, kv_mul, kv_dim,
+                kv_all_off, pos, state->key_cache->dtype,
+                state->value_cache->dtype, cache_group_size,
+                prefill_size, warm_up
             );
-
-            #ifdef PRINT_LOGITS
-                if (!warm_up) {
-                    for (size_t i = 0; i < prefill_size; ++i) {
-                        state->att->printDebug("att", {i});
-                        state->qkv_out->printDebug("qkv_out", {i});
-                    }
-                }
-            #endif
         }
 
         {
@@ -534,16 +496,8 @@ void forward_text_prefill(
                 state->x, state->t, state->gate, state->up, prefill_size,
                 hidden_size, config->intermediate_size, weight->w_mlp_gate->dtype,
                 weight->w_mlp_gate->scale_dtype, text_gq, config->rms_norm_eps,
-                text_group_size, 1ll * l
+                text_group_size, 1ll * l, warm_up
             );
-
-            #ifdef PRINT_LOGITS
-                if (!warm_up) {
-                    for (size_t i = 0; i < prefill_size; ++i) { 
-                        state->gate->printDebug("gate", {i});
-                    }
-                }
-            #endif
 
             PtrPair w_down = weight->w_mlp_down->ptr_all({l});
             linear(
@@ -603,14 +557,16 @@ size_t forward_text_decode(
 
     const size_t qkv_stride = (num_heads + 2 * num_kv_heads) * head_dim;
 
-    const size_t kv_pos_off = 1ll * pos * head_dim;
-    const size_t kv_all_off = 1ll * seq_len * head_dim;
-    const size_t kv_pos_off_bytes = kv_pos_off * state->key_cache->get_dtype_size();
-
     const DType::Type dtype_weight = weight->token_embedding_table->dtype;
     const DType::Type dtype_scale = weight->token_embedding_table->scale_dtype;
     const size_t text_group_size = weight->token_embedding_table->group_size;
+    const size_t cache_group_size = config->cache_group_size;
     const bool text_gq = config->group_quantized ? true : false;
+
+    const size_t kv_pos_off = 1ll * pos * head_dim;
+    const size_t kv_all_off = 1ll * seq_len * head_dim;
+    const size_t kv_pos_off_bytes = kv_pos_off * state->key_cache->get_dtype_size();
+    const size_t kv_pos_scale_off = kv_pos_off / text_group_size;
     
     {
         #ifdef CPU_TIME_OUTSIDE
@@ -629,6 +585,10 @@ size_t forward_text_decode(
         #endif
     }
 
+    float *q_ptr = (float *)state->qkv->ptr();
+    float *k_ptr = q_ptr + num_heads * head_dim;
+    const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
+
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         {
             #ifdef CPU_TIME_OUTSIDE
@@ -642,11 +602,12 @@ size_t forward_text_decode(
             );
         }
 
-        float *q_ptr = (float *)state->qkv->ptr();
-        float *k_ptr = q_ptr + num_heads * head_dim;
-
-        const char *k_cache_l = (const char *)state->key_cache->ptr({0, l});
-        const char *v_cache_l = (const char *)state->value_cache->ptr({0, l});
+        PtrPair k_cache_l_pair = state->key_cache->ptr_all({0, l});
+        PtrPair v_cache_l_pair = state->value_cache->ptr_all({0, l});
+        const char *k_cache_l = (const char *)(k_cache_l_pair.buf);
+        const char *v_cache_l = (const char *)(v_cache_l_pair.buf);
+        float *k_cache_s = (float *)(k_cache_l_pair.scale);
+        float *v_cache_s = (float *)(v_cache_l_pair.scale);
         
         {
             #ifdef CPU_TIME_OUTSIDE
@@ -654,23 +615,19 @@ size_t forward_text_decode(
             #endif
             fused_rms_rotary_q_dispatch(
                 state->qkv, weight->w_attn_q_norm, state->cos_tensor,
-                state->sin_tensor, num_heads, head_dim, 1,
-                qkv_stride, 1ll * l, pos, config->rms_norm_eps
+                state->sin_tensor, num_heads, head_dim, 1, qkv_stride,
+                1ll * l, pos, config->rms_norm_eps, warm_up
             );
             char *k_cache_ptr = (char *)(k_cache_l + kv_pos_off_bytes);
+            float *k_cache_s_ptr = state->key_cache->dtype == DType::INT8
+                ? (k_cache_s + kv_pos_scale_off) : nullptr;
             fused_rms_rotary_k_dispatch(
-                k_ptr, k_cache_ptr, weight->w_attn_k_norm, state->cos_tensor,
-                state->sin_tensor, num_kv_heads, head_dim, 1,
-                qkv_stride, state->qkv->dtype, state->key_cache->dtype,
-                1ll * l, kv_all_off, pos, config->rms_norm_eps
+                k_ptr, k_cache_ptr, k_cache_s_ptr, state->key_cache,
+                weight->w_attn_k_norm, state->cos_tensor, state->sin_tensor,
+                num_kv_heads, head_dim, 1, qkv_stride, state->qkv->dtype,
+                state->key_cache->dtype, 1ll * l, kv_all_off, pos,
+                config->rms_norm_eps, cache_group_size, warm_up
             );
-
-            #ifdef PRINT_LOGITS
-                if (!warm_up) {
-                    state->q->printDebug("q");
-                    state->k->printDebug("k");
-                }
-            #endif
         }
 
         {
@@ -678,38 +635,12 @@ size_t forward_text_decode(
                 CPUTimer timer("decode_v_cache_update");
             #endif
 
-            if (state->value_cache->dtype == DType::FP32) {
-                float *v_cache_ptr = (float *)(v_cache_l) + kv_pos_off;
-                const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
-
-                for (int h = 0; h < num_kv_heads; h++) {
-                    memcpy(v_cache_ptr + h * kv_all_off, v_now_base_ptr + h*head_dim, head_dim*sizeof(float));
-                }
-            } else {
-                // fp16 path
-                uint16_t *v_cache_ptr = (uint16_t *)(v_cache_l) + kv_pos_off;
-                const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
-
-                for (size_t h = 0; h < num_kv_heads; h++) {
-                    const float *src = v_now_base_ptr + h*head_dim;
-                    uint16_t *dst = v_cache_ptr + h * kv_all_off;
-
-                    // process 8 floats at a time
-                    int i = 0;
-                    
-                    #if defined(__F16C__)
-                        for (; i + 8 <= head_dim; i += 8) {
-                            __m256 v = _mm256_loadu_ps(src + i);                     // load 8 floats
-                            __m128i h16 = _mm256_cvtps_ph(v, _MM_FROUND_TO_NEAREST_INT); // convert to 8 fp16
-                            _mm_storeu_si128((__m128i*)(dst + i), h16);              // store 8 fp16 (16 bytes)
-                        }
-                    #endif
-
-                    for (; i < head_dim; i++) {
-                        dst[i] = (half_cpu)(src[i]);
-                    }
-                }
-            }
+            copy_to_v_cache(
+                v_now_base_ptr, (char *)v_cache_l, v_cache_s,
+                state->value_cache->dtype, 1, qkv_stride,
+                head_dim, num_kv_heads, kv_pos_off, kv_all_off,
+                kv_pos_scale_off, cache_group_size, warm_up
+            );
         }
 
         {
@@ -718,16 +649,13 @@ size_t forward_text_decode(
             #endif
 
             fused_att_dispatch(
-                k_cache_l, v_cache_l, state->qkv, state->att,
-                state->qkv_out, num_heads, head_dim, kv_mul, kv_dim, 
-                kv_all_off, pos, state->key_cache->dtype, 1
+                k_cache_l, v_cache_l, k_cache_s, v_cache_s,
+                state->qkv, state->att, state->qkv_out,
+                num_heads, head_dim, kv_mul, kv_dim,
+                kv_all_off, pos, state->key_cache->dtype,
+                state->value_cache->dtype,
+                cache_group_size, 1, warm_up
             );
-
-            #ifdef PRINT_LOGITS
-                if (!warm_up) {
-                    state->qkv_out->printDebug("qkv_out");
-                }
-            #endif
         }
 
         {
@@ -760,14 +688,8 @@ size_t forward_text_decode(
                 state->t, state->x, state->gate, state->up, 1,
                 hidden_size, config->intermediate_size, weight->w_mlp_gate->dtype,
                 weight->w_mlp_gate->scale_dtype, text_gq, config->rms_norm_eps,
-                text_group_size, 1ll * l
+                text_group_size, 1ll * l, warm_up
             );
-
-            #ifdef PRINT_LOGITS
-                if (!warm_up) {
-                    state->gate->printDebug("gate");
-                }
-            #endif
 
             PtrPair w_down = weight->w_mlp_down->ptr_all({l});
             linear(

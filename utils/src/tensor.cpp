@@ -8,6 +8,7 @@ const char* dtypeToStr(DType::Type dtype) {
         case DType::FP16: return "FP16";
         case DType::INT8: return "INT8";
         case DType::INT4: return "INT4";
+        case DType::NONETYPE: return "NoneType";
         default: return "Unknown";
     }
 }
@@ -28,6 +29,40 @@ Tensor::Tensor(
     CHECK_ALLOC(buf, N_ * each_elem);
 
     printf("Allocate tensor with size %lf MB\n", double(N_ * each_elem) / 1024.0 / 1024.0);
+}
+
+Tensor::Tensor(
+    const vector<size_t> &shape_, DType::Type dtype_,
+    DType::Type scale_dtype_, size_t group_size_
+) : shape(shape_), dtype(dtype_), owns_host_buf(true), scale_dtype(scale_dtype_), group_size(group_size_), group_quantized(true) {
+    if (dtype != DType::FP32 && dtype != DType::FP16 && dtype != DType::INT8) {
+        fprintf(stderr, "Dtype not implemented %s\n", dtypeToStr(dtype));
+        exit(1);   
+    }
+
+    ndim = shape_.size();
+    size_t N_ = num_elem();
+    size_t each_elem = get_dtype_size();
+    size_t each_scale_elem = get_dtype_size(true);
+
+    if (N_ % group_size_) {
+        fprintf(stderr, "Allocate tensor error: number of elements %zu doesn't divide to group size %zu", N_, group_size_);
+        exit(1);
+    }
+
+    size_t N_scale_ = N_ / group_size;
+
+    buf = calloc(N_, each_elem);
+    CHECK_ALLOC(buf, N_ * each_elem);
+    scale_buf = calloc(N_scale_, each_scale_elem);
+    CHECK_ALLOC(scale_buf, N_scale_ * each_scale_elem);
+
+    printShape("output");
+    printf("N_=%zu, N_scale_=%zu, group_size=%zu, size tensor=%lf, size scale=%lf\n",
+        N_, N_scale_, group_size_, double(N_ * each_elem) / 1024.0 / 1024.0, double(N_scale_ * each_scale_elem) / 1024.0 / 1024.0);
+
+    printf("Allocate tensor with size %lf MB\n", double(N_ * each_elem) / 1024.0 / 1024.0);
+    printf("Allocate tensor scale with size %lf MB\n", double(N_scale_ * each_scale_elem) / 1024.0 / 1024.0);
 }
 
 Tensor::Tensor(
@@ -379,19 +414,21 @@ void Tensor::printDebug(const std::string &descr, const std::vector<size_t> &ind
                     printf("%.2f ", (float)(fp16_buf[i]));
                 }
             }
-        } else if (dtype == DType::INT32) {
-            int *int32_buf = (int *)buf_print;
+        } else if (dtype == DType::INT8) {
+            int8_t *int8_buf = (int8_t *)buf_print;
+            float *fp32_scale_buf = (float *)ptr(indices, true);
             if (full_tensor) {
                 printf("\n");
                 for (size_t i = 0; i < batches; i++) {
                     for (size_t j = 0; j < elem; j++) {
-                        printf("%d ", int32_buf[i * elem + j]);
+                        size_t id = i * elem + j;
+                        printf("%.2f ", (float)(int8_buf[id]) * fp32_scale_buf[id / group_size]);
                     }
                     printf("\n");
                 }
             } else {
                 for (size_t i = 0; i < elem; i++) {
-                    printf("%d ", int32_buf[i]);
+                    printf("%.2f ", (float)(int8_buf[i]) * fp32_scale_buf[0]);
                 }
             }
         }

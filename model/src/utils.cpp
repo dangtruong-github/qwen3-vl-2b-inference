@@ -174,12 +174,14 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
             generated_tokens[total_generated_count++] = next;
 
             #ifdef PRINT_LOGITS
-                printf("%d %s\n", next, tokenizer->vocab[next]);
+                printf("%zu %s\n", next, tokenizer->vocab[next]);
+                /*
                 printf("Logits: ");
                 for (int i = 0; i < 5; i++) {
                     printf("%.6f ", logits[i]);
                 }
                 printf("\n");
+                */
                 if (pos >= orig_pos + 10) {
                     exit(1);
                 }
@@ -279,7 +281,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
     }
 
     double avg_ttft = first_tok_gen_time_total / sample_count;
-    double avg_tps = new_tokens_gen_num * sample_count / gen_time_total;
+    double avg_tps = new_tokens_gen_num / gen_time_total;
 
     fclose(in_file);
     fclose(in_img_file);

@@ -54,8 +54,11 @@ struct Tensor {
     // Constructors & Destructor
     // FP32 and FP16
     Tensor(
-        const std::vector<size_t> &shape_,
-        DType::Type dtype_ = DType::FP32
+        const vector<size_t> &shape_, DType::Type dtype_ = DType::FP32
+    );
+    Tensor(
+        const vector<size_t> &shape_, DType::Type dtype_,
+        DType::Type scale_dtype_, size_t group_size_
     );
     Tensor(
         const std::vector<size_t> &shape_, void *buf_,

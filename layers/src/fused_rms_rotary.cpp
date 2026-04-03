@@ -84,8 +84,8 @@ void fused_rms_rotary_q(
 void fused_rms_rotary_q_dispatch(
     Tensor *qkv, const Tensor *w_attn_q_norm, const Tensor *cos_tensor,
     const Tensor *sin_tensor, const size_t num_heads, const size_t head_dim,
-    const size_t prefill_size, const size_t qkv_stride,
-    const size_t layer_offset, const int pos, const float eps
+    const size_t prefill_size, const size_t qkv_stride, const size_t layer_offset,
+    const int pos, const float eps, bool warm_up
 ) {
     if (
         qkv->dtype == DType::FP32 && w_attn_q_norm->dtype == DType::INT8
@@ -116,6 +116,14 @@ void fused_rms_rotary_q_dispatch(
             prefill_size, num_heads, head_dim, pos, qkv_stride
         );
     }
+
+    #ifdef PRINT_LOGITS
+        if (!warm_up) {
+            for (size_t i = 0; i < prefill_size; ++i) { 
+                qkv->printDebug("q");
+            }
+        }
+    #endif
 }
 
 void fused_rms_rotary_k(
@@ -202,29 +210,18 @@ void fused_rms_rotary_k(
 }
 
 void fused_rms_rotary_k_dispatch(
-    float *k_ptr, char *k_cache_ptr, const Tensor *w_attn_k_norm, const Tensor *cos_tensor,
-    const Tensor *sin_tensor, const size_t num_kv_heads, const size_t head_dim,
-    const size_t prefill_size, const size_t qkv_stride, const DType::Type k_type,
-    const DType::Type cache_type, const size_t layer_offset, const size_t kv_all_off,
-    const int pos, const float eps
+    float *k_ptr, char *k_cache_ptr, float *k_cache_s_ptr, const Tensor *key_cache, 
+    const Tensor *w_attn_k_norm, const Tensor *cos_tensor, const Tensor *sin_tensor,
+    const size_t num_kv_heads, const size_t head_dim, const size_t prefill_size,
+    const size_t qkv_stride, const DType::Type k_type, const DType::Type cache_type,
+    const size_t layer_offset, const size_t kv_all_off, const int pos,
+    const float eps, const size_t group_size, bool warm_up
 ) {
     if (
         k_type == DType::FP32 && w_attn_k_norm->dtype == DType::INT8
         && w_attn_k_norm->scale_dtype == DType::FP32 && cos_tensor->dtype == DType::FP32
         && sin_tensor->dtype == DType::FP32 && cache_type == DType::FP16
     ) {
-        /*
-        rms_norm_inplace(
-            k_ptr, w_attn_k_norm, eps, num_kv_heads,
-            layer_offset, prefill_size, qkv_stride
-        );    
-        apply_rotary_cache(
-            k_ptr, k_cache_ptr, cos_tensor, sin_tensor,
-            prefill_size, num_kv_heads, head_dim, pos,
-            kv_all_off, cache_type, qkv_stride
-        );
-        */
-
         PtrPair scale_ptr = w_attn_k_norm->ptr_all({layer_offset});
 
         const float *__restrict cos_row_base = 
@@ -244,9 +241,21 @@ void fused_rms_rotary_k_dispatch(
             layer_offset, prefill_size, qkv_stride
         );    
         apply_rotary_cache(
-            k_ptr, k_cache_ptr, cos_tensor, sin_tensor,
-            prefill_size, num_kv_heads, head_dim, pos,
-            kv_all_off, cache_type, qkv_stride
+            k_ptr, k_cache_ptr, k_cache_s_ptr,
+            cos_tensor, sin_tensor, prefill_size,
+            num_kv_heads, head_dim, pos, kv_all_off,
+            cache_type, qkv_stride, group_size
         );
     }
+
+    #ifdef PRINT_LOGITS
+        if (!warm_up) {
+            fflush(stdout);
+            for (size_t i = 0; i < prefill_size; ++i) {
+                for (size_t h_id = 0; h_id < num_kv_heads; ++h_id) {
+                    key_cache->printDebug("key_cache", {0, layer_offset, h_id, (size_t)(pos + i)});
+                }
+            }
+        }
+    #endif
 }

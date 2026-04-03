@@ -1010,8 +1010,8 @@ void fused_rms_mlp_swiglu_dispatch(
     const Tensor *x, Tensor *t, Tensor *gate, Tensor *up, const size_t M,
     const size_t hidden_size, const size_t inter_dim,
     const DType::Type dtype_w, const DType::Type dtype_s,
-    const bool text_gq, const float eps,
-    const size_t group_size, const size_t layer_offset
+    const bool text_gq, const float eps, const size_t group_size,
+    const size_t layer_offset, bool warm_up
 ) {
     #if defined(__AVX2__) && defined(__FMA__)
         if (
@@ -1106,5 +1106,13 @@ void fused_rms_mlp_swiglu_dispatch(
         );
         
         swiglu(gate, up, M * inter_dim);
+    #endif
+
+    #ifdef PRINT_LOGITS
+        if (!warm_up) {
+            for (size_t i = 0; i < prefill_size; ++i) { 
+                state->gate->printDebug("gate", {i});
+            }
+        }
     #endif
 }

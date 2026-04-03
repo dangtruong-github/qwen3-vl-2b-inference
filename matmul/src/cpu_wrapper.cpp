@@ -695,69 +695,277 @@ void gemm_att_multiple_scale(
 
 void qk_att_fp32(
     const float *mat_A, const float *mat_B, float *mat_C,
-    const float scale, size_t kv_mul, size_t seq_len,
-    size_t head_dim, const size_t max_pos
+    const float scale, float *max_row, size_t kv_mul,
+    size_t seq_len, size_t head_dim, const size_t max_pos
 ) {
-    #pragma omp parallel for collapse(2)
-    for (size_t i = 0; i < kv_mul; ++i) {
-        for (size_t j = 0; j < max_pos; ++j) {
+    if (max_row) {
+        for (size_t i = 0; i < kv_mul; ++i) {
+            float *mat_C_now = mat_C + i * seq_len;
 
-            float sum = 0.0f;
+            #if defined(_OPENMP) && (_OPENMP >= 201307)  // OpenMP 4.0+ (safe for max reduction)
+                float row_max = -INFINITY;
 
-            for (size_t k = 0; k < head_dim; ++k) {
-                float a = mat_A[i * head_dim + k];
-                float b = (float)(mat_B[j * head_dim + k]);
+                #pragma omp parallel for reduction(max:row_max)
+                for (size_t j = 0; j < max_pos; ++j) {
+                    float sum = 0.0f;
 
-                sum += a * b;
-            }
+                    for (size_t k = 0; k < head_dim; ++k) {
+                        float a = mat_A[i * head_dim + k];
+                        float b = (float)(mat_B[j * head_dim + k]);
+                        sum += a * b;
+                    }
 
-            mat_C[i * seq_len + j] = sum * scale;
+                    float value = sum * scale;
+                    mat_C_now[j] = value;
+
+                    row_max = std::max(row_max, value);
+                }
+
+                max_row[i] = row_max;
+
+            #else
+                // 🔁 Fallback: manual reduction (portable)
+
+                float row_max = -INFINITY;
+
+                #pragma omp parallel
+                {
+                    float local_max = -INFINITY;
+
+                    #pragma omp for nowait
+                    for (size_t j = 0; j < max_pos; ++j) {
+                        float sum = 0.0f;
+
+                        for (size_t k = 0; k < head_dim; ++k) {
+                            float a = mat_A[i * head_dim + k];
+                            float b = (float)(mat_B[j * head_dim + k]);
+                            sum += a * b;
+                        }
+
+                        float value = sum * scale;
+                        mat_C_now[j] = value;
+
+                        local_max = std::max(local_max, value);
+                    }
+
+                    #pragma omp critical
+                    {
+                        row_max = std::max(row_max, local_max);
+                    }
+                }
+
+                max_row[i] = row_max;
+
+            #endif
         }
-    }
-}
-
-void qk_att_f32a_f16b_f32c(
-    const float *mat_A, const half_cpu *mat_B, float *mat_C,
-    const float scale, size_t kv_mul, size_t seq_len,
-    size_t head_dim, const size_t max_pos
-) {
-    #if defined(__AVX512F__) && defined(__AVX512DQ__)
-        qk_att_f32a_f16b_f32c_avx2_wrapper(
-            mat_A, mat_B, mat_C, scale,
-            kv_mul, seq_len, head_dim, max_pos
-        );
-    #elif defined(__AVX2__) && defined(__FMA__)
-        qk_att_f32a_f16b_f32c_avx2_wrapper(
-            mat_A, mat_B, mat_C, scale,
-            kv_mul, seq_len, head_dim, max_pos
-        );
-    #else
-        #pragma omp parallel for collapse(2)
+    } else {
+        #pragma omp parallel for collapse(2) schedule(static)
         for (size_t i = 0; i < kv_mul; ++i) {
             for (size_t j = 0; j < max_pos; ++j) {
-
                 float sum = 0.0f;
 
                 for (size_t k = 0; k < head_dim; ++k) {
                     float a = mat_A[i * head_dim + k];
-                    float b = (float)(mat_B[j * head_dim + k]);
-
+                    float b = mat_B[j * head_dim + k];
                     sum += a * b;
                 }
 
                 mat_C[i * seq_len + j] = sum * scale;
             }
         }
-    #endif
+    }
+}
+
+void qk_att_f32a_f16b_f32c(
+    const float *mat_A, const half_cpu *mat_B, float *mat_C,
+    const float scale, float *max_row, size_t kv_mul,
+    size_t seq_len, size_t head_dim, const size_t max_pos
+) {
+    if (max_row) {
+        for (size_t i = 0; i < kv_mul; ++i) {
+            float *mat_C_now = mat_C + i * seq_len;
+
+            #if defined(_OPENMP) && (_OPENMP >= 201307)  // OpenMP 4.0+ (safe for max reduction)
+                float row_max = -INFINITY;
+
+                #pragma omp parallel for reduction(max:row_max)
+                for (size_t j = 0; j < max_pos; ++j) {
+                    float sum = 0.0f;
+
+                    for (size_t k = 0; k < head_dim; ++k) {
+                        float a = mat_A[i * head_dim + k];
+                        float b = (float)(mat_B[j * head_dim + k]);
+                        sum += a * b;
+                    }
+
+                    float value = sum * scale;
+                    mat_C_now[j] = value;
+
+                    row_max = std::max(row_max, value);
+                }
+
+                max_row[i] = row_max;
+
+            #else
+                // 🔁 Fallback: manual reduction (portable)
+
+                float row_max = -INFINITY;
+
+                #pragma omp parallel
+                {
+                    float local_max = -INFINITY;
+
+                    #pragma omp for nowait
+                    for (size_t j = 0; j < max_pos; ++j) {
+                        float sum = 0.0f;
+
+                        for (size_t k = 0; k < head_dim; ++k) {
+                            float a = mat_A[i * head_dim + k];
+                            float b = (float)(mat_B[j * head_dim + k]);
+                            sum += a * b;
+                        }
+
+                        float value = sum * scale;
+                        mat_C_now[j] = value;
+
+                        local_max = std::max(local_max, value);
+                    }
+
+                    #pragma omp critical
+                    {
+                        row_max = std::max(row_max, local_max);
+                    }
+                }
+
+                max_row[i] = row_max;
+
+            #endif
+        }
+    } else {
+        #pragma omp parallel for collapse(2) schedule(static)
+        for (size_t i = 0; i < kv_mul; ++i) {
+            for (size_t j = 0; j < max_pos; ++j) {
+                float sum = 0.0f;
+
+                for (size_t k = 0; k < head_dim; ++k) {
+                    float a = mat_A[i * head_dim + k];
+                    float b = (float)(mat_B[j * head_dim + k]);
+                    sum += a * b;
+                }
+
+                mat_C[i * seq_len + j] = sum * scale;
+            }
+        }
+    }      
+}
+
+void qk_att_f32a_i8f32b_f32c(
+    const float *mat_A, const int8_t *mat_B, const float *mat_B_scales,
+    float *mat_C, const float scale, float *max_row, size_t kv_mul,
+    size_t seq_len, size_t head_dim, const size_t max_pos, const size_t group_size
+) {
+    if (max_row) {
+        for (size_t i = 0; i < kv_mul; ++i) {
+            float *mat_C_now = mat_C + i * seq_len;
+
+            #if defined(_OPENMP) && (_OPENMP >= 201307)  // OpenMP 4.0+ (safe for max reduction)
+                float row_max = -INFINITY;
+
+                #pragma omp parallel for reduction(max:row_max)
+                for (size_t j = 0; j < max_pos; ++j) {
+                    float sum = 0.0f;
+
+                    for (size_t k = 0; k < head_dim; ++k) {
+                        float a = mat_A[i * head_dim + k];
+                        size_t b_id = j * head_dim + k;
+                        float b = (float)(mat_B[b_id]) * (float)(mat_B_scales[b_id / group_size]);
+                        sum += a * b;
+                    }
+
+                    float value = sum * scale;
+                    mat_C_now[j] = value;
+
+                    row_max = std::max(row_max, value);
+                }
+
+                max_row[i] = row_max;
+
+            #else
+                // 🔁 Fallback: manual reduction (portable)
+
+                float row_max = -INFINITY;
+
+                #pragma omp parallel
+                {
+                    float local_max = -INFINITY;
+
+                    #pragma omp for nowait
+                    for (size_t j = 0; j < max_pos; ++j) {
+                        float sum = 0.0f;
+
+                        for (size_t k = 0; k < head_dim; ++k) {
+                            float a = mat_A[i * head_dim + k];
+                            size_t b_id = j * head_dim + k;
+                            float b = (float)(mat_B[b_id]) * (float)(mat_B_scales[b_id / group_size]);
+                            sum += a * b;
+                        }
+
+                        float value = sum * scale;
+                        mat_C_now[j] = value;
+
+                        local_max = std::max(local_max, value);
+                    }
+
+                    #pragma omp critical
+                    {
+                        row_max = std::max(row_max, local_max);
+                    }
+                }
+
+                max_row[i] = row_max;
+
+            #endif
+        }
+    } else {
+        #pragma omp parallel for collapse(2) schedule(static)
+        for (size_t i = 0; i < kv_mul; ++i) {
+            for (size_t j = 0; j < max_pos; ++j) {
+                float sum = 0.0f;
+
+                for (size_t k = 0; k < head_dim; ++k) {
+                    float a = mat_A[i * head_dim + k];
+                    size_t b_id = j * head_dim + k;
+                    float b = (float)(mat_B[b_id]) * (float)(mat_B_scales[b_id / group_size]);
+                    sum += a * b;
+                }
+
+                mat_C[i * seq_len + j] = sum * scale;
+            }
+        }
+    }      
 }
 
 void gemm_text_qk_att(
-    const void *mat_A, const void *mat_B, void *mat_C,
-    const float scale, size_t kv_mul, size_t seq_len,
-    size_t head_dim, const size_t max_pos,
-    DType::Type type_a, DType::Type type_b, DType::Type type_c
+    const void *mat_A, const void *mat_B, const void *mat_B_scales,
+    void *mat_C, const float scale, float *max_row, size_t kv_mul,
+    size_t seq_len, size_t head_dim, const size_t max_pos,
+    const size_t group_size, DType::Type type_a, DType::Type type_b,
+    DType::Type type_b_s, DType::Type type_c
 ) {
     if (
+        type_a == DType::FP32 && type_b == DType::INT8
+        && type_b_s == DType::FP32 && type_c == DType::FP32
+    ) {
+        qk_att_f32a_i8f32b_f32c(
+            static_cast<const float *>(mat_A),
+            static_cast<const int8_t *>(mat_B),
+            static_cast<const float *>(mat_B_scales),
+            static_cast<float *>(mat_C),
+            scale, max_row, kv_mul, seq_len,
+            head_dim, max_pos, group_size
+        );
+        return;
+    } else if (
         type_a == DType::FP32 && type_b == DType::FP16
         && type_c == DType::FP32
     ) {
@@ -765,7 +973,8 @@ void gemm_text_qk_att(
             static_cast<const float *>(mat_A),
             static_cast<const half_cpu *>(mat_B),
             static_cast<float *>(mat_C),
-            scale, kv_mul, seq_len, head_dim, max_pos
+            scale, max_row, kv_mul,
+            seq_len, head_dim, max_pos
         );
         return;
     } else if (
@@ -776,7 +985,8 @@ void gemm_text_qk_att(
             static_cast<const float *>(mat_A),
             static_cast<const float *>(mat_B),
             static_cast<float *>(mat_C),
-            scale, kv_mul, seq_len, head_dim, max_pos
+            scale, max_row, kv_mul,
+            seq_len, head_dim, max_pos
         );
         return;
     }
@@ -793,6 +1003,7 @@ void kv_att_fp32(
     // B: [seq_len, head_dim] (row-major, NOT transposed)
     // C: [kv_mul, head_dim]
 
+    #pragma omp parallel for collapse(2)
     for (size_t m = 0; m < kv_mul; ++m) {
         for (size_t n = 0; n < head_dim; ++n) {
 
@@ -817,6 +1028,7 @@ void kv_att_f32a_f16b_f32c(
     // B: [seq_len, head_dim] (row-major, NOT transposed)
     // C: [kv_mul, head_dim]
 
+    #pragma omp parallel for collapse(2)
     for (size_t m = 0; m < kv_mul; ++m) {
         for (size_t n = 0; n < head_dim; ++n) {
 
@@ -833,12 +1045,48 @@ void kv_att_f32a_f16b_f32c(
     }
 }
 
+void kv_att_f32a_i8s32b_f32c(
+    const float *mat_A, const int8_t *mat_B, const float *mat_B_scales,
+    float *mat_C, size_t kv_mul, size_t head_dim,
+    size_t seq_len, const size_t max_pos, const size_t group_size
+) {
+    #pragma omp parallel for collapse(2)
+    for (size_t m = 0; m < kv_mul; ++m) {
+        for (size_t n = 0; n < head_dim; ++n) {
+
+            float acc = 0.0f;
+
+            for (size_t k = 0; k < max_pos; ++k) {
+                float a = mat_A[m * seq_len + k];
+                size_t b_id = k * head_dim + n;
+                float b = (float)(mat_B[b_id]) * (float)(mat_B_scales[b_id / group_size]);
+                acc += a * b;
+            }
+
+            mat_C[m * head_dim + n] = acc;
+        }
+    }
+}
+
 void gemm_text_kv_att(
-    const void *mat_A, const void *mat_B, void *mat_C,
-    size_t kv_mul, size_t head_dim, size_t seq_len, const size_t max_pos,
-    DType::Type type_a, DType::Type type_b, DType::Type type_c
+    const void *mat_A, const void *mat_B, const void *mat_B_scales,
+    void *mat_C, size_t kv_mul, size_t head_dim, size_t seq_len,
+    const size_t max_pos, const size_t group_size, DType::Type type_a,
+    DType::Type type_b, DType::Type type_b_s, DType::Type type_c
 ) {
     if (
+        type_a == DType::FP32 && type_b == DType::INT8
+        && type_b_s == DType::FP32 && type_c == DType::FP32
+    ) {
+        kv_att_f32a_i8s32b_f32c(
+            static_cast<const float *>(mat_A),
+            static_cast<const int8_t *>(mat_B),
+            static_cast<const float *>(mat_B_scales),
+            static_cast<float *>(mat_C),
+            kv_mul, head_dim, seq_len, max_pos, group_size
+        );
+        return;
+    } else if (
         type_a == DType::FP32 && type_b == DType::FP16
         && type_c == DType::FP32
     ) {

@@ -45,6 +45,7 @@ typedef struct {
 
     int max_prefill_size;
     int max_vision_attention_size;
+    int cache_group_size;
 } QwenConfig;
 
 typedef struct {
