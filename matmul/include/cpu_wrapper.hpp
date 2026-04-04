@@ -90,22 +90,16 @@ void f32a_i8f32sb_f32c_avx2_kernel(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t M, size_t N, size_t K, size_t group_size
+    float *__restrict mat_C, size_t M, size_t N,
+    size_t K, size_t group_size, bool add_to_c
 );
 void f32a_i8f32sb_f32c_avx2_prefix_kernel(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
     const int *__restrict sum_int8_B,
-    float *__restrict mat_C,
-    size_t M, size_t N, size_t K, size_t group_size
-);
-void f32a_i8f32sb_f32bias_f32c_avx2_kernel(
-    const float *__restrict mat_A,
-    const int8_t *__restrict mat_B_in,
-    const float *__restrict mat_B_scales,
-    const float *__restrict mat_bias,
-    float *__restrict mat_C, size_t M, size_t N, size_t K, size_t group_size
+    float *__restrict mat_C, size_t M, size_t N,
+    size_t K, size_t group_size, bool add_to_c
 );
 #endif
 
@@ -131,14 +125,15 @@ void f32a_i8f32sb_f32c_avx512_kernel(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t M, size_t N, size_t K, size_t group_size
+    float *__restrict mat_C, size_t M, size_t N,
+    size_t K, size_t group_size, bool add_to_c
 );
 void f32a_i8f32sb_f32c_avx512_prefix_kernel(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
     const int *__restrict sum_int8_B,
-    float *__restrict mat_C,
-    size_t M, size_t N, size_t K, size_t group_size
+    float *__restrict mat_C, size_t M, size_t N,
+    size_t K, size_t group_size, bool add_to_c
 );
 #endif

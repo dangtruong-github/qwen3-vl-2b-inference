@@ -39,6 +39,7 @@ void classifier_gemm(
     size_t vocab_size, size_t hidden_size
 );
 void softmax(float *__restrict x, size_t n);
+void softmax_with_max(float *__restrict x, float max_val, size_t n);
 void add_vector(
     Tensor *__restrict add_to,
     const Tensor *__restrict add_from,

@@ -548,6 +548,111 @@ void softmax(float *__restrict x, size_t n) {
 }
 #endif
 
+
+#if defined(__AVX2__) && defined(__FMA__)
+void softmax_with_max(float *__restrict x, float max_val, size_t n) {
+    if (n == 0) return;
+
+    // ---------- ATTENTION SAFETY ----------
+    // All values are -INF or NaN
+    if (!isfinite(max_val)) {
+        memset(x, 0, n * sizeof(float));
+        return;
+    }
+
+    // -------------------------
+    // 2. exp(x - max) + sum
+    // -------------------------
+    __m256 vsum = _mm256_setzero_ps();
+    __m256 v_max = _mm256_set1_ps(max_val);
+
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        __m256 v = _mm256_loadu_ps(x + i);
+
+        // Mask out -INF lanes BEFORE subtraction
+        __m256 mask = _mm256_cmp_ps(v, _mm256_set1_ps(-INFINITY), _CMP_GT_OQ);
+
+        v = _mm256_sub_ps(v, v_max);
+        v = exp256_ps(v);
+
+        // Zero masked lanes
+        v = _mm256_and_ps(v, mask);
+
+        _mm256_storeu_ps(x + i, v);
+        vsum = _mm256_add_ps(vsum, v);
+    }
+
+    alignas(32) float tmp[8];
+    _mm256_store_ps(tmp, vsum);
+    double sum = 0.0;
+    for (int k = 0; k < 8; k++) {
+        sum += tmp[k];
+    }
+
+    for (; i < n; i++) {
+        float xi = x[i];
+        if (xi == -INFINITY) {
+            x[i] = 0.0f;
+            continue;
+        }
+
+        float t = xi - max_val;
+        __m256 v = exp256_ps(_mm256_set1_ps(t));
+        _mm_store_ss(&x[i], _mm256_castps256_ps128(v));
+        sum += x[i];
+    }
+
+    // ---------- ATTENTION SAFETY ----------
+    if (!(sum > 0.0) || !isfinite(sum)) {
+        memset(x, 0, n * sizeof(float));
+        return;
+    }
+
+    // -------------------------
+    // 3. normalize
+    // -------------------------
+    float inv_sum = (float)(1.0 / sum);
+    __m256 v_inv_sum = _mm256_set1_ps(inv_sum);
+
+    i = 0;
+    for (; i + 8 <= n; i += 8) {
+        __m256 v = _mm256_loadu_ps(x + i);
+        v = _mm256_mul_ps(v, v_inv_sum);
+        _mm256_storeu_ps(x + i, v);
+    }
+
+    for (; i < n; i++) {
+        x[i] *= inv_sum;
+    }
+}
+#else
+void softmax_with_max(float *__restrict x, float max_val, size_t n) {
+    if (n == 0) return;
+
+    // -------------------------
+    // 2. exp + sum
+    // -------------------------
+    float sum = 0.0f;
+
+    #pragma omp simd reduction(+:sum)
+    for (size_t i = 0; i < n; i++) {
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+
+    // -------------------------
+    // 3. normalize
+    // -------------------------
+    float inv_sum = 1.0f / sum;
+
+    #pragma omp simd
+    for (size_t i = 0; i < n; i++) {
+        x[i] *= inv_sum;
+    }
+}
+#endif
+
 void attn_scores_all_heads_prefill(
     const char *__restrict key_cache,
     const float *__restrict key_cache_scale,
@@ -1289,13 +1394,11 @@ void copy_to_v_cache(
         // fp16 path
         uint16_t *v_cache_base_ptr = (uint16_t *)(v_cache_l) + kv_pos_off;
 
-        #pragma omp parallel for
+        #pragma omp parallel for collapse(2)
         for (size_t b = 0; b < prefill_size; ++b) {
-            const float *v_now_ptr = v_now_base_ptr + b * qkv_stride;
-            uint16_t *v_cache_ptr = v_cache_base_ptr + b * head_dim;
             for (int h = 0; h < num_kv_heads; h++) {
-                const float *src = v_now_ptr + h * head_dim;
-                uint16_t *dst = v_cache_ptr + h * kv_all_off;
+                const float *src =  v_now_base_ptr + b * qkv_stride + h * head_dim;
+                uint16_t *dst = v_cache_base_ptr + b * head_dim + h * kv_all_off;
 
                 // process 8 floats at a time
                 int i = 0;

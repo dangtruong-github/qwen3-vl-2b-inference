@@ -462,10 +462,10 @@ void forward_text_prefill(
             PtrPair w_out_proj = weight->w_attn_o->ptr_all({l});
             linear(
                 state->qkv_out->ptr(), w_out_proj.buf, w_out_proj.scale,
-                w_out_proj.sum_int8, nullptr, nullptr, state->t->ptr(), prefill_size,
+                w_out_proj.sum_int8, nullptr, nullptr, state->x->ptr(), prefill_size,
                 hidden_size, hidden_size, !weight->w_attn_o->permuted,
                 state->qkv_out->dtype, dtype_weight, dtype_scale,
-                state->t->dtype, text_gq, text_group_size, false
+                state->t->dtype, text_gq, text_group_size, true
             );
 
             #ifdef PRINT_LOGITS
@@ -475,8 +475,6 @@ void forward_text_prefill(
                     }
                 }
             #endif
-
-            add_vector(state->x, state->t, prefill_size * hidden_size);
 
             #ifdef PRINT_LOGITS
                 if (!warm_up) {
@@ -503,10 +501,10 @@ void forward_text_prefill(
             PtrPair w_down = weight->w_mlp_down->ptr_all({l});
             linear(
                 state->gate->ptr(), w_down.buf, w_down.scale, w_down.sum_int8, 
-                nullptr, nullptr, state->t->ptr(), prefill_size, hidden_size,
+                nullptr, nullptr, state->x->ptr(), prefill_size, hidden_size,
                 config->intermediate_size, !weight->w_mlp_down->permuted,
                 state->gate->dtype, dtype_weight, dtype_scale, state->t->dtype,
-                text_gq, text_group_size, false
+                text_gq, text_group_size, true
             );
 
             #ifdef PRINT_LOGITS
@@ -516,8 +514,6 @@ void forward_text_prefill(
                     }
                 }
             #endif
-
-            add_vector(state->x, state->t, prefill_size * hidden_size);
 
             #ifdef PRINT_LOGITS
                 if (!warm_up) {
@@ -666,15 +662,15 @@ size_t forward_text_decode(
             PtrPair w_out_proj = weight->w_attn_o->ptr_all({l});
             linear(
                 state->qkv_out->ptr(), w_out_proj.buf, w_out_proj.scale,
-                nullptr, state->x->ptr(), nullptr, state->t->ptr(), 1,
+                nullptr, nullptr, nullptr, state->x->ptr(), 1,
                 hidden_size, hidden_size, !weight->w_attn_o->permuted,
                 state->qkv_out->dtype, dtype_weight, dtype_scale,
-                state->t->dtype, text_gq, text_group_size, false
+                state->x->dtype, text_gq, text_group_size, true
             );
 
             #ifdef PRINT_LOGITS
                 if (!warm_up) {
-                    state->t->printDebug("t");
+                    state->x->printDebug("x");
                 }
             #endif
         }
@@ -685,7 +681,7 @@ size_t forward_text_decode(
             #endif
             fused_rms_mlp_swiglu_dispatch(
                 weight->rms_attn_w, weight->w_mlp_gate, weight->w_mlp_up,
-                state->t, state->x, state->gate, state->up, 1,
+                state->x, state->t, state->gate, state->up, 1,
                 hidden_size, config->intermediate_size, weight->w_mlp_gate->dtype,
                 weight->w_mlp_gate->scale_dtype, text_gq, config->rms_norm_eps,
                 text_group_size, 1ll * l, warm_up
@@ -694,10 +690,10 @@ size_t forward_text_decode(
             PtrPair w_down = weight->w_mlp_down->ptr_all({l});
             linear(
                 state->gate->ptr(), w_down.buf, w_down.scale, nullptr, 
-                state->t->ptr(), nullptr, state->x->ptr(), 1, hidden_size,
+                nullptr, nullptr, state->x->ptr(), 1, hidden_size,
                 config->intermediate_size, !weight->w_mlp_down->permuted,
-                state->gate->dtype, dtype_weight, dtype_scale, state->t->dtype,
-                text_gq, text_group_size, false
+                state->gate->dtype, dtype_weight, dtype_scale, state->x->dtype,
+                text_gq, text_group_size, true
             );
 
             #ifdef PRINT_LOGITS

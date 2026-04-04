@@ -181,77 +181,6 @@ void linear_f32a_i8f32sb_f32c(
     #endif
 }
 
-void linear_f32a_i8f32sb_f32bias_f32c(
-    const float* mat_A, const int8_t* mat_B_in, const float* mat_B_scales,
-    const int *sum_int8_B, const float *mat_bias, float* mat_C,
-    size_t M, size_t N, size_t K, size_t group_size
-) {
-    #if defined(__AVX512F__) && defined(__AVX512DQ__)
-        // Must implement AVX512
-        f32a_i8f32sb_f32bias_f32c_avx2_kernel(
-            mat_A, mat_B_in, mat_B_scales,
-            mat_bias, mat_C, M, N, K, group_size
-        );
-    #elif defined(__AVX2__) && defined(__FMA__)
-        f32a_i8f32sb_f32bias_f32c_avx2_kernel(
-            mat_A, mat_B_in, mat_B_scales,
-            mat_bias, mat_C, M, N, K, group_size
-        );
-    #else
-        #pragma omp parallel for collapse(2)
-        for (size_t i = 0; i < M; ++i) {
-            for (size_t j = 0; j < N; ++j) {
-                float acc = 0.0f;
-
-                // -------- GEMM --------
-                for (size_t k = 0; k < K; ++k) {
-                    float a = mat_A[i * K + k];
-
-                    // linear index into B (matches quantizer layout)
-                    size_t b_linear_idx;
-                    b_linear_idx = j * K + k;
-
-                    size_t scale_idx = b_linear_idx / group_size;
-                    float scale = mat_B_scales[scale_idx];
-
-                    float b = (float)mat_B_in[b_linear_idx] * scale;
-                    acc += a * b;
-                }
-
-                mat_C[i * N + j] = acc + mat_bias[j];
-            }
-        }
-    #endif
-}
-
-void linear_f32a_i8f32sb_f32c_rq(
-    const float* mat_A, const int8_t* mat_B_in,
-    const float* mat_B_scales, float* mat_C,
-    size_t M, size_t N, size_t K
-) {
-    #pragma omp parallel for collapse(2)
-    for (size_t i = 0; i < M; ++i) {
-        for (size_t j = 0; j < N; ++j) {
-            float acc = 0.0f;
-            float scale = mat_B_scales[j];
-
-            // -------- GEMM --------
-            for (size_t k = 0; k < K; ++k) {
-                float a = mat_A[i * K + k];
-
-                // linear index into B (matches quantizer layout)
-                size_t b_linear_idx;
-                b_linear_idx = k * N + j;
-
-                float b = (float)mat_B_in[b_linear_idx] * scale;
-                acc += a * b;
-            }
-
-            mat_C[i * N + j] = acc;
-        }
-    }
-}
-
 void linear_fp16_full(
     const half_cpu *mat_A, const half_cpu *mat_B, const half_cpu *mat_bias,
     half_cpu *mat_C, size_t M, size_t N, size_t K, bool mat_B_transpose
@@ -382,38 +311,16 @@ void linear(
                 M, N, K, mat_B_transpose
             );
             return;
-        } else if (type_b == DType::INT8 && type_b_scale == DType::FP32 && mat_B_transpose) {
-            if (mat_bias_in == nullptr) {
-                if (group_quantized) {
-                    linear_f32a_i8f32sb_f32c(
-                        static_cast<const float*>(mat_A),
-                        static_cast<const int8_t*>(mat_B_in),
-                        static_cast<const float*>(mat_B_scale),
-                        static_cast<const int*>(sum_int8_B),
-                        static_cast<float*>(mat_C),
-                        M, N, K, group_size, add_to_c
-                    );
-                    return;
-                } else {
-                    linear_f32a_i8f32sb_f32c_rq(
-                        static_cast<const float*>(mat_A),
-                        static_cast<const int8_t*>(mat_B_in),
-                        static_cast<const float*>(mat_B_scale),
-                        static_cast<float*>(mat_C), M, N, K
-                    );
-                    return;
-                }
-            } else {
-                linear_f32a_i8f32sb_f32bias_f32c(
-                    static_cast<const float*>(mat_A),
-                    static_cast<const int8_t*>(mat_B_in),
-                    static_cast<const float*>(mat_B_scale),
-                    static_cast<const int*>(sum_int8_B),
-                    static_cast<const float*>(mat_bias_in),
-                    static_cast<float*>(mat_C), M, N, K, group_size
-                );
-                return;
-            }
+        } else if (type_b == DType::INT8 && type_b_scale == DType::FP32 && mat_B_transpose && group_quantized && mat_bias_in == nullptr) {
+            linear_f32a_i8f32sb_f32c(
+                static_cast<const float*>(mat_A),
+                static_cast<const int8_t*>(mat_B_in),
+                static_cast<const float*>(mat_B_scale),
+                static_cast<const int*>(sum_int8_B),
+                static_cast<float*>(mat_C),
+                M, N, K, group_size, add_to_c
+            );
+            return;
         }
     } else if (type_a == DType::FP16 && type_c == DType::FP32) {
         if (type_b == DType::FP16) {

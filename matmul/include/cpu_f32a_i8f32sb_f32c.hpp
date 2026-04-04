@@ -12,18 +12,21 @@ void gemv_lg_N_K(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t N, size_t K, size_t group_size
+    float *__restrict mat_C, size_t N, size_t K,
+    size_t group_size, bool add_to_c
 );
 void gemv_lg_N_K_g64(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t N, size_t K
+    float *__restrict mat_C, size_t N,
+    size_t K, bool add_to_c
 );
 void gemv_lg_N_K_decode(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t N, size_t K, size_t group_size
+    float *__restrict mat_C, size_t N,
+    size_t K, size_t group_size, bool add_to_c
 );
 #endif

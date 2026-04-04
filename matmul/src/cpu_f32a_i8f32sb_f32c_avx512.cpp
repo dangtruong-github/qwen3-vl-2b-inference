@@ -2,12 +2,13 @@
 
 #define VERY_LARGE_N 65536
 
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
+// #if defined(__AVX512F__) && defined(__AVX512DQ__)
 void gemv_lg_N_lg_K_avx512_transpose(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t N, size_t K, size_t group_size
+    float *__restrict mat_C, size_t N,
+    size_t K, size_t group_size, bool add_to_c
 ) {
     const size_t K_g = K / group_size;
 
@@ -49,75 +50,148 @@ void gemv_lg_N_lg_K_avx512_transpose(
     }
     const __m512i ones8 = _mm512_set1_epi8(1);
     
-    #pragma omp parallel for schedule(static)
-    for (size_t jj = 0; jj < N; jj += 4) {
-        __m512 c0_f = _mm512_setzero_ps();
-        __m512 c1_f = _mm512_setzero_ps();
-        __m512 c2_f = _mm512_setzero_ps();
-        __m512 c3_f = _mm512_setzero_ps();
+    if (add_to_c) {
+        #pragma omp parallel for schedule(static)
+        for (size_t jj = 0; jj < N; jj += 4) {
+            __m512 c0_f = _mm512_setzero_ps();
+            __m512 c1_f = _mm512_setzero_ps();
+            __m512 c2_f = _mm512_setzero_ps();
+            __m512 c3_f = _mm512_setzero_ps();
 
-        const int8_t *__restrict b0_ptr = mat_B_in + jj * K;
-        const int8_t *__restrict b1_ptr = mat_B_in + (jj + 1) * K;
-        const int8_t *__restrict b2_ptr = mat_B_in + (jj + 2) * K;
-        const int8_t *__restrict b3_ptr = mat_B_in + (jj + 3) * K;
+            const int8_t *__restrict b0_ptr = mat_B_in + jj * K;
+            const int8_t *__restrict b1_ptr = mat_B_in + (jj + 1) * K;
+            const int8_t *__restrict b2_ptr = mat_B_in + (jj + 2) * K;
+            const int8_t *__restrict b3_ptr = mat_B_in + (jj + 3) * K;
 
-        const size_t g_off_base = jj * K_g;
-        
-        for (size_t kk = 0; kk < K; kk += group_size) {
-            const size_t a_s_id = kk / group_size;
-            const size_t g_off = g_off_base + a_s_id;
-            const float *__restrict b_s_ptr = mat_B_scales + g_off;
-
-            __m512i c0 = _mm512_setzero_si512();
-            __m512i c1 = _mm512_setzero_si512();
-            __m512i c2 = _mm512_setzero_si512();
-            __m512i c3 = _mm512_setzero_si512();
-
-            __m512i corr32_0 = _mm512_setzero_si512();
-            __m512i corr32_1 = _mm512_setzero_si512();
-            __m512i corr32_2 = _mm512_setzero_si512();
-            __m512i corr32_3 = _mm512_setzero_si512();
-
-            for (size_t k = kk; k < kk + group_size; k += 64) {
-                __m512i a_vec = _mm512_load_si512((__m512i*)(a_q8 + k));
-
-                __m512i b0 = _mm512_loadu_si512((__m512i*)(b0_ptr + k));
-                __m512i b1 = _mm512_loadu_si512((__m512i*)(b1_ptr + k));
-                __m512i b2 = _mm512_loadu_si512((__m512i*)(b2_ptr + k));
-                __m512i b3 = _mm512_loadu_si512((__m512i*)(b3_ptr + k));
-
-                corr32_0 = _mm512_dpbusd_epi32(corr32_0, ones8, b0);
-                corr32_1 = _mm512_dpbusd_epi32(corr32_1, ones8, b1);
-                corr32_2 = _mm512_dpbusd_epi32(corr32_2, ones8, b2);
-                corr32_3 = _mm512_dpbusd_epi32(corr32_3, ones8, b3);
-
-                c0 = _mm512_dpbusd_epi32(c0, a_vec, b0);
-                c1 = _mm512_dpbusd_epi32(c1, a_vec, b1);
-                c2 = _mm512_dpbusd_epi32(c2, a_vec, b2);
-                c3 = _mm512_dpbusd_epi32(c3, a_vec, b3);
-            }
-
-            const float a_s = a_q8_s[a_s_id];
-
-            corr32_0 = _mm512_slli_epi32(corr32_0, 7);
-            corr32_1 = _mm512_slli_epi32(corr32_1, 7);
-            corr32_2 = _mm512_slli_epi32(corr32_2, 7);
-            corr32_3 = _mm512_slli_epi32(corr32_3, 7);
-            c0 = _mm512_sub_epi32(c0, corr32_0);
-            c1 = _mm512_sub_epi32(c1, corr32_1);
-            c2 = _mm512_sub_epi32(c2, corr32_2);
-            c3 = _mm512_sub_epi32(c3, corr32_3);
+            const size_t g_off_base = jj * K_g;
             
-            c0_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c0), _mm512_set1_ps(a_s * b_s_ptr[0]), c0_f);
-            c1_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c1), _mm512_set1_ps(a_s * b_s_ptr[K_g]), c1_f);
-            c2_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c2), _mm512_set1_ps(a_s * b_s_ptr[K_g << 1]), c2_f);
-            c3_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c3), _mm512_set1_ps(a_s * b_s_ptr[K_g * 3]), c3_f);
+            for (size_t kk = 0; kk < K; kk += group_size) {
+                const size_t a_s_id = kk / group_size;
+                const size_t g_off = g_off_base + a_s_id;
+                const float *__restrict b_s_ptr = mat_B_scales + g_off;
+
+                __m512i c0 = _mm512_setzero_si512();
+                __m512i c1 = _mm512_setzero_si512();
+                __m512i c2 = _mm512_setzero_si512();
+                __m512i c3 = _mm512_setzero_si512();
+
+                __m512i corr32_0 = _mm512_setzero_si512();
+                __m512i corr32_1 = _mm512_setzero_si512();
+                __m512i corr32_2 = _mm512_setzero_si512();
+                __m512i corr32_3 = _mm512_setzero_si512();
+
+                for (size_t k = kk; k < kk + group_size; k += 64) {
+                    __m512i a_vec = _mm512_load_si512((__m512i*)(a_q8 + k));
+
+                    __m512i b0 = _mm512_loadu_si512((__m512i*)(b0_ptr + k));
+                    __m512i b1 = _mm512_loadu_si512((__m512i*)(b1_ptr + k));
+                    __m512i b2 = _mm512_loadu_si512((__m512i*)(b2_ptr + k));
+                    __m512i b3 = _mm512_loadu_si512((__m512i*)(b3_ptr + k));
+
+                    corr32_0 = _mm512_dpbusd_epi32(corr32_0, ones8, b0);
+                    corr32_1 = _mm512_dpbusd_epi32(corr32_1, ones8, b1);
+                    corr32_2 = _mm512_dpbusd_epi32(corr32_2, ones8, b2);
+                    corr32_3 = _mm512_dpbusd_epi32(corr32_3, ones8, b3);
+
+                    c0 = _mm512_dpbusd_epi32(c0, a_vec, b0);
+                    c1 = _mm512_dpbusd_epi32(c1, a_vec, b1);
+                    c2 = _mm512_dpbusd_epi32(c2, a_vec, b2);
+                    c3 = _mm512_dpbusd_epi32(c3, a_vec, b3);
+                }
+
+                const float a_s = a_q8_s[a_s_id];
+
+                corr32_0 = _mm512_slli_epi32(corr32_0, 7);
+                corr32_1 = _mm512_slli_epi32(corr32_1, 7);
+                corr32_2 = _mm512_slli_epi32(corr32_2, 7);
+                corr32_3 = _mm512_slli_epi32(corr32_3, 7);
+                c0 = _mm512_sub_epi32(c0, corr32_0);
+                c1 = _mm512_sub_epi32(c1, corr32_1);
+                c2 = _mm512_sub_epi32(c2, corr32_2);
+                c3 = _mm512_sub_epi32(c3, corr32_3);
+                
+                c0_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c0), _mm512_set1_ps(a_s * b_s_ptr[0]), c0_f);
+                c1_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c1), _mm512_set1_ps(a_s * b_s_ptr[K_g]), c1_f);
+                c2_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c2), _mm512_set1_ps(a_s * b_s_ptr[K_g << 1]), c2_f);
+                c3_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c3), _mm512_set1_ps(a_s * b_s_ptr[K_g * 3]), c3_f);
+            }
+            
+            mat_C[jj] += _mm512_reduce_add_ps(c0_f);
+            mat_C[jj + 1] += _mm512_reduce_add_ps(c1_f);
+            mat_C[jj + 2] += _mm512_reduce_add_ps(c2_f);
+            mat_C[jj + 3] += _mm512_reduce_add_ps(c3_f);
         }
-        
-        mat_C[jj] = _mm512_reduce_add_ps(c0_f);
-        mat_C[jj + 1] = _mm512_reduce_add_ps(c1_f);
-        mat_C[jj + 2] = _mm512_reduce_add_ps(c2_f);
-        mat_C[jj + 3] = _mm512_reduce_add_ps(c3_f);
+    } else {
+        #pragma omp parallel for schedule(static)
+        for (size_t jj = 0; jj < N; jj += 4) {
+            __m512 c0_f = _mm512_setzero_ps();
+            __m512 c1_f = _mm512_setzero_ps();
+            __m512 c2_f = _mm512_setzero_ps();
+            __m512 c3_f = _mm512_setzero_ps();
+
+            const int8_t *__restrict b0_ptr = mat_B_in + jj * K;
+            const int8_t *__restrict b1_ptr = mat_B_in + (jj + 1) * K;
+            const int8_t *__restrict b2_ptr = mat_B_in + (jj + 2) * K;
+            const int8_t *__restrict b3_ptr = mat_B_in + (jj + 3) * K;
+
+            const size_t g_off_base = jj * K_g;
+            
+            for (size_t kk = 0; kk < K; kk += group_size) {
+                const size_t a_s_id = kk / group_size;
+                const size_t g_off = g_off_base + a_s_id;
+                const float *__restrict b_s_ptr = mat_B_scales + g_off;
+
+                __m512i c0 = _mm512_setzero_si512();
+                __m512i c1 = _mm512_setzero_si512();
+                __m512i c2 = _mm512_setzero_si512();
+                __m512i c3 = _mm512_setzero_si512();
+
+                __m512i corr32_0 = _mm512_setzero_si512();
+                __m512i corr32_1 = _mm512_setzero_si512();
+                __m512i corr32_2 = _mm512_setzero_si512();
+                __m512i corr32_3 = _mm512_setzero_si512();
+
+                for (size_t k = kk; k < kk + group_size; k += 64) {
+                    __m512i a_vec = _mm512_load_si512((__m512i*)(a_q8 + k));
+
+                    __m512i b0 = _mm512_loadu_si512((__m512i*)(b0_ptr + k));
+                    __m512i b1 = _mm512_loadu_si512((__m512i*)(b1_ptr + k));
+                    __m512i b2 = _mm512_loadu_si512((__m512i*)(b2_ptr + k));
+                    __m512i b3 = _mm512_loadu_si512((__m512i*)(b3_ptr + k));
+
+                    corr32_0 = _mm512_dpbusd_epi32(corr32_0, ones8, b0);
+                    corr32_1 = _mm512_dpbusd_epi32(corr32_1, ones8, b1);
+                    corr32_2 = _mm512_dpbusd_epi32(corr32_2, ones8, b2);
+                    corr32_3 = _mm512_dpbusd_epi32(corr32_3, ones8, b3);
+
+                    c0 = _mm512_dpbusd_epi32(c0, a_vec, b0);
+                    c1 = _mm512_dpbusd_epi32(c1, a_vec, b1);
+                    c2 = _mm512_dpbusd_epi32(c2, a_vec, b2);
+                    c3 = _mm512_dpbusd_epi32(c3, a_vec, b3);
+                }
+
+                const float a_s = a_q8_s[a_s_id];
+
+                corr32_0 = _mm512_slli_epi32(corr32_0, 7);
+                corr32_1 = _mm512_slli_epi32(corr32_1, 7);
+                corr32_2 = _mm512_slli_epi32(corr32_2, 7);
+                corr32_3 = _mm512_slli_epi32(corr32_3, 7);
+                c0 = _mm512_sub_epi32(c0, corr32_0);
+                c1 = _mm512_sub_epi32(c1, corr32_1);
+                c2 = _mm512_sub_epi32(c2, corr32_2);
+                c3 = _mm512_sub_epi32(c3, corr32_3);
+                
+                c0_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c0), _mm512_set1_ps(a_s * b_s_ptr[0]), c0_f);
+                c1_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c1), _mm512_set1_ps(a_s * b_s_ptr[K_g]), c1_f);
+                c2_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c2), _mm512_set1_ps(a_s * b_s_ptr[K_g << 1]), c2_f);
+                c3_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c3), _mm512_set1_ps(a_s * b_s_ptr[K_g * 3]), c3_f);
+            }
+            
+            mat_C[jj] = _mm512_reduce_add_ps(c0_f);
+            mat_C[jj + 1] = _mm512_reduce_add_ps(c1_f);
+            mat_C[jj + 2] = _mm512_reduce_add_ps(c2_f);
+            mat_C[jj + 3] = _mm512_reduce_add_ps(c3_f);
+        }
     }
 }
 
@@ -125,11 +199,13 @@ void f32a_i8f32sb_f32c_avx512_kernel(
     const float *__restrict mat_A,
     const int8_t *__restrict mat_B_in,
     const float *__restrict mat_B_scales,
-    float *__restrict mat_C, size_t M, size_t N, size_t K, size_t group_size
+    float *__restrict mat_C, size_t M, size_t N,
+    size_t K, size_t group_size, bool add_to_c
 ) {
     if (M == 1 && N >= 1024 && K >= 1024) {
         gemv_lg_N_lg_K_avx512_transpose(
-            mat_A, mat_B_in, mat_B_scales, mat_C, N, K, group_size
+            mat_A, mat_B_in, mat_B_scales, mat_C,
+            N, K, group_size, add_to_c
         );
         return;
     }
@@ -158,4 +234,4 @@ void f32a_i8f32sb_f32c_avx512_kernel(
         }
     }
 }
-#endif
+// #endif
