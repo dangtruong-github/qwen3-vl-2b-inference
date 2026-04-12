@@ -176,8 +176,7 @@ void rms_norm(
 void rms_norm_inplace(
     float *__restrict x /*[batches, hidden]*/,
     const Tensor *__restrict scale /*[hidden]*/,
-    float eps, size_t batches, size_t layer_offset,
-    size_t groups, size_t group_offset
+    float eps, size_t batches, size_t layer_offset
 ) {
     const size_t hidden_size = scale->shape[scale->ndim - 1];
     const float inv_hs = 1.0f / (float)hidden_size;
@@ -239,34 +238,32 @@ void rms_norm_inplace(
         if (scale->group_quantized) {
             const size_t group_size = scale->group_size;
 
-            #pragma omp parallel for collapse(2) schedule(static)
-            for (size_t g_id = 0; g_id < groups; ++g_id) {
-                for (size_t i = 0; i < batches; ++i) {
-                    float *x_ptr = x + g_id * group_offset + i * hidden_size;
+            #pragma omp parallel for schedule(static)
+            for (size_t i = 0; i < batches; ++i) {
+                float *x_ptr = x + i * hidden_size;
 
-                    // 1. RMS
-                    float ss = 0.0f;
-                    #pragma omp simd reduction(+:ss)
-                    for (size_t j = 0; j < hidden_size; ++j) {
-                        ss += x_ptr[j] * x_ptr[j];
-                    }
+                // 1. RMS
+                float ss = 0.0f;
+                #pragma omp simd reduction(+:ss)
+                for (size_t j = 0; j < hidden_size; ++j) {
+                    ss += x_ptr[j] * x_ptr[j];
+                }
 
-                    float inv_rms =
-                        1.0f / sqrtf(ss * inv_hs + eps);
+                float inv_rms =
+                    1.0f / sqrtf(ss * inv_hs + eps);
 
-                    // 2. Normalize + dequantized scale (inplace)
-                    for (size_t g = 0; g < hidden_size; g += group_size) {
-                        float s = scale_scales[g / group_size];
-                        float combined = s * inv_rms;
+                // 2. Normalize + dequantized scale (inplace)
+                for (size_t g = 0; g < hidden_size; g += group_size) {
+                    float s = scale_scales[g / group_size];
+                    float combined = s * inv_rms;
 
-                        const int8_t *sq = &scale_q[g];
-                        float *xp = &x_ptr[g];
+                    const int8_t *sq = &scale_q[g];
+                    float *xp = &x_ptr[g];
 
-                        #pragma omp simd
-                        for (size_t j = 0; j < group_size; ++j) {
-                            xp[j] = static_cast<float>(sq[j]) *
-                                    (combined * xp[j]);
-                        }
+                    #pragma omp simd
+                    for (size_t j = 0; j < group_size; ++j) {
+                        xp[j] = static_cast<float>(sq[j]) *
+                                (combined * xp[j]);
                     }
                 }
             }
@@ -989,9 +986,11 @@ void apply_rotary(
     Tensor *__restrict x,               /* [batch_size, n_heads, head_dim] */
     const Tensor *__restrict cos_table, /* [seq_len, head_dim/2] */
     const Tensor *__restrict sin_table, /* [seq_len, head_dim/2] */
-    int batch_size, int n_heads, int head_dim, int pos, size_t stride_x
+    int batch_size, int n_heads, int head_dim, int pos
 ) {
     const int half = head_dim >> 1;
+
+    const size_t stride_x = n_heads * head_dim;
 
     const float *__restrict cos_row_base = (const float *)cos_table->ptr({0, (size_t)pos});
     const float *__restrict sin_row_base = (const float *)sin_table->ptr({0, (size_t)pos});
@@ -1040,10 +1039,12 @@ void apply_rotary_cache(
     const Tensor *__restrict sin_table,
     int batch_size, int n_heads, int head_dim,
     int pos, size_t sh_off, DType::Type cache_dtype,
-    size_t in_stride, const size_t group_size
+    const size_t group_size
 ) {
     const int half = head_dim >> 1;
     constexpr int VEC = 8;
+    
+    const size_t in_stride = n_heads * head_dim;
 
     const float *__restrict cos_buf = (const float *)cos_table->ptr();
     const float *__restrict sin_buf = (const float *)sin_table->ptr();
@@ -1103,150 +1104,6 @@ void apply_rotary_cache(
         // 2. enforce invariant
         assert(group_size % 32 == 0);
         assert(half % group_size == 0);
-
-        /*
-        printf("group_size = %zu\n", group_size);
-
-        // #pragma omp parallel for schedule(static) collapse(2)
-        for (int b = 0; b < batch_size; b++) {
-            for (int h = 0; h < n_heads; h++) {
-
-                const float *__restrict x1p = in_ptr + (b * in_stride) + (h * head_dim);
-                const float *__restrict x2p = x1p + half;
-
-                const size_t cache_offset = b * head_dim + h * sh_off;
-
-                int8_t *__restrict y1p = k_out_i8 + cache_offset;
-                int8_t *__restrict y2p = y1p + half;
-
-                const float *__restrict cos_row = cos_row_base + b * half;
-                const float *__restrict sin_row = sin_row_base + b * half;
-                
-                float *__restrict y1s = k_s_out + cache_offset / group_size;
-                float *__restrict y2s = y1s + groups_per_half;
-
-                alignas(32) float y_tmp[(group_size << 1)];
-
-                // printf("HERE BEFORE\n");
-
-                for (size_t g = 0; g < groups_per_half; ++g) {
-                    const int g_off = g * group_size;
-                    __m256 tmp1 = _mm256_setzero_ps();
-                    __m256 tmp2 = _mm256_setzero_ps();
-                    __m256 zero = _mm256_set1_ps(-0.0f);
-
-                    // ---------------------------
-                    // pass 1: compute RoPE + max
-                    // ---------------------------
-                    for (int i = 0; i < group_size; i += VEC) {
-
-                        __m256 x1 = _mm256_loadu_ps(x1p + g_off + i);
-                        __m256 x2 = _mm256_loadu_ps(x2p + g_off + i);
-                        __m256 c  = _mm256_loadu_ps(cos_row + g_off + i);
-                        __m256 s  = _mm256_loadu_ps(sin_row + g_off + i);
-
-                        __m256 y1 = _mm256_fmsub_ps(x1, c, _mm256_mul_ps(x2, s));
-                        __m256 y2 = _mm256_fmadd_ps(x1, s, _mm256_mul_ps(x2, c));
-
-                        _mm256_store_ps(y_tmp + i, y1);
-                        _mm256_store_ps(y_tmp + group_size + i, y2);
-
-                        tmp1 = _mm256_max_ps(tmp1, _mm256_andnot_ps(zero, y1));
-                        tmp2 = _mm256_max_ps(tmp2, _mm256_andnot_ps(zero, y2));
-                    }
-
-                    // printf("HERE AFTER MAX\n");
-
-                    float scale1 = max_reduce_mm_256(tmp1) / 127.0f;
-                    float scale2 = max_reduce_mm_256(tmp2) / 127.0f;
-
-                    // printf("HERE AFTER MAX\n");
-
-                    if (scale1 < 1e-8f) scale1 = 1e-8f;
-                    if (scale2 < 1e-8f) scale2 = 1e-8f;
-
-                    // printf("HERE AFTER MAX\n");
-                    // printf("y1s: %p\n", y1s);
-                    // printf("y1s[g]=%.2f\n", y1s[g]);
-                    // printf("y2s[g]=%.2f\n", y2s[g]);
-
-                    y1s[g] = scale1;
-                    y2s[g] = scale2;
-
-                    // printf("HERE AFTER MAX\n");
-
-                    __m256 inv_s1 = _mm256_set1_ps(1.0f / scale1);
-                    __m256 inv_s2 = _mm256_set1_ps(1.0f / scale2);
-
-                    // printf("HERE AFTER SCALAR\n");
-
-                    // ---------------------------
-                    // pass 2: quantize
-                    // ---------------------------
-                    for (int i = 0; i < group_size; i += 32) {
-                        // ---- load 32 values ----
-                        __m256 y10 = _mm256_load_ps(y_tmp + i);
-                        __m256 y11 = _mm256_load_ps(y_tmp + i + 8);
-                        __m256 y12 = _mm256_load_ps(y_tmp + i + 16);
-                        __m256 y13 = _mm256_load_ps(y_tmp + i + 24);
-
-                        __m256 y20 = _mm256_load_ps(y_tmp + group_size + i);
-                        __m256 y21 = _mm256_load_ps(y_tmp + group_size + i + 8);
-                        __m256 y22 = _mm256_load_ps(y_tmp + group_size + i + 16);
-                        __m256 y23 = _mm256_load_ps(y_tmp + group_size + i + 24);
-
-                        // ---- scale ----
-                        y10 = _mm256_mul_ps(y10, inv_s1);
-                        y11 = _mm256_mul_ps(y11, inv_s1);
-                        y12 = _mm256_mul_ps(y12, inv_s1);
-                        y13 = _mm256_mul_ps(y13, inv_s1);
-
-                        y20 = _mm256_mul_ps(y20, inv_s2);
-                        y21 = _mm256_mul_ps(y21, inv_s2);
-                        y22 = _mm256_mul_ps(y22, inv_s2);
-                        y23 = _mm256_mul_ps(y23, inv_s2);
-
-                        // ---- float → int32 ----
-                        __m256i i10 = _mm256_cvtps_epi32(y10);
-                        __m256i i11 = _mm256_cvtps_epi32(y11);
-                        __m256i i12 = _mm256_cvtps_epi32(y12);
-                        __m256i i13 = _mm256_cvtps_epi32(y13);
-
-                        __m256i i20 = _mm256_cvtps_epi32(y20);
-                        __m256i i21 = _mm256_cvtps_epi32(y21);
-                        __m256i i22 = _mm256_cvtps_epi32(y22);
-                        __m256i i23 = _mm256_cvtps_epi32(y23);
-
-                        // ---- int32 → int16 ----
-                        __m256i p10 = _mm256_packs_epi32(i10, i11);
-                        __m256i p11 = _mm256_packs_epi32(i12, i13);
-
-                        __m256i p20 = _mm256_packs_epi32(i20, i21);
-                        __m256i p21 = _mm256_packs_epi32(i22, i23);
-
-                        // fix lane order
-                        p10 = _mm256_permute4x64_epi64(p10, 0xD8);
-                        p11 = _mm256_permute4x64_epi64(p11, 0xD8);
-
-                        p20 = _mm256_permute4x64_epi64(p20, 0xD8);
-                        p21 = _mm256_permute4x64_epi64(p21, 0xD8);
-
-                        // ---- int16 → int8 (SIGNED) ----
-                        __m256i q8_1 = _mm256_packs_epi16(p10, p11);
-                        __m256i q8_2 = _mm256_packs_epi16(p20, p21);
-
-                        q8_1 = _mm256_permute4x64_epi64(q8_1, _MM_SHUFFLE(3,1,2,0));
-                        q8_2 = _mm256_permute4x64_epi64(q8_2, _MM_SHUFFLE(3,1,2,0));
-
-                        // ---- store ----
-                        _mm256_storeu_si256((__m256i*)(y1p + g_off + i), q8_1);
-                        _mm256_storeu_si256((__m256i*)(y2p + g_off + i), q8_2);
-                    }
-                }
-                // printf("HERE FINAL\n");
-            }
-        }
-        */
 
         // #pragma omp parallel for schedule(static) collapse(2)
         for (int b = 0; b < batch_size; b++) {
@@ -1374,17 +1231,21 @@ void apply_rotary_cache(
 }
 
 void copy_to_v_cache(
-    const float *v_now_base_ptr, char *v_cache_l, float *v_cache_s,
+    const Tensor *v, char *v_cache_l, float *v_cache_s,
     const DType::Type v_cache_dtype, const size_t prefill_size,
-    const size_t qkv_stride, const size_t head_dim, const size_t num_kv_heads,
-    const size_t kv_pos_off, const size_t kv_all_off, const size_t kv_pos_scale_off,
+    const size_t head_dim, const size_t num_kv_heads,
+    const size_t kv_pos_off, const size_t kv_all_off,
+    const size_t kv_pos_scale_off,
     const size_t cache_group_size, bool warm_up
 ) {
+    float *v_ptr = (float *)v->ptr();
+    const size_t v_stride = num_kv_heads * head_dim;
+
     if (v_cache_dtype == DType::FP32) {
         float *v_cache_base_ptr = (float *)(v_cache_l) + kv_pos_off;
 
         for (size_t b = 0; b < prefill_size; ++b) {
-            const float *v_now_ptr = v_now_base_ptr + b * qkv_stride;
+            const float *v_now_ptr = v_ptr + b * v_stride;
             float *v_cache_ptr = v_cache_base_ptr + b * head_dim;
             for (int h = 0; h < num_kv_heads; h++) {
                 memcpy(v_cache_ptr + h * kv_all_off, v_now_ptr + h * head_dim, head_dim * sizeof(float));
@@ -1397,7 +1258,7 @@ void copy_to_v_cache(
         #pragma omp parallel for collapse(2)
         for (size_t b = 0; b < prefill_size; ++b) {
             for (int h = 0; h < num_kv_heads; h++) {
-                const float *src =  v_now_base_ptr + b * qkv_stride + h * head_dim;
+                const float *src =  v_ptr + b * v_stride + h * head_dim;
                 uint16_t *dst = v_cache_base_ptr + b * head_dim + h * kv_all_off;
 
                 // process 8 floats at a time
@@ -1424,7 +1285,7 @@ void copy_to_v_cache(
 
 
         for (size_t b = 0; b < prefill_size; ++b) {
-            const float *v_now_ptr = v_now_base_ptr + b * qkv_stride;
+            const float *v_now_ptr = v_ptr + b * v_stride;
             const size_t head_dim_off = b * head_dim;
             int8_t *v_cache_ptr = v_cache_base_ptr + head_dim_off;
             float *v_scale_ptr = v_scale_base_ptr + head_dim_off / cache_group_size;

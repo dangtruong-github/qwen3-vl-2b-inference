@@ -5,7 +5,7 @@ void fused_rms_rotary_q(
     const PtrPair scale_ptr /*[hidden]*/,
     const float *cos_row_base, const float *sin_row_base,
     float eps, size_t groups, size_t group_size,
-    size_t group_offset, size_t n_heads, size_t head_dim
+    size_t n_heads, size_t head_dim
 ) {
     const float inv_hs = 1.0f / head_dim;
     // INT8 group-wise scale
@@ -15,13 +15,14 @@ void fused_rms_rotary_q(
         static_cast<const float *>(scale_ptr.scale);
 
     const int half = head_dim >> 1;
+    const size_t x_stride = n_heads * head_dim;
 
     #pragma omp parallel for collapse(2) schedule(static)
     for (size_t g_id = 0; g_id < groups; ++g_id) {
         for (size_t i = 0; i < n_heads; ++i) {
             const float *__restrict cos_row = cos_row_base + g_id * half;
             const float *__restrict sin_row = sin_row_base + g_id * half;
-            float *x_ptr = x + g_id * group_offset + i * head_dim;
+            float *x_ptr = x + g_id * x_stride + i * head_dim;
 
             // 1. RMS
             float ss = 0.0f;
@@ -82,17 +83,21 @@ void fused_rms_rotary_q(
 }
 
 void fused_rms_rotary_q_dispatch(
-    Tensor *qkv, const Tensor *w_attn_q_norm, const Tensor *cos_tensor,
-    const Tensor *sin_tensor, const size_t num_heads, const size_t head_dim,
-    const size_t prefill_size, const size_t qkv_stride, const size_t layer_offset,
+    Tensor *q, const Tensor *w_attn_q_norm,
+    const Tensor *cos_tensor, const Tensor *sin_tensor,
+    const size_t num_heads, const size_t head_dim,
+    const size_t prefill_size, const size_t layer_offset,
     const int pos, const float eps, bool warm_up
 ) {
     if (
-        qkv->dtype == DType::FP32 && w_attn_q_norm->dtype == DType::INT8
-        && w_attn_q_norm->scale_dtype == DType::FP32 && cos_tensor->dtype == DType::FP32
-        && sin_tensor->dtype == DType::FP32 && w_attn_q_norm->group_quantized
+        q->dtype == DType::FP32
+        && w_attn_q_norm->dtype == DType::INT8
+        && w_attn_q_norm->scale_dtype == DType::FP32
+        && cos_tensor->dtype == DType::FP32
+        && sin_tensor->dtype == DType::FP32
+        && w_attn_q_norm->group_quantized
     ) {
-        float *q_ptr = (float *)qkv->ptr();
+        float *q_ptr = (float *)q->ptr();
         PtrPair scale_ptr = w_attn_q_norm->ptr_all({layer_offset});
 
         const float *__restrict cos_row_base = 
@@ -103,17 +108,17 @@ void fused_rms_rotary_q_dispatch(
         fused_rms_rotary_q(
             q_ptr, scale_ptr, cos_row_base, sin_row_base,
             eps, prefill_size, w_attn_q_norm->group_size,
-            qkv_stride, num_heads, head_dim
+            num_heads, head_dim
         );
     } else {
-        float *q_ptr = (float *)qkv->ptr();
+        float *q_ptr = (float *)q->ptr();
         rms_norm_inplace(
             q_ptr, w_attn_q_norm, eps,
-            num_heads, layer_offset, prefill_size, qkv_stride
+            prefill_size * num_heads, layer_offset
         );
         apply_rotary(
-            qkv, cos_tensor, sin_tensor,
-            prefill_size, num_heads, head_dim, pos, qkv_stride
+            q, cos_tensor, sin_tensor,
+            prefill_size, num_heads, head_dim, pos
         );
     }
 
@@ -210,17 +215,23 @@ void fused_rms_rotary_k(
 }
 
 void fused_rms_rotary_k_dispatch(
-    float *k_ptr, char *k_cache_ptr, float *k_cache_s_ptr, const Tensor *key_cache, 
-    const Tensor *w_attn_k_norm, const Tensor *cos_tensor, const Tensor *sin_tensor,
-    const size_t num_kv_heads, const size_t head_dim, const size_t prefill_size,
-    const size_t qkv_stride, const DType::Type k_type, const DType::Type cache_type,
-    const size_t layer_offset, const size_t kv_all_off, const int pos,
+    Tensor *k, char *k_cache_ptr, float *k_cache_s_ptr,
+    const Tensor *key_cache, const Tensor *w_attn_k_norm,
+    const Tensor *cos_tensor, const Tensor *sin_tensor,
+    const size_t num_kv_heads, const size_t head_dim,
+    const size_t prefill_size, const DType::Type k_type,
+    const DType::Type cache_type, const size_t layer_offset,
+    const size_t kv_all_off, const int pos,
     const float eps, const size_t group_size, bool warm_up
 ) {
+    float *k_ptr = (float *)k->ptr();
+
     if (
         k_type == DType::FP32 && w_attn_k_norm->dtype == DType::INT8
-        && w_attn_k_norm->scale_dtype == DType::FP32 && cos_tensor->dtype == DType::FP32
-        && sin_tensor->dtype == DType::FP32 && cache_type == DType::FP16
+        && w_attn_k_norm->scale_dtype == DType::FP32
+        && cos_tensor->dtype == DType::FP32
+        && sin_tensor->dtype == DType::FP32
+        && cache_type == DType::FP16 && false
     ) {
         PtrPair scale_ptr = w_attn_k_norm->ptr_all({layer_offset});
 
@@ -233,18 +244,18 @@ void fused_rms_rotary_k_dispatch(
             k_ptr, (half_cpu *)k_cache_ptr, scale_ptr,
             cos_row_base, sin_row_base, eps, prefill_size,
             w_attn_k_norm->group_size, kv_all_off,
-            qkv_stride, num_kv_heads, head_dim
+            0, num_kv_heads, head_dim
         );
     } else {
         rms_norm_inplace(
-            k_ptr, w_attn_k_norm, eps, num_kv_heads,
-            layer_offset, prefill_size, qkv_stride
+            k_ptr, w_attn_k_norm, eps,
+            prefill_size * num_kv_heads, layer_offset
         );    
         apply_rotary_cache(
             k_ptr, k_cache_ptr, k_cache_s_ptr,
             cos_tensor, sin_tensor, prefill_size,
-            num_kv_heads, head_dim, pos, kv_all_off,
-            cache_type, qkv_stride, group_size
+            num_kv_heads, head_dim, pos,
+            kv_all_off, cache_type, group_size
         );
     }
 

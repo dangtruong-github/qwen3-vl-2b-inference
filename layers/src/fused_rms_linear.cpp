@@ -3,8 +3,9 @@
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
 void fused_rms_linear_qkv_m2(
     const PtrPair w_rms, const PtrPair w_qkv, const float *x_ptr,
-    float *t_ptr, float *qkv_ptr, const size_t hidden_size,
-    const size_t kv_dim, const size_t group_size, const float eps
+    float *t_ptr, float *q_ptr, float *k_ptr, float *v_ptr,
+    const size_t hidden_size, const size_t kv_dim,
+    const size_t group_size, const float eps
 ) {
     const int8_t *__restrict w_rms_w = static_cast<const int8_t*>(w_rms.buf);
     const float *__restrict w_rms_s = static_cast<const float*>(w_rms.scale);
@@ -85,6 +86,7 @@ void fused_rms_linear_qkv_m2(
     const float *a1_q8_s_ptr = a_q8_s + K_g;
 
     const size_t qkv_size = hidden_size + 2 * kv_dim;
+    const size_t k_limit = hidden_size + kv_dim;
 
     #pragma omp parallel for schedule(static)
     for (size_t jj = 0; jj < qkv_size; ++jj) {
@@ -121,16 +123,27 @@ void fused_rms_linear_qkv_m2(
             c0_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c0), _mm512_set1_ps(a_q8_s[g_off] * b_s), c0_f);
             c1_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c1), _mm512_set1_ps(a1_q8_s_ptr[g_off] * b_s), c1_f);
         }
-        
-        qkv_ptr[jj] = _mm512_reduce_add_ps(c0_f);
-        qkv_ptr[qkv_size + jj] = _mm512_reduce_add_ps(c1_f);
+
+        if (jj < hidden_size) {
+            q_ptr[jj] = _mm512_reduce_add_ps(c0_f);
+            q_ptr[hidden_size + jj] = _mm512_reduce_add_ps(c1_f);
+        } else if (jj < k_limit) {
+            const size_t jj_id = jj - hidden_size;
+            k_ptr[jj_id] = _mm512_reduce_add_ps(c0_f);
+            k_ptr[kv_dim + jj_id] = _mm512_reduce_add_ps(c1_f);
+        } else {
+            const size_t jj_id = jj - k_limit;
+            v_ptr[jj_id] = _mm512_reduce_add_ps(c0_f);
+            v_ptr[kv_dim + jj_id] = _mm512_reduce_add_ps(c1_f);
+        }
     }
 }
 
 void fused_rms_linear_qkv_m4(
     const PtrPair w_rms, const PtrPair w_qkv, const float *x_ptr,
-    float *t_ptr, float *qkv_ptr, const size_t hidden_size,
-    const size_t kv_dim, const size_t group_size, const float eps
+    float *t_ptr, float *q_ptr, float *k_ptr, float *v_ptr,
+    const size_t hidden_size, const size_t kv_dim,
+    const size_t group_size, const float eps
 ) {
     const int8_t *__restrict w_rms_w = static_cast<const int8_t*>(w_rms.buf);
     const float *__restrict w_rms_s = static_cast<const float*>(w_rms.scale);
@@ -214,6 +227,9 @@ void fused_rms_linear_qkv_m4(
     const float *a3_q8_s_ptr = a_q8_s + (K_g * 3);
 
     const size_t qkv_size = hidden_size + 2 * kv_dim;
+    const size_t k_limit = hidden_size + kv_dim;
+    const size_t q_stride[2] = {hidden_size << 1, hidden_size * 3};
+    const size_t kv_stride[2] = {kv_dim << 1, kv_dim * 3};
 
     #pragma omp parallel for schedule(static)
     for (size_t jj = 0; jj < qkv_size; ++jj) {
@@ -263,10 +279,24 @@ void fused_rms_linear_qkv_m4(
             c3_f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(c3), _mm512_set1_ps(a3_q8_s_ptr[g_off] * b_s), c3_f);
         }
         
-        qkv_ptr[jj] = _mm512_reduce_add_ps(c0_f);
-        qkv_ptr[qkv_size + jj] = _mm512_reduce_add_ps(c1_f);
-        qkv_ptr[(qkv_size << 1) + jj] = _mm512_reduce_add_ps(c2_f);
-        qkv_ptr[(qkv_size * 3) + jj] = _mm512_reduce_add_ps(c3_f);
+        if (jj < hidden_size) {
+            q_ptr[jj] = _mm512_reduce_add_ps(c0_f);
+            q_ptr[hidden_size + jj] = _mm512_reduce_add_ps(c1_f);
+            q_ptr[q_stride[0] + jj] = _mm512_reduce_add_ps(c2_f);
+            q_ptr[q_stride[1] + jj] = _mm512_reduce_add_ps(c3_f);
+        } else if (jj < k_limit) {
+            const size_t jj_id = jj - hidden_size;
+            k_ptr[jj_id] = _mm512_reduce_add_ps(c0_f);
+            k_ptr[kv_dim + jj_id] = _mm512_reduce_add_ps(c1_f);
+            k_ptr[kv_stride[0] + jj_id] = _mm512_reduce_add_ps(c2_f);
+            k_ptr[kv_stride[1] + jj_id] = _mm512_reduce_add_ps(c3_f);
+        } else {
+            const size_t jj_id = jj - k_limit;
+            v_ptr[jj_id] = _mm512_reduce_add_ps(c0_f);
+            v_ptr[kv_dim + jj_id] = _mm512_reduce_add_ps(c1_f);
+            v_ptr[kv_stride[0] + jj_id] = _mm512_reduce_add_ps(c2_f);
+            v_ptr[kv_stride[1] + jj_id] = _mm512_reduce_add_ps(c3_f);
+        }
     }
 }
 #elif defined(__AVX2__) && defined(__FMA__)
@@ -608,8 +638,9 @@ void fused_rms_linear_qkv_m4(
 #if defined(__AVX2__) && defined(__FMA__)
 void fused_rms_linear_qkv_m1(
     const PtrPair w_rms, const PtrPair w_qkv, const float *x_ptr,
-    float *t_ptr, float *qkv_ptr, const size_t hidden_size,
-    const size_t kv_dim, const size_t group_size, const float eps
+    float *t_ptr, float *q_ptr, float *k_ptr, float *v_ptr,
+    const size_t hidden_size, const size_t kv_dim,
+    const size_t group_size, const float eps
 ) {
     const int8_t *__restrict w_rms_w = static_cast<const int8_t*>(w_rms.buf);
     const float *__restrict w_rms_s = static_cast<const float*>(w_rms.scale);
@@ -706,8 +737,11 @@ void fused_rms_linear_qkv_m1(
         }    
     }
 
+    const size_t qkv_size = hidden_size + 2 * kv_dim;
+    const size_t k_limit = hidden_size + kv_dim;
+
     #pragma omp parallel for schedule(static)
-    for (size_t jj = 0; jj < hidden_size + 2 * kv_dim; ++jj) {
+    for (size_t jj = 0; jj < qkv_size; ++jj) {
         __m256 c0_f = _mm256_setzero_ps();
 
         const int8_t *__restrict b0_ptr = w_qkv_w + (jj * hidden_size);
@@ -737,16 +771,23 @@ void fused_rms_linear_qkv_m1(
             c0_f = _mm256_fmadd_ps(_mm256_cvtepi32_ps(c0), _mm256_set1_ps(a_q8_s[g_off] * b_s_ptr[g_off]), c0_f);
         }
         
-        qkv_ptr[jj] = add_reduce_mm_256(c0_f);
+        if (jj < hidden_size) {
+            q_ptr[jj] = add_reduce_mm_256(c0_f);
+        } else if (jj < k_limit) {
+            k_ptr[jj - hidden_size] = add_reduce_mm_256(c0_f);
+        } else {
+            v_ptr[jj - k_limit] = add_reduce_mm_256(c0_f);
+        }
     }
 }
 #endif
 
 void fused_rms_linear_qkv_dispatch(
     const Tensor *rms_ffn_w, const Tensor *w_attn_qkv, const Tensor *x,
-    Tensor *t, Tensor *qkv, size_t M, size_t kv_dim, size_t hidden_size,
-    DType::Type dtype_w, DType::Type dtype_s, bool text_gq, size_t group_size,
-    const float rms_norm_eps, const size_t layer_id, bool warm_up
+    Tensor *t, Tensor *q, Tensor *k, Tensor *v, size_t M, size_t kv_dim,
+    size_t hidden_size, DType::Type dtype_w, DType::Type dtype_s,
+    bool text_gq, size_t group_size, const float rms_norm_eps,
+    const size_t layer_id, bool warm_up
 ) {
     PtrPair w_qkv = w_attn_qkv->ptr_all({layer_id});
 
@@ -754,62 +795,97 @@ void fused_rms_linear_qkv_dispatch(
         if (
             !w_attn_qkv->permuted && dtype_w == DType::INT8
             && dtype_s == DType::FP32 && x->dtype == DType::FP32
-            && qkv->dtype == DType::FP32 && text_gq
+            && q->dtype == DType::FP32 && text_gq
         ) {
             const PtrPair rms_w = rms_ffn_w->ptr_all({layer_id});
 
             const float *x_cur_ptr = (const float *)x->ptr();
             float *t_cur_ptr = (float *)t->ptr();
-            float *qkv_cur_ptr = (float *)qkv->ptr();
+            float *q_cur_ptr = (float *)q->ptr();
+            float *k_cur_ptr = (float *)k->ptr();
+            float *v_cur_ptr = (float *)v->ptr();
 
             const size_t qkv_dim = (hidden_size + 2 * kv_dim);
 
             size_t i = 0;
             for (; i + 4 <= M; i += 4) {
                 fused_rms_linear_qkv_m4(
-                    rms_w, w_qkv, x_cur_ptr, t_cur_ptr, qkv_cur_ptr,
+                    rms_w, w_qkv, x_cur_ptr, t_cur_ptr,
+                    q_cur_ptr, k_cur_ptr, v_cur_ptr,
                     hidden_size, kv_dim, group_size, rms_norm_eps
                 );
                 x_cur_ptr += (hidden_size << 2);
                 t_cur_ptr += (hidden_size << 2);
-                qkv_cur_ptr += (qkv_dim << 2);
+                q_cur_ptr += (hidden_size << 2);
+                k_cur_ptr += (kv_dim << 2);
+                v_cur_ptr += (kv_dim << 2);
             }
 
             if (i + 2 <= M) {
                 fused_rms_linear_qkv_m2(
-                    rms_w, w_qkv, x_cur_ptr, t_cur_ptr, qkv_cur_ptr,
+                    rms_w, w_qkv, x_cur_ptr, t_cur_ptr,
+                    q_cur_ptr, k_cur_ptr, v_cur_ptr,
                     hidden_size, kv_dim, group_size, rms_norm_eps
                 );
                 x_cur_ptr += (hidden_size << 1);
                 t_cur_ptr += (hidden_size << 1);
-                qkv_cur_ptr += (qkv_dim << 1);
+                q_cur_ptr += (hidden_size << 1);
+                k_cur_ptr += (kv_dim << 1);
+                v_cur_ptr += (kv_dim << 1);
             }
 
             if (i < M) {
                 fused_rms_linear_qkv_m1(
-                    rms_w, w_qkv, x_cur_ptr, t_cur_ptr, qkv_cur_ptr,
+                    rms_w, w_qkv, x_cur_ptr, t_cur_ptr,
+                    q_cur_ptr, k_cur_ptr, v_cur_ptr,
                     hidden_size, kv_dim, group_size, rms_norm_eps
                 );
             }
         } else {
             rms_norm(x, rms_ffn_w, t, rms_norm_eps, M, layer_id);
+
+            PtrPair w_q = w_qkv;
+            PtrPair w_k = w_attn_qkv->ptr_all({layer_id, hidden_size});
+            PtrPair w_v = w_attn_qkv->ptr_all({layer_id, hidden_size + kv_dim});
             
             linear(
-                t->ptr(), w_qkv.buf, w_qkv.scale, w_qkv.sum_int8, nullptr, nullptr,
-                qkv->ptr(), M, hidden_size + kv_dim * 2, hidden_size, !w_attn_qkv->permuted,
-                t->dtype, dtype_w, dtype_s, qkv->dtype, text_gq, group_size, false
+                t->ptr(), w_q.buf, w_q.scale, w_q.sum_int8, nullptr, nullptr,
+                q->ptr(), M, hidden_size, hidden_size, !w_attn_qkv->permuted,
+                t->dtype, dtype_w, dtype_s, q->dtype, text_gq, group_size, false
+            );
+            linear(
+                t->ptr(), w_k.buf, w_k.scale, w_k.sum_int8, nullptr, nullptr,
+                k->ptr(), M, kv_dim, hidden_size, !w_attn_qkv->permuted,
+                t->dtype, dtype_w, dtype_s, k->dtype, text_gq, group_size, false
+            );
+            linear(
+                t->ptr(), w_v.buf, w_v.scale, w_v.sum_int8, nullptr, nullptr,
+                v->ptr(), M, kv_dim, hidden_size, !w_attn_qkv->permuted,
+                t->dtype, dtype_w, dtype_s, v->dtype, text_gq, group_size, false
             );
         }
     #else
         rms_norm(x, rms_ffn_w, t, rms_norm_eps, M, layer_id);
-            
+
+        PtrPair w_k = w_attn_qkv->ptr_all({layer_id, hidden_size});
+        PtrPair w_v = w_attn_qkv->ptr_all({layer_id, hidden_size + kv_dim});
+        
         linear(
             t->ptr(), w_qkv.buf, w_qkv.scale, w_qkv.sum_int8, nullptr, nullptr,
-            qkv->ptr(), M, hidden_size + kv_dim * 2, hidden_size, !w_attn_qkv->permuted,
-            t->dtype, dtype_w, dtype_s, qkv->dtype, text_gq, group_size, false
+            q->ptr(), M, hidden_size, hidden_size, !w_attn_qkv->permuted,
+            t->dtype, dtype_w, dtype_s, q->dtype, text_gq, group_size, false
+        );
+        linear(
+            t->ptr(), w_k.buf, w_k.scale, w_k.sum_int8, nullptr, nullptr,
+            k->ptr(), M, kv_dim, hidden_size, !w_attn_qkv->permuted,
+            t->dtype, dtype_w, dtype_s, k->dtype, text_gq, group_size, false
+        );
+        linear(
+            t->ptr(), w_v.buf, w_v.scale, w_v.sum_int8, nullptr, nullptr,
+            v->ptr(), M, kv_dim, hidden_size, !w_attn_qkv->permuted,
+            t->dtype, dtype_w, dtype_s, v->dtype, text_gq, group_size, false
         );
     #endif
-
     #ifdef PRINT_LOGITS
         if (!warm_up) {
             const size_t head_dim = qkv->shape[qkv->ndim - 1];

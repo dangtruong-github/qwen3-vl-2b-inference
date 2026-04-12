@@ -165,7 +165,7 @@ size_t fused_rms_decode_dispatch(
             );
         } else {
             rms_norm_inplace(
-                (float *)x->ptr(), rms_out_w, eps, 1, 0ll, 1, 0
+                (float *)x->ptr(), rms_out_w, eps, 1, 0ll
             );
 
             // Classifier (LM Head)
@@ -177,7 +177,7 @@ size_t fused_rms_decode_dispatch(
         }
     #else
         rms_norm_inplace(
-            (float *)x->ptr(), rms_out_w, eps, 1, 0ll, 1, 0
+            (float *)x->ptr(), rms_out_w, eps, 1, 0ll
         );
 
         // Classifier (LM Head)

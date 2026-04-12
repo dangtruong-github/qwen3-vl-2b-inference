@@ -334,7 +334,9 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
 
     state->t = new Tensor({MPS, H});
 
-    state->qkv = new Tensor({MPS, NH + 2 * NKV, D});
+    state->q = new Tensor({MPS, NH, D});
+    state->k = new Tensor({MPS, NKV, D});
+    state->v = new Tensor({MPS, NKV, D});
 
     state->att = new Tensor({MPS, NH, S});
 
@@ -386,7 +388,9 @@ void free_model_run_state(QwenRunState* state) {
 
     if (state->x) delete state->x;
     if (state->t) delete state->t;
-    if (state->qkv) delete state->qkv;
+    if (state->q) delete state->q;
+    if (state->k) delete state->k;
+    if (state->v) delete state->v;
     if (state->att) delete state->att;
     if (state->qkv_out) delete state->qkv_out;
     if (state->gate) delete state->gate;

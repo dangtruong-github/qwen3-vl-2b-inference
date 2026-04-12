@@ -322,8 +322,6 @@ void forward_text_prefill(
     long kv_dim = config->num_key_value_heads * head_dim;
     int kv_mul = num_heads / num_kv_heads;
 
-    const size_t qkv_stride = (num_heads + 2 * num_kv_heads) * head_dim;
-
     const DType::Type dtype_weight = weight->token_embedding_table->dtype;
     const DType::Type dtype_scale = weight->token_embedding_table->scale_dtype;
     const size_t text_group_size = weight->token_embedding_table->group_size;
@@ -379,10 +377,6 @@ void forward_text_prefill(
         #endif
     }
 
-    float *q_ptr = (float *)state->qkv->ptr();
-    float *k_ptr = q_ptr + num_heads * head_dim;
-    const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
-
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         {
             #ifdef CPU_TIME_OUTSIDE
@@ -390,9 +384,10 @@ void forward_text_prefill(
             #endif
             fused_rms_linear_qkv_dispatch(
                 weight->rms_ffn_w, weight->w_attn_qkv, state->x,
-                state->t, state->qkv, prefill_size, kv_dim,
-                hidden_size, dtype_weight,  dtype_scale, text_gq,
-                text_group_size, config->rms_norm_eps, 1ll * l, warm_up
+                state->t, state->q, state->k, state->v,
+                prefill_size, kv_dim, hidden_size, dtype_weight, 
+                dtype_scale, text_gq, text_group_size,
+                config->rms_norm_eps, 1ll * l, warm_up
             );
         }
 
@@ -408,18 +403,18 @@ void forward_text_prefill(
                 CPUTimer timer("text_qk_norm");
             #endif
             fused_rms_rotary_q_dispatch(
-                state->qkv, weight->w_attn_q_norm, state->cos_tensor,
+                state->q, weight->w_attn_q_norm, state->cos_tensor,
                 state->sin_tensor, num_heads, head_dim, prefill_size,
-                qkv_stride, 1ll * l, pos, config->rms_norm_eps, warm_up
+                1ll * l, pos, config->rms_norm_eps, warm_up
             );
             char *k_cache_ptr = (char *)(k_cache_l + kv_pos_off_bytes);
             float *k_cache_s_ptr = state->key_cache->dtype == DType::INT8
                 ? (k_cache_s + kv_pos_scale_off) : nullptr;
             fused_rms_rotary_k_dispatch(
-                k_ptr, k_cache_ptr, k_cache_s_ptr, state->key_cache,
-                weight->w_attn_k_norm, state->cos_tensor, state->sin_tensor,
-                num_kv_heads, head_dim, prefill_size, qkv_stride,
-                state->qkv->dtype, state->key_cache->dtype, 1ll * l,
+                state->k, k_cache_ptr, k_cache_s_ptr, state->key_cache,
+                weight->w_attn_k_norm, state->cos_tensor,
+                state->sin_tensor, num_kv_heads, head_dim, prefill_size,
+                state->k->dtype, state->key_cache->dtype, 1ll * l,
                 kv_all_off, pos, config->rms_norm_eps,
                 cache_group_size, warm_up
             );
@@ -431,8 +426,8 @@ void forward_text_prefill(
             #endif
 
             copy_to_v_cache(
-                v_now_base_ptr, (char *)v_cache_l, v_cache_s,
-                state->value_cache->dtype, prefill_size, qkv_stride,
+                state->v, (char *)v_cache_l, v_cache_s,
+                state->value_cache->dtype, prefill_size,
                 head_dim, num_kv_heads, kv_pos_off, kv_all_off,
                 kv_pos_scale_off, cache_group_size, warm_up
             );
@@ -447,7 +442,7 @@ void forward_text_prefill(
 
             fused_att_dispatch(
                 k_cache_l, v_cache_l, k_cache_s, v_cache_s,
-                state->qkv, state->att, state->qkv_out,
+                state->q, state->att, state->qkv_out,
                 num_heads, head_dim, kv_mul, kv_dim,
                 kv_all_off, pos, state->key_cache->dtype,
                 state->value_cache->dtype, cache_group_size,
@@ -552,8 +547,6 @@ size_t forward_text_decode(
     long kv_dim = config->num_key_value_heads * head_dim;
     int kv_mul = num_heads / num_kv_heads;
 
-    const size_t qkv_stride = (num_heads + 2 * num_kv_heads) * head_dim;
-
     const DType::Type dtype_weight = weight->token_embedding_table->dtype;
     const DType::Type dtype_scale = weight->token_embedding_table->scale_dtype;
     const size_t text_group_size = weight->token_embedding_table->group_size;
@@ -582,10 +575,6 @@ size_t forward_text_decode(
         #endif
     }
 
-    float *q_ptr = (float *)state->qkv->ptr();
-    float *k_ptr = q_ptr + num_heads * head_dim;
-    const float *v_now_base_ptr = k_ptr + num_kv_heads * head_dim;
-
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         {
             #ifdef CPU_TIME_OUTSIDE
@@ -593,8 +582,9 @@ size_t forward_text_decode(
             #endif
             fused_rms_linear_qkv_dispatch(
                 weight->rms_ffn_w, weight->w_attn_qkv, state->x,
-                state->t, state->qkv, 1, kv_dim, hidden_size,
-                dtype_weight, dtype_scale, text_gq, text_group_size,
+                state->t, state->q, state->k, state->v,
+                1, kv_dim, hidden_size, dtype_weight,
+                dtype_scale, text_gq, text_group_size,
                 config->rms_norm_eps, 1ll * l, warm_up
             );
         }
@@ -611,17 +601,17 @@ size_t forward_text_decode(
                 CPUTimer timer("text_qk_norm");
             #endif
             fused_rms_rotary_q_dispatch(
-                state->qkv, weight->w_attn_q_norm, state->cos_tensor,
-                state->sin_tensor, num_heads, head_dim, 1, qkv_stride,
+                state->q, weight->w_attn_q_norm, state->cos_tensor,
+                state->sin_tensor, num_heads, head_dim, 1,
                 1ll * l, pos, config->rms_norm_eps, warm_up
             );
             char *k_cache_ptr = (char *)(k_cache_l + kv_pos_off_bytes);
             float *k_cache_s_ptr = state->key_cache->dtype == DType::INT8
                 ? (k_cache_s + kv_pos_scale_off) : nullptr;
             fused_rms_rotary_k_dispatch(
-                k_ptr, k_cache_ptr, k_cache_s_ptr, state->key_cache,
+                state->k, k_cache_ptr, k_cache_s_ptr, state->key_cache,
                 weight->w_attn_k_norm, state->cos_tensor, state->sin_tensor,
-                num_kv_heads, head_dim, 1, qkv_stride, state->qkv->dtype,
+                num_kv_heads, head_dim, 1, state->k->dtype,
                 state->key_cache->dtype, 1ll * l, kv_all_off, pos,
                 config->rms_norm_eps, cache_group_size, warm_up
             );
@@ -633,9 +623,9 @@ size_t forward_text_decode(
             #endif
 
             copy_to_v_cache(
-                v_now_base_ptr, (char *)v_cache_l, v_cache_s,
-                state->value_cache->dtype, 1, qkv_stride,
-                head_dim, num_kv_heads, kv_pos_off, kv_all_off,
+                state->v, (char *)v_cache_l, v_cache_s,
+                state->value_cache->dtype, 1, head_dim,
+                num_kv_heads, kv_pos_off, kv_all_off,
                 kv_pos_scale_off, cache_group_size, warm_up
             );
         }
@@ -647,7 +637,7 @@ size_t forward_text_decode(
 
             fused_att_dispatch(
                 k_cache_l, v_cache_l, k_cache_s, v_cache_s,
-                state->qkv, state->att, state->qkv_out,
+                state->q, state->att, state->qkv_out,
                 num_heads, head_dim, kv_mul, kv_dim,
                 kv_all_off, pos, state->key_cache->dtype,
                 state->value_cache->dtype,
