@@ -110,10 +110,18 @@ size_t greedy_decode(float* logits, int vocab_size);
 // fused kernels
 void fused_rms_linear_qkv_dispatch(
     const Tensor *rms_ffn_w, const Tensor *w_attn_qkv, const Tensor *x,
-    Tensor *t, Tensor *q, Tensor *k, Tensor *v,
-    size_t M, size_t kv_dim, size_t hidden_size,
-    DType::Type dtype_w, DType::Type dtype_s, bool text_gq, size_t group_size,
-    const float rms_norm_eps, const size_t layer_id, bool warm_up
+    Tensor *t, Tensor *q, Tensor *k, Tensor *v, size_t M, size_t kv_dim,
+    size_t hidden_size, DType::Type dtype_w, DType::Type dtype_s,
+    bool text_gq, size_t group_size, const float rms_norm_eps,
+    const size_t layer_id, bool warm_up
+);
+void fused_decode_embed_rms_linear_dispatch(
+    const Tensor *embed_table, const Tensor *rms_ffn_w,
+    const Tensor *w_attn_qkv, Tensor *x, Tensor *t, Tensor *q,
+    Tensor *k, Tensor *v, const size_t token_id, size_t kv_dim,
+    size_t hidden_size, DType::Type dtype_w, DType::Type dtype_s,
+    bool text_gq, size_t group_size, const float rms_norm_eps,
+    const size_t layer_id, bool warm_up
 );
 void fused_rms_rotary_q_dispatch(
     Tensor *q, const Tensor *w_attn_q_norm,
@@ -155,3 +163,12 @@ void fused_att_dispatch(
     const DType::Type key_dtype, const DType::Type value_dtype,
     const size_t group_size, const size_t prefill_size, bool warm_up
 );
+
+#if defined(__AVX2__) && defined(__FMA__)
+void fused_rms_linear_qkv_m1(
+    const PtrPair w_rms, const PtrPair w_qkv, const float *x_ptr,
+    float *t_ptr, float *q_ptr, float *k_ptr, half_cpu *v_ptr,
+    const size_t hidden_size, const size_t kv_dim,
+    const size_t group_size, const float eps
+);
+#endif

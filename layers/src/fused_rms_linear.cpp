@@ -3,7 +3,7 @@
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
 void fused_rms_linear_qkv_m2(
     const PtrPair w_rms, const PtrPair w_qkv, const float *x_ptr,
-    float *t_ptr, float *q_ptr, float *k_ptr, float *v_ptr,
+    float *t_ptr, float *q_ptr, float *k_ptr, half_cpu *v_ptr,
     const size_t hidden_size, const size_t kv_dim,
     const size_t group_size, const float eps
 ) {
@@ -133,15 +133,15 @@ void fused_rms_linear_qkv_m2(
             k_ptr[kv_dim + jj_id] = _mm512_reduce_add_ps(c1_f);
         } else {
             const size_t jj_id = jj - k_limit;
-            v_ptr[jj_id] = _mm512_reduce_add_ps(c0_f);
-            v_ptr[kv_dim + jj_id] = _mm512_reduce_add_ps(c1_f);
+            v_ptr[jj_id] = (half_cpu)(_mm512_reduce_add_ps(c0_f));
+            v_ptr[kv_dim + jj_id] = (half_cpu)(_mm512_reduce_add_ps(c1_f));
         }
     }
 }
 
 void fused_rms_linear_qkv_m4(
     const PtrPair w_rms, const PtrPair w_qkv, const float *x_ptr,
-    float *t_ptr, float *q_ptr, float *k_ptr, float *v_ptr,
+    float *t_ptr, float *q_ptr, float *k_ptr, half_cpu *v_ptr,
     const size_t hidden_size, const size_t kv_dim,
     const size_t group_size, const float eps
 ) {
@@ -292,10 +292,10 @@ void fused_rms_linear_qkv_m4(
             k_ptr[kv_stride[1] + jj_id] = _mm512_reduce_add_ps(c3_f);
         } else {
             const size_t jj_id = jj - k_limit;
-            v_ptr[jj_id] = _mm512_reduce_add_ps(c0_f);
-            v_ptr[kv_dim + jj_id] = _mm512_reduce_add_ps(c1_f);
-            v_ptr[kv_stride[0] + jj_id] = _mm512_reduce_add_ps(c2_f);
-            v_ptr[kv_stride[1] + jj_id] = _mm512_reduce_add_ps(c3_f);
+            v_ptr[jj_id] = (half_cpu)(_mm512_reduce_add_ps(c0_f));
+            v_ptr[kv_dim + jj_id] = (half_cpu)(_mm512_reduce_add_ps(c1_f));
+            v_ptr[kv_stride[0] + jj_id] = (half_cpu)(_mm512_reduce_add_ps(c2_f));
+            v_ptr[kv_stride[1] + jj_id] = (half_cpu)(_mm512_reduce_add_ps(c3_f));
         }
     }
 }
@@ -638,7 +638,7 @@ void fused_rms_linear_qkv_m4(
 #if defined(__AVX2__) && defined(__FMA__)
 void fused_rms_linear_qkv_m1(
     const PtrPair w_rms, const PtrPair w_qkv, const float *x_ptr,
-    float *t_ptr, float *q_ptr, float *k_ptr, float *v_ptr,
+    float *t_ptr, float *q_ptr, float *k_ptr, half_cpu *v_ptr,
     const size_t hidden_size, const size_t kv_dim,
     const size_t group_size, const float eps
 ) {
@@ -776,7 +776,7 @@ void fused_rms_linear_qkv_m1(
         } else if (jj < k_limit) {
             k_ptr[jj - hidden_size] = add_reduce_mm_256(c0_f);
         } else {
-            v_ptr[jj - k_limit] = add_reduce_mm_256(c0_f);
+            v_ptr[jj - k_limit] = (half_cpu)(add_reduce_mm_256(c0_f));
         }
     }
 }
@@ -795,7 +795,8 @@ void fused_rms_linear_qkv_dispatch(
         if (
             !w_attn_qkv->permuted && dtype_w == DType::INT8
             && dtype_s == DType::FP32 && x->dtype == DType::FP32
-            && q->dtype == DType::FP32 && text_gq
+            && q->dtype == DType::FP32 && k->dtype == DType::FP32 
+            && v->dtype == DType::FP16 && text_gq
         ) {
             const PtrPair rms_w = rms_ffn_w->ptr_all({layer_id});
 
@@ -803,7 +804,7 @@ void fused_rms_linear_qkv_dispatch(
             float *t_cur_ptr = (float *)t->ptr();
             float *q_cur_ptr = (float *)q->ptr();
             float *k_cur_ptr = (float *)k->ptr();
-            float *v_cur_ptr = (float *)v->ptr();
+            half_cpu *v_cur_ptr = (half_cpu *)v->ptr();
 
             const size_t qkv_dim = (hidden_size + 2 * kv_dim);
 

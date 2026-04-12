@@ -336,7 +336,7 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
 
     state->q = new Tensor({MPS, NH, D});
     state->k = new Tensor({MPS, NKV, D});
-    state->v = new Tensor({MPS, NKV, D});
+    state->v = new Tensor({MPS, NKV, D}, DType::FP16);
 
     state->att = new Tensor({MPS, NH, S});
 

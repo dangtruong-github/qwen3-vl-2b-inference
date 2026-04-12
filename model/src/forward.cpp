@@ -384,10 +384,9 @@ void forward_text_prefill(
             #endif
             fused_rms_linear_qkv_dispatch(
                 weight->rms_ffn_w, weight->w_attn_qkv, state->x,
-                state->t, state->q, state->k, state->v,
-                prefill_size, kv_dim, hidden_size, dtype_weight, 
-                dtype_scale, text_gq, text_group_size,
-                config->rms_norm_eps, 1ll * l, warm_up
+                state->t, state->q, state->k, state->v, prefill_size,
+                kv_dim, hidden_size, dtype_weight, dtype_scale, text_gq,
+                text_group_size, config->rms_norm_eps, 1ll * l, warm_up
             );
         }
 
@@ -417,6 +416,20 @@ void forward_text_prefill(
                 state->k->dtype, state->key_cache->dtype, 1ll * l,
                 kv_all_off, pos, config->rms_norm_eps,
                 cache_group_size, warm_up
+            );
+        }
+
+        
+        {
+            #ifdef CPU_TIME_OUTSIDE
+                CPUTimer timer("text_v_cache_update", warm_up);
+            #endif
+
+            copy_to_v_cache(
+                state->v, (char *)v_cache_l, v_cache_s,
+                state->value_cache->dtype, 1, head_dim,
+                num_kv_heads, kv_pos_off, kv_all_off,
+                kv_pos_scale_off, cache_group_size, warm_up
             );
         }
 
@@ -557,35 +570,29 @@ size_t forward_text_decode(
     const size_t kv_all_off = 1ll * seq_len * head_dim;
     const size_t kv_pos_off_bytes = kv_pos_off * state->key_cache->get_dtype_size();
     const size_t kv_pos_scale_off = kv_pos_off / text_group_size;
-    
-    {
-        #ifdef CPU_TIME_OUTSIDE
-            CPUTimer timer("decode_embedding", warm_up);
-        #endif
-        
-        // Embed layer
-        embedding_lookup(
-            weight->token_embedding_table, state->x, 0ll, token_id, hidden_size
-        );
-
-        #ifdef PRINT_LOGITS
-            if (!warm_up) {
-                state->x->printDebug("x");
-            }
-        #endif
-    }
 
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
-        {
+        if (l == 0) {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_text_rms_linear_qkv", warm_up);
+                CPUTimer timer("decode_embed_rms_linear_qkv", warm_up);
             #endif
+
+            fused_decode_embed_rms_linear_dispatch(
+                weight->token_embedding_table, weight->rms_ffn_w,
+                weight->w_attn_qkv, state->x, state->t, state->q, state->k,
+                state->v, token_id, kv_dim, hidden_size, dtype_weight, dtype_scale, text_gq, text_group_size,
+                config->rms_norm_eps, 1ll * l, warm_up
+            );
+        } else {
+            #ifdef CPU_TIME_OUTSIDE
+                CPUTimer timer("decode_rms_linear_qkv", warm_up);
+            #endif
+            
             fused_rms_linear_qkv_dispatch(
                 weight->rms_ffn_w, weight->w_attn_qkv, state->x,
-                state->t, state->q, state->k, state->v,
-                1, kv_dim, hidden_size, dtype_weight,
-                dtype_scale, text_gq, text_group_size,
-                config->rms_norm_eps, 1ll * l, warm_up
+                state->t, state->q, state->k, state->v, 1, kv_dim,
+                hidden_size, dtype_weight, dtype_scale, text_gq,
+                text_group_size, config->rms_norm_eps, 1ll * l, warm_up
             );
         }
 

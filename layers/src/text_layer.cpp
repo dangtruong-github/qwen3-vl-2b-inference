@@ -1238,115 +1238,133 @@ void copy_to_v_cache(
     const size_t kv_pos_scale_off,
     const size_t cache_group_size, bool warm_up
 ) {
-    float *v_ptr = (float *)v->ptr();
     const size_t v_stride = num_kv_heads * head_dim;
+    
+    if (v->dtype == DType::FP32) {
+        float *v_ptr = (float *)v->ptr();
 
-    if (v_cache_dtype == DType::FP32) {
-        float *v_cache_base_ptr = (float *)(v_cache_l) + kv_pos_off;
+        if (v_cache_dtype == DType::FP32) {
+            float *v_cache_base_ptr = (float *)(v_cache_l) + kv_pos_off;
 
-        for (size_t b = 0; b < prefill_size; ++b) {
-            const float *v_now_ptr = v_ptr + b * v_stride;
-            float *v_cache_ptr = v_cache_base_ptr + b * head_dim;
-            for (int h = 0; h < num_kv_heads; h++) {
-                memcpy(v_cache_ptr + h * kv_all_off, v_now_ptr + h * head_dim, head_dim * sizeof(float));
+            for (size_t b = 0; b < prefill_size; ++b) {
+                const float *v_now_ptr = v_ptr + b * v_stride;
+                float *v_cache_ptr = v_cache_base_ptr + b * head_dim;
+                for (int h = 0; h < num_kv_heads; h++) {
+                    memcpy(v_cache_ptr + h * kv_all_off, v_now_ptr + h * head_dim, head_dim * sizeof(float));
+                }
             }
-        }
-    } else if (v_cache_dtype == DType::FP16) {
-        // fp16 path
-        uint16_t *v_cache_base_ptr = (uint16_t *)(v_cache_l) + kv_pos_off;
+        } else if (v_cache_dtype == DType::FP16) {
+            // fp16 path
+            uint16_t *v_cache_base_ptr = (uint16_t *)(v_cache_l) + kv_pos_off;
 
-        #pragma omp parallel for collapse(2)
-        for (size_t b = 0; b < prefill_size; ++b) {
-            for (int h = 0; h < num_kv_heads; h++) {
-                const float *src =  v_ptr + b * v_stride + h * head_dim;
-                uint16_t *dst = v_cache_base_ptr + b * head_dim + h * kv_all_off;
+            #pragma omp parallel for collapse(2)
+            for (size_t b = 0; b < prefill_size; ++b) {
+                for (int h = 0; h < num_kv_heads; h++) {
+                    const float *src =  v_ptr + b * v_stride + h * head_dim;
+                    uint16_t *dst = v_cache_base_ptr + b * head_dim + h * kv_all_off;
 
-                // process 8 floats at a time
-                int i = 0;
+                    // process 8 floats at a time
+                    int i = 0;
 
-                #if defined(__F16C__)
-                    for (; i + 8 <= head_dim; i += 8) {
-                        __m256 v = _mm256_loadu_ps(src + i);                     // load 8 floats
-                        __m128i h16 = _mm256_cvtps_ph(v, _MM_FROUND_TO_NEAREST_INT); // convert to 8 fp16
-                        _mm_storeu_si128((__m128i*)(dst + i), h16);              // store 8 fp16 (16 bytes)
+                    #if defined(__F16C__)
+                        for (; i + 8 <= head_dim; i += 8) {
+                            __m256 v = _mm256_loadu_ps(src + i);                     // load 8 floats
+                            __m128i h16 = _mm256_cvtps_ph(v, _MM_FROUND_TO_NEAREST_INT); // convert to 8 fp16
+                            _mm_storeu_si128((__m128i*)(dst + i), h16);              // store 8 fp16 (16 bytes)
+                        }
+                    #endif
+
+                    for (; i < head_dim; i++) {
+                        dst[i] = (half_cpu)(src[i]);
                     }
-                #endif
+                }
+            }
+        } else {
+            // int8 path
 
-                for (; i < head_dim; i++) {
-                    dst[i] = (half_cpu)(src[i]);
+            int8_t *v_cache_base_ptr = (int8_t *)(v_cache_l) + kv_pos_off;
+            float  *v_scale_base_ptr = v_cache_s + kv_pos_scale_off;
+
+
+            for (size_t b = 0; b < prefill_size; ++b) {
+                const float *v_now_ptr = v_ptr + b * v_stride;
+                const size_t head_dim_off = b * head_dim;
+                int8_t *v_cache_ptr = v_cache_base_ptr + head_dim_off;
+                float *v_scale_ptr = v_scale_base_ptr + head_dim_off / cache_group_size;
+                for (int h = 0; h < num_kv_heads; h++) {
+                    const float *src = v_now_ptr + h * head_dim;
+                    int8_t *dst = v_cache_ptr + h * kv_all_off;
+                    float  *scale_dst = v_scale_ptr + h * kv_all_off / cache_group_size;
+
+                    for (size_t g = 0; g < head_dim; g += cache_group_size) {
+
+                        __m256 v_max = _mm256_setzero_ps();
+                        __m256 abs_mask = _mm256_set1_ps(-0.0f);
+
+                        for (size_t i = g; i < g + cache_group_size; i += 8) {
+                            __m256 f = _mm256_loadu_ps(src + i);
+                            __m256 abs_f = _mm256_andnot_ps(abs_mask, f);
+                            v_max = _mm256_max_ps(v_max, abs_f);
+                        }
+
+                        float max_val = max_reduce_mm_256(v_max);
+                        float scale   = max_val / 127.0f;
+                        float invS    = (max_val > 0) ? 1.0f / scale : 0.0f;
+
+                        scale_dst[g / cache_group_size] = scale;
+
+                        __m256 invS_v = _mm256_set1_ps(invS);
+
+                        for (size_t i = g; i < g + cache_group_size; i += 32) {
+
+                            __m256 f0 = _mm256_loadu_ps(src + i);
+                            __m256 f1 = _mm256_loadu_ps(src + i + 8);
+                            __m256 f2 = _mm256_loadu_ps(src + i + 16);
+                            __m256 f3 = _mm256_loadu_ps(src + i + 24);
+
+                            f0 = _mm256_mul_ps(f0, invS_v);
+                            f1 = _mm256_mul_ps(f1, invS_v);
+                            f2 = _mm256_mul_ps(f2, invS_v);
+                            f3 = _mm256_mul_ps(f3, invS_v);
+
+                            __m256i i0 = _mm256_cvtps_epi32(f0);
+                            __m256i i1 = _mm256_cvtps_epi32(f1);
+                            __m256i i2 = _mm256_cvtps_epi32(f2);
+                            __m256i i3 = _mm256_cvtps_epi32(f3);
+
+                            __m256i p01 = _mm256_packs_epi32(i0, i1);
+                            __m256i p23 = _mm256_packs_epi32(i2, i3);
+
+                            p01 = _mm256_permute4x64_epi64(p01, 0xD8);
+                            p23 = _mm256_permute4x64_epi64(p23, 0xD8);
+
+                            __m256i q8 = _mm256_packs_epi16(p01, p23);
+                            q8 = _mm256_permute4x64_epi64(q8, _MM_SHUFFLE(3,1,2,0));
+
+                            _mm256_storeu_si256((__m256i*)(dst + i), q8);
+                        }
+                    }
+
                 }
             }
         }
     } else {
-        // int8 path
+        half_cpu *v_ptr = (half_cpu *)v->ptr();
+        if (v_cache_dtype == DType::FP16) {
+            half_cpu *v_cache_ptr = (half_cpu *)(v_cache_l) + kv_pos_off;
 
-        int8_t *v_cache_base_ptr = (int8_t *)(v_cache_l) + kv_pos_off;
-        float  *v_scale_base_ptr = v_cache_s + kv_pos_scale_off;
-
-
-        for (size_t b = 0; b < prefill_size; ++b) {
-            const float *v_now_ptr = v_ptr + b * v_stride;
-            const size_t head_dim_off = b * head_dim;
-            int8_t *v_cache_ptr = v_cache_base_ptr + head_dim_off;
-            float *v_scale_ptr = v_scale_base_ptr + head_dim_off / cache_group_size;
-            for (int h = 0; h < num_kv_heads; h++) {
-                const float *src = v_now_ptr + h * head_dim;
-                int8_t *dst = v_cache_ptr + h * kv_all_off;
-                float  *scale_dst = v_scale_ptr + h * kv_all_off / cache_group_size;
-
-                for (size_t g = 0; g < head_dim; g += cache_group_size) {
-
-                    __m256 v_max = _mm256_setzero_ps();
-                    __m256 abs_mask = _mm256_set1_ps(-0.0f);
-
-                    for (size_t i = g; i < g + cache_group_size; i += 8) {
-                        __m256 f = _mm256_loadu_ps(src + i);
-                        __m256 abs_f = _mm256_andnot_ps(abs_mask, f);
-                        v_max = _mm256_max_ps(v_max, abs_f);
-                    }
-
-                    float max_val = max_reduce_mm_256(v_max);
-                    float scale   = max_val / 127.0f;
-                    float invS    = (max_val > 0) ? 1.0f / scale : 0.0f;
-
-                    scale_dst[g / cache_group_size] = scale;
-
-                    __m256 invS_v = _mm256_set1_ps(invS);
-
-                    for (size_t i = g; i < g + cache_group_size; i += 32) {
-
-                        __m256 f0 = _mm256_loadu_ps(src + i);
-                        __m256 f1 = _mm256_loadu_ps(src + i + 8);
-                        __m256 f2 = _mm256_loadu_ps(src + i + 16);
-                        __m256 f3 = _mm256_loadu_ps(src + i + 24);
-
-                        f0 = _mm256_mul_ps(f0, invS_v);
-                        f1 = _mm256_mul_ps(f1, invS_v);
-                        f2 = _mm256_mul_ps(f2, invS_v);
-                        f3 = _mm256_mul_ps(f3, invS_v);
-
-                        __m256i i0 = _mm256_cvtps_epi32(f0);
-                        __m256i i1 = _mm256_cvtps_epi32(f1);
-                        __m256i i2 = _mm256_cvtps_epi32(f2);
-                        __m256i i3 = _mm256_cvtps_epi32(f3);
-
-                        __m256i p01 = _mm256_packs_epi32(i0, i1);
-                        __m256i p23 = _mm256_packs_epi32(i2, i3);
-
-                        p01 = _mm256_permute4x64_epi64(p01, 0xD8);
-                        p23 = _mm256_permute4x64_epi64(p23, 0xD8);
-
-                        __m256i q8 = _mm256_packs_epi16(p01, p23);
-                        q8 = _mm256_permute4x64_epi64(q8, _MM_SHUFFLE(3,1,2,0));
-
-                        _mm256_storeu_si256((__m256i*)(dst + i), q8);
-                    }
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (size_t b = 0; b < prefill_size; ++b) {
+                for (int h = 0; h < num_kv_heads; ++h) {
+                    memcpy(
+                        v_cache_ptr + b * head_dim + h * kv_all_off,
+                        v_ptr + b * v_stride + h * head_dim,
+                        head_dim * sizeof(half_cpu)
+                    );
                 }
-
             }
         }
     }
-
     #ifdef PRINT_LOGITS
         if (!warm_up) {
             for (size_t i = 0; i < prefill_size; ++i) {
