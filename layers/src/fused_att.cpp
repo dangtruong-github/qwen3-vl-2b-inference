@@ -909,7 +909,7 @@ void fused_att_dispatch(
     const DType::Type key_dtype, const DType::Type value_dtype,
     const size_t group_size, const size_t prefill_size, bool warm_up
 ) {
-    if (key_dtype == DType::FP16 && value_dtype == DType::FP16 && kv_mul == 2 && false) {
+    if (key_dtype == DType::FP16 && value_dtype == DType::FP16 && kv_mul == 2) {
 
         if (prefill_size > 1) {
             flash_attn_prefill(

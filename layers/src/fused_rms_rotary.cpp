@@ -134,8 +134,8 @@ void fused_rms_rotary_q_dispatch(
 void fused_rms_rotary_k(
     float *__restrict x, half_cpu *__restrict k_cache, PtrPair scale_ptr,
     const float *cos_row_base, const float *sin_row_base,
-    float eps, size_t groups, size_t group_size, size_t sh_off,
-    size_t group_offset, size_t n_heads, size_t head_dim
+    float eps, size_t groups, size_t group_size,
+    size_t sh_off, size_t n_heads, size_t head_dim
 ) {
     const float inv_hs = 1.0f / head_dim;
     // INT8 group-wise scale
@@ -145,6 +145,7 @@ void fused_rms_rotary_k(
         static_cast<const float *>(scale_ptr.scale);
 
     const int half = head_dim >> 1;
+    const size_t group_offset = n_heads * head_dim;
 
     #pragma omp parallel for collapse(2) schedule(static)
     for (size_t g_id = 0; g_id < groups; ++g_id) {
@@ -231,7 +232,7 @@ void fused_rms_rotary_k_dispatch(
         && w_attn_k_norm->scale_dtype == DType::FP32
         && cos_tensor->dtype == DType::FP32
         && sin_tensor->dtype == DType::FP32
-        && cache_type == DType::FP16 && false
+        && cache_type == DType::FP16
     ) {
         PtrPair scale_ptr = w_attn_k_norm->ptr_all({layer_offset});
 
@@ -244,7 +245,7 @@ void fused_rms_rotary_k_dispatch(
             k_ptr, (half_cpu *)k_cache_ptr, scale_ptr,
             cos_row_base, sin_row_base, eps, prefill_size,
             w_attn_k_norm->group_size, kv_all_off,
-            0, num_kv_heads, head_dim
+            num_kv_heads, head_dim
         );
     } else {
         rms_norm_inplace(
