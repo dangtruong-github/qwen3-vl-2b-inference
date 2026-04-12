@@ -7,7 +7,7 @@ void linear_fp16_normal_tm_4(
     const size_t M, const size_t N, const size_t K
 ) {
     #ifdef CPU_TIME_FP16_EVAL
-        CPUTimer timer("linear");
+        CPUTimer timer("linear", false);
         printf("Shape of matmul FP16 tm4: M=%zu, N=%zu, K=%zu, TN=%zu, TK=%zu\n", M, N, K, TN, TK);
     #endif
 
@@ -373,7 +373,7 @@ void linear_fp16_normal_tm_8(
     const size_t M, const size_t N, const size_t K
 ) {
     #ifdef CPU_TIME_FP16_EVAL
-        CPUTimer timer("linear");
+        CPUTimer timer("linear", false);
         printf("Shape of matmul FP16 tm8: M=%zu, N=%zu, K=%zu, TN=%zu, TK=%zu\n", M, N, K, TN, TK);
     #endif
 

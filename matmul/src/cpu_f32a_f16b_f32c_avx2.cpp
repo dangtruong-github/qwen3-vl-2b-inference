@@ -676,7 +676,7 @@ void lg_M_N_K_even_transpose(
     size_t M, size_t N, size_t K
 ) {
     #ifdef CPU_TIME_FP16_EVAL
-        CPUTimer timer("linear");
+        CPUTimer timer("linear", false);
         printf("Shape of matmul transpose FP16: M=%zu, N=%zu, K=%zu, TN=%zu, TK=%zu\n", M, N, K, TN, TK);
     #endif
 
@@ -866,7 +866,7 @@ void f32a_f16b_f32c_avx2_kernel(
     size_t M, size_t N, size_t K, bool mat_B_transpose
 ) {
     #ifdef CPU_TIME_FP16
-        CPUTimer timer("linear");
+        CPUTimer timer("linear", false);
         printf("Shape of matmul FP16: M=%zu, N=%zu, K=%zu, bias=%d, B transpose=%d\n", M, N, K, (mat_bias != nullptr), mat_B_transpose);
     #endif
 

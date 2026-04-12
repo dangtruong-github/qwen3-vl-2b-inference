@@ -2,7 +2,7 @@
 
 void forward_img(
     QwenConfig *config, QwenRunState *state, QwenWeight *weight,
-    float *img_data, int img_h, int img_w, int grid_h, int grid_w, bool warm_up
+    float *img_data, int img_h, int img_w, int grid_h, int grid_w, const bool warm_up
 ) {
     if (img_data == nullptr) {
         return;
@@ -29,7 +29,7 @@ void forward_img(
 
     {
         #ifdef CPU_TIME_OUTSIDE
-            CPUTimer timer("conv_3d");
+            CPUTimer timer("conv_3d", warm_up);
         #endif
         conv_3d(
             weight->vl_patch_emb_w, weight->vl_patch_emb_b, img_data,
@@ -44,7 +44,7 @@ void forward_img(
 
     {
         #ifdef CPU_TIME_OUTSIDE
-            CPUTimer timer("vision_pos_embed");
+            CPUTimer timer("vision_pos_embed", warm_up);
         #endif
         vision_pos_embed(
             weight->vl_pos_emb_w, state->vision_t,
@@ -54,14 +54,14 @@ void forward_img(
 
     {
         #ifdef CPU_TIME_OUTSIDE
-            CPUTimer timer("add_vector_pos");
+            CPUTimer timer("add_vector_pos", warm_up);
         #endif
         add_vector(state->vision_x, state->vision_t, 1ll * total_tokens * VH);
     }
 
     {
         #ifdef CPU_TIME_OUTSIDE
-            CPUTimer timer("vision_rot_pos_emb");
+            CPUTimer timer("vision_rot_pos_emb", warm_up);
         #endif
         vision_rot_pos_emb(
             state->vision_pe_cos, state->vision_pe_sin,
@@ -73,7 +73,7 @@ void forward_img(
     for (size_t l = 0; l < config->vision_depth; l++) {
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("layer_norm_1");
+                CPUTimer timer("layer_norm_1", warm_up);
             #endif
             layer_norm(
                 state->vision_x, weight->vl_norm1_w,
@@ -91,7 +91,7 @@ void forward_img(
         
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("linear_q");
+                CPUTimer timer("linear_q", warm_up);
             #endif
             linear(
                 state->vision_t->ptr(), w_q.buf, w_q.scale, w_q.sum_int8,
@@ -104,7 +104,7 @@ void forward_img(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("rope_q");
+                CPUTimer timer("rope_q", warm_up);
             #endif
             vision_apply_rotary_inplace(
                 state->vision_pe_cos, state->vision_pe_sin,
@@ -117,7 +117,7 @@ void forward_img(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("linear_k");
+                CPUTimer timer("linear_k", warm_up);
             #endif
             linear(
                 state->vision_t->ptr(), w_k.buf, w_k.scale, w_k.sum_int8, b_k.buf,
@@ -130,7 +130,7 @@ void forward_img(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("rope_k");
+                CPUTimer timer("rope_k", warm_up);
             #endif
             vision_apply_rotary_inplace(
                 state->vision_pe_cos, state->vision_pe_sin,
@@ -143,7 +143,7 @@ void forward_img(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("linear_v");
+                CPUTimer timer("linear_v", warm_up);
             #endif
             linear(
                 state->vision_t->ptr(), w_v.buf, w_v.scale, w_v.sum_int8, b_v.buf,
@@ -159,7 +159,7 @@ void forward_img(
         
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("vision_attention");
+                CPUTimer timer("vision_attention", warm_up);
             #endif
             vision_att(
                 state->vision_q, state->vision_k, state->vision_t,
@@ -176,7 +176,7 @@ void forward_img(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("linear_attn_proj");
+                CPUTimer timer("linear_attn_proj", warm_up);
             #endif
             linear(
                 state->vision_t->ptr(), w_attn_proj_ptr.buf, w_attn_proj_ptr.scale,
@@ -191,7 +191,7 @@ void forward_img(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("layer_norm_2");
+                CPUTimer timer("layer_norm_2", warm_up);
             #endif
             layer_norm(
                 state->vision_x, weight->vl_norm2_w,
@@ -202,7 +202,7 @@ void forward_img(
         
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("mlp_block");
+                CPUTimer timer("mlp_block", warm_up);
             #endif
             PtrPair w_mlp1_ptr = weight->vl_mlp1_w->ptr_all({l});
             PtrPair b_mlp1_ptr = weight->vl_mlp1_b->ptr_all({l});
@@ -233,7 +233,7 @@ void forward_img(
 
         if (config->deep_layer[l] > 0) {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("deep_stack_block");
+                CPUTimer timer("deep_stack_block", warm_up);
             #endif
             size_t d_stride = config->deep_layer[l] - 1;
             layer_norm(
@@ -271,7 +271,7 @@ void forward_img(
 
     {
         #ifdef CPU_TIME_OUTSIDE
-            CPUTimer timer("final_merge_block");
+            CPUTimer timer("final_merge_block", warm_up);
         #endif
         layer_norm(
             state->vision_x, weight->vl_merge_norm_w,
@@ -339,7 +339,7 @@ void forward_text_prefill(
 
     {
         #ifdef CPU_TIME_OUTSIDE
-            CPUTimer timer("text_embedding_lookup");
+            CPUTimer timer("text_embedding_lookup", warm_up);
         #endif
         // Embed layer
 
@@ -380,7 +380,7 @@ void forward_text_prefill(
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_rms_linear_qkv");
+                CPUTimer timer("text_rms_linear_qkv", warm_up);
             #endif
             fused_rms_linear_qkv_dispatch(
                 weight->rms_ffn_w, weight->w_attn_qkv, state->x,
@@ -400,7 +400,7 @@ void forward_text_prefill(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_qk_norm");
+                CPUTimer timer("text_qk_norm", warm_up);
             #endif
             fused_rms_rotary_q_dispatch(
                 state->q, weight->w_attn_q_norm, state->cos_tensor,
@@ -422,7 +422,7 @@ void forward_text_prefill(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_kv_cache_update");
+                CPUTimer timer("text_kv_cache_update", warm_up);
             #endif
 
             copy_to_v_cache(
@@ -437,7 +437,7 @@ void forward_text_prefill(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_attention_mechanism");
+                CPUTimer timer("text_attention_mechanism", warm_up);
             #endif
 
             fused_att_dispatch(
@@ -452,7 +452,7 @@ void forward_text_prefill(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_attn_out_linear");
+                CPUTimer timer("text_attn_out_linear", warm_up);
             #endif
             PtrPair w_out_proj = weight->w_attn_o->ptr_all({l});
             linear(
@@ -482,7 +482,7 @@ void forward_text_prefill(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_mlp_block");
+                CPUTimer timer("text_mlp_block", warm_up);
             #endif
 
             fused_rms_mlp_swiglu_dispatch(
@@ -521,7 +521,7 @@ void forward_text_prefill(
 
         if (l < config->vision_deep_stack_depth) {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_vision_deep_stack_add");
+                CPUTimer timer("text_vision_deep_stack_add", warm_up);
             #endif
             if (num_img_tokens > 0) {
                 const void *deep_ptr = state->vision_deep_stack->ptr({l, first_img_token_id});
@@ -560,7 +560,7 @@ size_t forward_text_decode(
     
     {
         #ifdef CPU_TIME_OUTSIDE
-            CPUTimer timer("decode_embedding");
+            CPUTimer timer("decode_embedding", warm_up);
         #endif
         
         // Embed layer
@@ -578,7 +578,7 @@ size_t forward_text_decode(
     for (size_t l = 0; l < config->num_hidden_layers; l++) {
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_text_rms_linear_qkv");
+                CPUTimer timer("decode_text_rms_linear_qkv", warm_up);
             #endif
             fused_rms_linear_qkv_dispatch(
                 weight->rms_ffn_w, weight->w_attn_qkv, state->x,
@@ -598,7 +598,7 @@ size_t forward_text_decode(
         
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("text_qk_norm");
+                CPUTimer timer("decode_qk_norm", warm_up);
             #endif
             fused_rms_rotary_q_dispatch(
                 state->q, weight->w_attn_q_norm, state->cos_tensor,
@@ -619,7 +619,7 @@ size_t forward_text_decode(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_v_cache_update");
+                CPUTimer timer("decode_v_cache_update", warm_up);
             #endif
 
             copy_to_v_cache(
@@ -632,7 +632,7 @@ size_t forward_text_decode(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_attention_mechanism");
+                CPUTimer timer("decode_attention_mechanism", warm_up);
             #endif
 
             fused_att_dispatch(
@@ -647,7 +647,7 @@ size_t forward_text_decode(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_attn_out_linear");
+                CPUTimer timer("decode_attn_out_linear", warm_up);
             #endif
             PtrPair w_out_proj = weight->w_attn_o->ptr_all({l});
             linear(
@@ -667,7 +667,7 @@ size_t forward_text_decode(
 
         {
             #ifdef CPU_TIME_OUTSIDE
-                CPUTimer timer("decode_mlp_block");
+                CPUTimer timer("decode_mlp_block", warm_up);
             #endif
             fused_rms_mlp_swiglu_dispatch(
                 weight->rms_attn_w, weight->w_mlp_gate, weight->w_mlp_up,
@@ -697,7 +697,7 @@ size_t forward_text_decode(
     size_t token;
     {        
         #ifdef CPU_TIME_OUTSIDE
-            CPUTimer timer("decode_final_head");
+            CPUTimer timer("decode_final_head", warm_up);
         #endif
 
         token = fused_rms_decode_dispatch(

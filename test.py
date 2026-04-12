@@ -38,4 +38,4 @@ def analyze_and_convert(input_file, output_file):
     except Exception as e:
         print(f"Error: {e}")
 
-analyze_and_convert('scripts/run.txt', 'scripts/output.csv')
+analyze_and_convert('scripts/run_out.txt', 'scripts/output.csv')

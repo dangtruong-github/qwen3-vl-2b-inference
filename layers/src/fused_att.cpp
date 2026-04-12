@@ -425,16 +425,15 @@ void flash_attn_decode(
 
     memset(tb_base, 0, attn_heads * head_dim * sizeof(float));
 
-    #pragma omp parallel for schedule(static)
-    for (size_t h_base = 0; h_base < attn_heads; h_base += 2) {
+    #pragma omp parallel 
+    { 
+        int cpu_id = omp_get_thread_num(); 
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(cpu_id, &cpuset); 
 
-        const size_t cache_offset = 1ll * (h_base >> 1) * sh_offset;
-
-        const half_cpu *__restrict k_ptr = key_cache_fp16 + cache_offset;
-        const half_cpu *__restrict v_ptr = value_cache_fp16 + cache_offset;
-
-        const float *__restrict q_group_base = (const float *)q->ptr({0, h_base});
-        float *__restrict tb_head = tb_base + 1ll * h_base * head_dim;
+        pthread_t current_thread = pthread_self();
+        pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
 
         float max_row[2], sum_row[2];
         for (int i = 0; i < 2; ++i) {
@@ -442,83 +441,94 @@ void flash_attn_decode(
             sum_row[i] = 0.0f;
         }
         float max_row_new, x, alpha, beta;
-        
-        for (size_t j = 0; j < pos + 1; ++j) {
-            __m256 acc_0, acc_1;
-            acc_0 = acc_1 =_mm256_setzero_ps();
 
-            const half_cpu* k_j = k_ptr + j * head_dim;
-            const half_cpu* v_j = v_ptr + j * head_dim;
+        #pragma omp for schedule(static)
+        for (size_t h_base = 0; h_base < attn_heads; h_base += 2) {
 
-            for (size_t k = 0; k < head_dim; k += 8) {
-                // load k_j
-                __m128i k_half = _mm_loadu_si128((__m128i const*)(k_j + k)); // 8 x fp16
-                __m256 k_vec = _mm256_cvtph_ps(k_half); // → 8 x fp32
-                
-                    __m256 q0_vec = _mm256_loadu_ps(q_group_base + k);
-                    __m256 q1_vec = _mm256_loadu_ps(q_group_base + head_dim + k);
+            const size_t cache_offset = 1ll * (h_base >> 1) * sh_offset;
 
-                    acc_0 = _mm256_fmadd_ps(q0_vec, k_vec, acc_0);
-                    acc_1 = _mm256_fmadd_ps(q1_vec, k_vec, acc_1);
+            const half_cpu *__restrict k_ptr = key_cache_fp16 + cache_offset;
+            const half_cpu *__restrict v_ptr = value_cache_fp16 + cache_offset;
+
+            const float *__restrict q_group_base = (const float *)q->ptr({0, h_base});
+            float *__restrict tb_head = tb_base + 1ll * h_base * head_dim;
+            
+            for (size_t j = 0; j < pos + 1; ++j) {
+                __m256 acc_0, acc_1;
+                acc_0 = acc_1 =_mm256_setzero_ps();
+
+                const half_cpu* k_j = k_ptr + j * head_dim;
+                const half_cpu* v_j = v_ptr + j * head_dim;
+
+                for (size_t k = 0; k < head_dim; k += 8) {
+                    // load k_j
+                    __m128i k_half = _mm_loadu_si128((__m128i const*)(k_j + k)); // 8 x fp16
+                    __m256 k_vec = _mm256_cvtph_ps(k_half); // → 8 x fp32
+                    
+                        __m256 q0_vec = _mm256_loadu_ps(q_group_base + k);
+                        __m256 q1_vec = _mm256_loadu_ps(q_group_base + head_dim + k);
+
+                        acc_0 = _mm256_fmadd_ps(q0_vec, k_vec, acc_0);
+                        acc_1 = _mm256_fmadd_ps(q1_vec, k_vec, acc_1);
+                }
+
+                // --- KV_ID 0 ---
+                float x0 = add_reduce_mm_256(acc_0) * inv_sqrt_d;
+                float max_row_new0 = max(max_row[0], x0);
+
+                float alpha0 = expf(max_row[0] - max_row_new0);
+                float beta0  = expf(x0 - max_row_new0);
+
+                sum_row[0] = sum_row[0] * alpha0 + beta0;
+                max_row[0] = max_row_new0;
+
+                __m512 alpha_vec0 = _mm512_set1_ps(alpha0);
+                __m512 beta_vec0  = _mm512_set1_ps(beta0);
+
+                // --- KV_ID 1 ---
+                float x1 = add_reduce_mm_256(acc_1) * inv_sqrt_d;
+                float max_row_new1 = max(max_row[1], x1);
+
+                float alpha1 = expf(max_row[1] - max_row_new1);
+                float beta1  = expf(x1 - max_row_new1);
+
+                sum_row[1] = sum_row[1] * alpha1 + beta1;
+                max_row[1] = max_row_new1;
+
+                __m512 alpha_vec1 = _mm512_set1_ps(alpha1);
+                __m512 beta_vec1  = _mm512_set1_ps(beta1);
+
+                for (size_t k = 0; k < head_dim; k += 16) {
+                    // load v_j
+                    __m256i v_h = _mm256_loadu_si256((__m256i const*)(v_j + k));
+                    __m512 v_vec = _mm512_cvtph_ps(v_h); 
+                    
+                    __m512 tb_vec0 = _mm512_loadu_ps(tb_head + k);
+                    __m512 tb_vec1 = _mm512_loadu_ps(tb_head + head_dim + k);
+
+                    tb_vec0 = _mm512_fmadd_ps(tb_vec0, alpha_vec0, _mm512_mul_ps(v_vec, beta_vec0));
+                    tb_vec1 = _mm512_fmadd_ps(tb_vec1, alpha_vec1, _mm512_mul_ps(v_vec, beta_vec1));
+
+                    _mm512_storeu_ps(tb_head + k, tb_vec0);
+                    _mm512_storeu_ps(tb_head + head_dim + k, tb_vec1);
+                }
             }
 
-
-            // --- KV_ID 0 ---
-            float x0 = add_reduce_mm_256(acc_0) * inv_sqrt_d;
-            float max_row_new0 = max(max_row[0], x0);
-
-            float alpha0 = expf(max_row[0] - max_row_new0);
-            float beta0  = expf(x0 - max_row_new0);
-
-            sum_row[0] = sum_row[0] * alpha0 + beta0;
-            max_row[0] = max_row_new0;
-
-            __m512 alpha_vec0 = _mm512_set1_ps(alpha0);
-            __m512 beta_vec0  = _mm512_set1_ps(beta0);
-
-            // --- KV_ID 1 ---
-            float x1 = add_reduce_mm_256(acc_1) * inv_sqrt_d;
-            float max_row_new1 = max(max_row[1], x1);
-
-            float alpha1 = expf(max_row[1] - max_row_new1);
-            float beta1  = expf(x1 - max_row_new1);
-
-            sum_row[1] = sum_row[1] * alpha1 + beta1;
-            max_row[1] = max_row_new1;
-
-            __m512 alpha_vec1 = _mm512_set1_ps(alpha1);
-            __m512 beta_vec1  = _mm512_set1_ps(beta1);
+            float inv_sum0 = 1 / (sum_row[0] + 1e-9f);
+            __m512 sum_row_vec0 = _mm512_set1_ps(inv_sum0);
+            float inv_sum1 = 1 / (sum_row[1] + 1e-9f);
+            __m512 sum_row_vec1 = _mm512_set1_ps(inv_sum1);
 
             for (size_t k = 0; k < head_dim; k += 16) {
-                // load v_j
-                __m256i v_h = _mm256_loadu_si256((__m256i const*)(v_j + k));
-                __m512 v_vec = _mm512_cvtph_ps(v_h); 
-                
                 __m512 tb_vec0 = _mm512_loadu_ps(tb_head + k);
                 __m512 tb_vec1 = _mm512_loadu_ps(tb_head + head_dim + k);
 
-                tb_vec0 = _mm512_fmadd_ps(tb_vec0, alpha_vec0, _mm512_mul_ps(v_vec, beta_vec0));
-                tb_vec1 = _mm512_fmadd_ps(tb_vec1, alpha_vec1, _mm512_mul_ps(v_vec, beta_vec1));
+                tb_vec0 = _mm512_mul_ps(tb_vec0, sum_row_vec0);
+                tb_vec1 = _mm512_mul_ps(tb_vec1, sum_row_vec1);
 
                 _mm512_storeu_ps(tb_head + k, tb_vec0);
                 _mm512_storeu_ps(tb_head + head_dim + k, tb_vec1);
             }
-        }
-
-        float inv_sum0 = 1 / (sum_row[0] + 1e-9f);
-        __m512 sum_row_vec0 = _mm512_set1_ps(inv_sum0);
-        float inv_sum1 = 1 / (sum_row[1] + 1e-9f);
-        __m512 sum_row_vec1 = _mm512_set1_ps(inv_sum1);
-
-        for (size_t k = 0; k < head_dim; k += 16) {
-            __m512 tb_vec0 = _mm512_loadu_ps(tb_head + k);
-            __m512 tb_vec1 = _mm512_loadu_ps(tb_head + head_dim + k);
-
-            tb_vec0 = _mm512_mul_ps(tb_vec0, sum_row_vec0);
-            tb_vec1 = _mm512_mul_ps(tb_vec1, sum_row_vec1);
-
-            _mm512_storeu_ps(tb_head + k, tb_vec0);
-            _mm512_storeu_ps(tb_head + head_dim + k, tb_vec1);
         }
     }
 }
@@ -538,73 +548,93 @@ void sdpa_attn_decode(
     const half_cpu *value_cache_fp16 = (const half_cpu *)(value_cache);
     float *__restrict tb_base = (float *)tb->ptr();
 
-    for (size_t h_base = 0; h_base < attn_heads; h_base += 2) {
+    const size_t head_groups = head_dim >> 4;
 
-        const size_t cache_offset = 1ll * (h_base >> 1) * sh_offset;
+    #pragma omp parallel 
+    { 
+        int cpu_id = omp_get_thread_num(); 
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(cpu_id, &cpuset); 
 
-        const half_cpu *__restrict k_ptr = key_cache_fp16 + cache_offset;
-        const half_cpu *__restrict v_ptr = value_cache_fp16 + cache_offset;
-
-        const float *__restrict q_group_base = (const float *)q->ptr({0, h_base});
-        float *__restrict att_group_base = (float *)att->ptr({0, h_base});
-        float *__restrict tb_head = tb_base + 1ll * h_base * head_dim;
-
+        pthread_t current_thread = pthread_self();
+        pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+        
         // gemm qk
         float max_att0, max_att1;
         max_att0 = max_att1 = -INFINITY;
 
-        #pragma omp parallel for schedule(static) reduction(max:max_att0) reduction(max:max_att1)
-        for (size_t j = 0; j < pos + 1; ++j) {
-            __m256 sum0_vec, sum1_vec;
-            sum0_vec = sum1_vec = _mm256_setzero_ps();
+        __m512 acc0[head_groups], acc1[head_groups];
 
-            const half_cpu *k_j = k_ptr + j * head_dim;
-
-            for (size_t k = 0; k < head_dim; k += 8) {
-                // load k_j
-                __m128i k_half = _mm_loadu_si128((__m128i const*)(k_j + k));
-                __m256 k_vec = _mm256_cvtph_ps(k_half);
-                __m256 q0_vec = _mm256_loadu_ps(q_group_base + k);
-                __m256 q1_vec = _mm256_loadu_ps(q_group_base + head_dim + k);
-                
-                sum0_vec = _mm256_fmadd_ps(q0_vec, k_vec, sum0_vec);
-                sum1_vec = _mm256_fmadd_ps(q1_vec, k_vec, sum1_vec);
-            }
-
-            float value0 = add_reduce_mm_256(sum0_vec) * inv_sqrt_d;
-            float value1 = add_reduce_mm_256(sum1_vec) * inv_sqrt_d;
-
-            att_group_base[j] = value0;
-            att_group_base[j + seq_len] = value1;
-
-            max_att0 = max(value0, max_att0);
-            max_att1 = max(value1, max_att1);
+        for (size_t k = 0; k < head_groups; ++k) {
+            acc0[k] = acc1[k] = _mm512_setzero_ps();
         }
 
-        softmax_with_max(att_group_base, max_att0, pos + 1);
-        softmax_with_max(att_group_base + seq_len, max_att1, pos + 1);
+        #pragma omp for schedule(static)
+        for (size_t h_base = 0; h_base < attn_heads; h_base += 2) {
 
-        #pragma omp parallel for
-        for (size_t k = 0; k < head_dim; k += 8) {
-            __m256 acc0 = _mm256_setzero_ps();
-            __m256 acc1 = _mm256_setzero_ps();
+            const size_t cache_offset = 1ll * (h_base >> 1) * sh_offset;
+
+            const half_cpu *__restrict k_ptr = key_cache_fp16 + cache_offset;
+            const half_cpu *__restrict v_ptr = value_cache_fp16 + cache_offset;
+
+            const float *__restrict q_group_base = (const float *)q->ptr({0, h_base});
+            float *__restrict att_group_base = (float *)att->ptr({0, h_base});
+            float *__restrict tb_head = tb_base + 1ll * h_base * head_dim;
 
             for (size_t j = 0; j < pos + 1; ++j) {
-                // Load 8 contiguous values from V
-                __m128i v_half = _mm_loadu_si128((__m128i const*)(v_ptr + j * head_dim + k));
-                __m256 b = _mm256_cvtph_ps(v_half);
+                __m256 sum0_vec, sum1_vec;
+                sum0_vec = sum1_vec = _mm256_setzero_ps();
 
-                // Broadcast scalars
-                __m256 a0 = _mm256_set1_ps(att_group_base[j]);
-                __m256 a1 = _mm256_set1_ps(att_group_base[seq_len + j]);
+                const half_cpu *k_j = k_ptr + j * head_dim;
 
-                // FMA
-                acc0 = _mm256_fmadd_ps(a0, b, acc0);
-                acc1 = _mm256_fmadd_ps(a1, b, acc1);
+                for (size_t k = 0; k < head_dim; k += 8) {
+                    // load k_j
+                    __m128i k_half = _mm_loadu_si128((__m128i const*)(k_j + k));
+                    __m256 k_vec = _mm256_cvtph_ps(k_half);
+                    __m256 q0_vec = _mm256_loadu_ps(q_group_base + k);
+                    __m256 q1_vec = _mm256_loadu_ps(q_group_base + head_dim + k);
+                    
+                    sum0_vec = _mm256_fmadd_ps(q0_vec, k_vec, sum0_vec);
+                    sum1_vec = _mm256_fmadd_ps(q1_vec, k_vec, sum1_vec);
+                }
+
+                float value0 = add_reduce_mm_256(sum0_vec) * inv_sqrt_d;
+                float value1 = add_reduce_mm_256(sum1_vec) * inv_sqrt_d;
+
+                att_group_base[j] = value0;
+                att_group_base[j + seq_len] = value1;
+
+                max_att0 = max(value0, max_att0);
+                max_att1 = max(value1, max_att1);
             }
 
-            _mm256_storeu_ps(tb_head + k, acc0);
-            _mm256_storeu_ps(tb_head + head_dim + k, acc1);
+            softmax_with_max(att_group_base, max_att0, pos + 1);
+            softmax_with_max(att_group_base + seq_len, max_att1, pos + 1);
+
+            for (size_t j = 0; j < pos + 1; ++j) {
+                // Broadcast scalars
+                __m512 a0 = _mm512_set1_ps(att_group_base[j]);
+                __m512 a1 = _mm512_set1_ps(att_group_base[seq_len + j]);
+
+                const half_cpu *v_j = v_ptr + j * head_dim;
+
+                for (size_t k = 0; k < head_groups; ++k) {
+                    // Load 8 contiguous half-precision values
+                    __m256i v_half = _mm256_loadu_si256((__m256i const*)(v_j + (k << 4)));
+                    __m512 b = _mm512_cvtph_ps(v_half);
+
+                    // FMA
+                    acc0[k] = _mm512_fmadd_ps(a0, b, acc0[k]);
+                    acc1[k] = _mm512_fmadd_ps(a1, b, acc1[k]);
+                }
+            }
+                
+            for (size_t k = 0; k < head_groups; ++k) {
+                size_t k4 = (k << 4);
+                _mm512_storeu_ps(tb_head + k4, acc0[k]);
+                _mm512_storeu_ps(tb_head + head_dim + k4, acc1[k]);
+            }
         }
     }
 }
@@ -919,7 +949,7 @@ void fused_att_dispatch(
                 group_size, prefill_size
             );
         } else {
-            sdpa_attn_decode(
+            flash_attn_decode(
                 k_cache_l, v_cache_l, q, att,
                 qkv_out, num_heads, head_dim,
                 kv_dim, kv_all_off, pos, group_size

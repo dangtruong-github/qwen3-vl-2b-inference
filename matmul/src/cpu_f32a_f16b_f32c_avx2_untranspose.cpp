@@ -185,7 +185,7 @@ void lg_M_N_K_even_tn32(
     size_t M, size_t N, size_t K
 ) {
     #ifdef CPU_TIME_FP16_EVAL
-        CPUTimer timer("linear");
+        CPUTimer timer("linear", false);
         printf("Shape of matmul FP16 tn32: M=%zu, N=%zu, K=%zu, TK=%zu\n", M, N, K, TK);
     #endif
 
@@ -362,7 +362,7 @@ void lg_M_N_K_even_tn16_tm4(
     size_t M, size_t N, size_t K
 ) {
     #ifdef CPU_TIME_FP16_EVAL
-        CPUTimer timer("linear");
+        CPUTimer timer("linear", false);
         printf("Shape of matmul FP16 tn16: M=%zu, N=%zu, K=%zu, TK=%zu\n", M, N, K, TK);
     #endif
 
@@ -596,7 +596,7 @@ void lg_M_N_K_even_tn8_tm4(
     size_t M, size_t N, size_t K
 ) {
     #ifdef CPU_TIME_FP16_EVAL
-        CPUTimer timer("linear");
+        CPUTimer timer("linear", false);
         printf("Shape of matmul FP16 tn8: M=%zu, N=%zu, K=%zu, TK=%zu\n", M, N, K, TK);
     #endif
 

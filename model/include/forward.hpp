@@ -14,8 +14,9 @@
 // Forward Functions
 // ================================================================
 void forward_img(
-    QwenConfig *config, QwenRunState *state, QwenWeight *weight, float *img_data,
-    int img_h, int img_w, int grid_h, int grid_w, bool warm_up = false
+    QwenConfig *config, QwenRunState *state, QwenWeight *weight,
+    float *img_data, int img_h, int img_w, int grid_h,
+    int grid_w, const bool warm_up = false
 );
 void forward_text_prefill(
     QwenConfig *config, QwenRunState *state, QwenWeight *weight, int *token_list,

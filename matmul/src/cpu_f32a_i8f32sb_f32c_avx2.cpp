@@ -12,9 +12,6 @@ void gemv_lg_N_K(
     float *__restrict mat_C, size_t N,
     size_t K, size_t group_size, bool add_to_c
 ) {
-    // CPUTimer timer("gemv tn1");
-    // printf("Shape of gemv: N=%zu, K=%zu\n", N, K);
-
     alignas(32) uint8_t a_q8[K];
     float a_q8_s[K >> 5];
 
@@ -155,9 +152,6 @@ void gemv_lg_N_K_g64(
     float *__restrict mat_C, size_t N,
     size_t K, bool add_to_c
 ) {
-    // CPUTimer timer("gemv tn1");
-    // printf("Shape of gemv: N=%zu, K=%zu\n", N, K);
-
     const size_t K_g = K >> 6;
 
     alignas(32) uint8_t a_q8[K];

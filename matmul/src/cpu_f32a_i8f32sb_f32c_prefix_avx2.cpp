@@ -13,8 +13,6 @@ void gemm_m4_lgNK_prefix_g64(
     float *__restrict mat_C, size_t N,
     size_t K, bool add_to_c
 ) {
-    // CPUTimer timer("gemv tn1");
-    // printf("Shape of gemv: N=%zu, K=%zu\n", N, K);
     const size_t K_g = K >> 6;
     const size_t K4 = K << 2;
     alignas(32) uint8_t a_q8[K << 2];
@@ -212,8 +210,6 @@ void gemm_m4_lgNK_prefix(
     float *__restrict mat_C, size_t N,
     size_t K, size_t group_size, bool add_to_c
 ) {
-    // CPUTimer timer("gemv tn1");
-    // printf("Shape of gemv: N=%zu, K=%zu\n", N, K);
     const size_t K_g = K / group_size;
     const size_t K4 = K << 2;
     alignas(32) uint8_t a_q8[K4];
@@ -411,8 +407,6 @@ void gemm_m2_lgNK_prefix_g64(
     float *__restrict mat_C, size_t N,
     size_t K, bool add_to_c
 ) {
-    // CPUTimer timer("gemv tn1");
-    // printf("Shape of gemv: N=%zu, K=%zu\n", N, K);
     const size_t K_g = K >> 6;
     const size_t K2 = K << 1;
     alignas(32) uint8_t a_q8[K2];
@@ -573,8 +567,6 @@ void gemm_m2_lgNK_prefix(
     float *__restrict mat_C, size_t N,
     size_t K, size_t group_size, bool add_to_c
 ) {
-    // CPUTimer timer("gemv tn1");
-    // printf("Shape of gemv: N=%zu, K=%zu\n", N, K);
     const size_t K_g = K / group_size;
     const size_t K2 = K << 1;
     alignas(32) uint8_t a_q8[K2];

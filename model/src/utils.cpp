@@ -157,7 +157,7 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
             print_token(tokenizer, token);
         #endif
 
-        #ifdef PRINT_LOGITS
+        #if defined(PRINT_LOGITS) || defined(CPU_TIME_OUTSIDE) 
             int orig_pos = pos;
         #endif
 
@@ -185,7 +185,11 @@ int forward_validate(const char *in_token_file, const char *in_img_path, const c
                 if (pos >= orig_pos + 10) {
                     exit(1);
                 }
-            #elif !defined(CPU_TIME_OUTSIDE)
+            #elif defined(CPU_TIME_OUTSIDE)
+                if (pos >= orig_pos + 100) {
+                    exit(1);
+                }
+            #else
                 print_token(tokenizer, next);
             #endif
 

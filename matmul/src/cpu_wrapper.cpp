@@ -288,7 +288,7 @@ void linear(
     DType::Type type_c, bool group_quantized, size_t group_size, bool add_to_c
 ) {
     #ifdef CPU_TIME
-        CPUTimer timer("linear");
+        CPUTimer timer("linear", false);
         printf("A=%s, B=%s, C=%s, M=%zu, N=%zu, K=%zu, bias=%d, B_trans=%d\n", dtypeToStr(type_a), dtypeToStr(type_b), dtypeToStr(type_c), M, N, K, (mat_bias_in != nullptr), mat_B_transpose);
     #endif
 

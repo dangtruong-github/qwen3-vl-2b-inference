@@ -824,7 +824,7 @@ void vision_att(
     Tensor *out_tensor, int num_heads, int T, int D, size_t max_attn_size, float scale
 ) {
     #ifdef CPU_TIME_GEMM
-        CPUTimer timer("gemm_att");
+        CPUTimer timer("gemm_att", false);
         printf("Shape of gemm att w/ precision FP32: T=%zu, D=%zu\n", T, D);
     #endif
 

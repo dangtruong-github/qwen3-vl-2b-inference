@@ -103,43 +103,54 @@ size_t fused_rms_decode(
         }    
     }
 
-    #pragma omp parallel for schedule(static)
-    for (size_t jj = 0; jj < vocab_size; ++jj) {
-        __m256 c0_f = _mm256_setzero_ps();
+    #pragma omp parallel
+    {
+        int cpu_id = omp_get_thread_num(); 
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(cpu_id, &cpuset); 
 
-        const int8_t *__restrict b0_ptr = w_emb_w + (jj * hidden_size);
-        const float *__restrict b_s_ptr = w_emb_s + (jj * K_g);
-        
-        for (size_t kk = 0; kk < hidden_size; kk += group_size) {
-            const size_t g_off = kk / group_size;
-            __m256i c0 = _mm256_setzero_si256();
+        pthread_t current_thread = pthread_self();
+        pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
 
-            __m256i corr32_0 = _mm256_setzero_si256();
+        #pragma omp for schedule(static)
+        for (size_t jj = 0; jj < vocab_size; ++jj) {
+            __m256 c0_f = _mm256_setzero_ps();
 
-            for (size_t k = kk; k < kk + group_size; k += 32) {
-                __m256i a_vec = _mm256_loadu_si256((__m256i*)(a_q8 + k));
+            const int8_t *__restrict b0_ptr = w_emb_w + (jj * hidden_size);
+            const float *__restrict b_s_ptr = w_emb_s + (jj * K_g);
+            
+            for (size_t kk = 0; kk < hidden_size; kk += group_size) {
+                const size_t g_off = kk / group_size;
+                __m256i c0 = _mm256_setzero_si256();
+                __m256i corr32_0 = _mm256_setzero_si256();
 
-                __m256i b0 = _mm256_loadu_si256((__m256i*)(b0_ptr + k));
+                for (size_t k = kk; k < kk + group_size; k += 32) {
+                    __m256i a_vec = _mm256_loadu_si256((__m256i*)(a_q8 + k));
+                    __m256i b0 = _mm256_loadu_si256((__m256i*)(b0_ptr + k));
 
-                __m256i sum_b0 = _mm256_maddubs_epi16(ones8, b0);
-                __m256i prod_0 = _mm256_maddubs_epi16(a_vec, b0);
+                    __m256i sum_b0 = _mm256_maddubs_epi16(ones8, b0);
+                    __m256i prod_0 = _mm256_maddubs_epi16(a_vec, b0);
 
-                corr32_0 = _mm256_add_epi32(corr32_0, _mm256_madd_epi16(sum_b0, ones16));
-                c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(prod_0, ones16));
+                    corr32_0 = _mm256_add_epi32(corr32_0, _mm256_madd_epi16(sum_b0, ones16));
+                    c0 = _mm256_add_epi32(c0, _mm256_madd_epi16(prod_0, ones16));
+                }
+
+                corr32_0 = _mm256_slli_epi32(corr32_0, 7);
+                c0 = _mm256_sub_epi32(c0, corr32_0);
+                
+                c0_f = _mm256_fmadd_ps(
+                    _mm256_cvtepi32_ps(c0),
+                    _mm256_set1_ps(a_q8_s[g_off] * b_s_ptr[g_off]),
+                    c0_f
+                );
             }
 
-            corr32_0 = _mm256_slli_epi32(corr32_0, 7);
-            c0 = _mm256_sub_epi32(c0, corr32_0);
-            
-            c0_f = _mm256_fmadd_ps(_mm256_cvtepi32_ps(c0), _mm256_set1_ps(a_q8_s[g_off] * b_s_ptr[g_off]), c0_f);
+            logits_ptr[jj] = add_reduce_mm_256(c0_f);
         }
-        
-        logits_ptr[jj] = add_reduce_mm_256(c0_f);
     }
-    
-    size_t token = greedy_decode(logits_ptr, vocab_size);
 
-    return token;
+    return greedy_decode(logits_ptr, vocab_size);
 }
 // #endif
 
