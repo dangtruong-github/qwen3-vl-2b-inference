@@ -4,11 +4,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <immintrin.h>
 #include <math.h>
 #include "../../matmul/module.hpp"
 #include "../../utils/module.hpp"
-#include "simd_utils.hpp"
 
 // #define DEBUG
 #define max(a, b) ((a) > (b) ? (a) : (b))

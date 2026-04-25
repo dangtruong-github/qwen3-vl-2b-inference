@@ -622,6 +622,22 @@ void vision_rot_pos_emb(
     }
 }
 
+static inline float load_x(const void *ptr, DType::Type dtype, size_t idx) {
+    if (dtype == DType::FP32)
+        return static_cast<const float*>(ptr)[idx];
+    else
+        return static_cast<float>(
+            static_cast<const half_cpu*>(ptr)[idx]
+        );
+}
+
+static inline void store_out(void *ptr, DType::Type dtype, size_t idx, float v) {
+    if (dtype == DType::FP32)
+        static_cast<float*>(ptr)[idx] = v;
+    else
+        static_cast<half_cpu*>(ptr)[idx] = static_cast<half_cpu>(v);
+}
+
 void layer_norm(
     const Tensor *__restrict x,           /* [batches, hidden] */
     const Tensor *__restrict scale,       /* [layers, hidden] */
@@ -818,6 +834,56 @@ void tensor_transpose(
     }
 }
 
+float scalar_max(const float *arr, size_t N) {
+    if (N == 0) return -FLT_MAX; // or handle as needed
+
+    float max_val = arr[0];
+
+    // Optionally parallelize for large N
+    #pragma omp parallel
+    {
+        float local_max = -FLT_MAX;
+
+        #pragma omp for nowait
+        for (size_t i = 0; i < N; i++) {
+            if (arr[i] > local_max) {
+                local_max = arr[i];
+            }
+        }
+
+        #pragma omp critical
+        {
+            if (local_max > max_val) {
+                max_val = local_max;
+            }
+        }
+    }
+
+    return max_val;
+}
+
+float scalar_sum_exp_max(float *arr, size_t T, float max_score) {
+    float sum = 0.0f;
+
+    // Optionally parallelize
+    #pragma omp parallel
+    {
+        float local_sum = 0.0f;
+
+        #pragma omp for nowait
+        for (size_t j = 0; j < T; j++) {
+            float v = expf(arr[j] - max_score);
+            arr[j] = v;          // store back (same as SIMD version)
+            local_sum += v;
+        }
+
+        #pragma omp atomic
+        sum += local_sum;
+    }
+
+    return sum;
+}
+
 void vision_att(
     const Tensor *q_tensor, const Tensor *k_tensor,
     const Tensor *v_tensor, Tensor *attn_scores_tensor, 
@@ -858,9 +924,9 @@ void vision_att(
             char *oi = oh + i * D * out_size;
 
             gemm_att(qi, kh, attn_scores, scale, T, D, true, q_type, k_type, att_s_type);
-            float max_score = avx2_max(attn_scores, T);
+            float max_score = scalar_max(attn_scores, T);
             // float max_score = avx2_max_and_scale(attn_scores, T, scale);
-            float sum = avx2_sum_exp_max(attn_scores, T, max_score);
+            float sum = scalar_sum_exp_max(attn_scores, T, max_score);
             gemm_att(attn_scores, vh, oi, 1.0f / sum, D, T, false, att_s_type, v_type, out_type);
         }
     }
