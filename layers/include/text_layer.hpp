@@ -4,12 +4,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <immintrin.h>
+#include <float.h>
 #include <math.h>
 #include <assert.h>
 #include "../../matmul/module.hpp"
 #include "../../utils/module.hpp"
-#include "simd_utils.hpp"
 
 // #define DEBUG
 #define max(a, b) ((a) > (b) ? (a) : (b))
@@ -163,12 +162,3 @@ void fused_att_dispatch(
     const DType::Type key_dtype, const DType::Type value_dtype,
     const size_t group_size, const size_t prefill_size, bool warm_up
 );
-
-#if defined(__AVX2__) && defined(__FMA__)
-void fused_rms_linear_qkv_m1(
-    const PtrPair w_rms, const PtrPair w_qkv, const float *x_ptr,
-    float *t_ptr, float *q_ptr, float *k_ptr, half_cpu *v_ptr,
-    const size_t hidden_size, const size_t kv_dim,
-    const size_t group_size, const float eps
-);
-#endif

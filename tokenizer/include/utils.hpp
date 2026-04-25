@@ -1,7 +1,6 @@
 #pragma once
 
 #include <float.h>
-#include <immintrin.h>
 
 #include "../config.hpp"
 #include "img_processor.hpp"

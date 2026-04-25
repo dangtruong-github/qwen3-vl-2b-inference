@@ -5,11 +5,9 @@
 #include <cmath>
 #include <cstring>
 #include <cfloat>
-#include <immintrin.h>
 #include "../../matmul/module.hpp"
 #include "../../utils/module.hpp"
 #include "text_layer.hpp"
-#include "simd_utils.hpp"
 
 // #define DEBUG
 #define max(a, b) ((a) > (b) ? (a) : (b))

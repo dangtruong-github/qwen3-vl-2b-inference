@@ -21,10 +21,25 @@ void fused_decode_embed_rms_linear_dispatch(
     embedding_lookup(
         embed_table, x, 0ll, token_id, hidden_size
     );
+
+    rms_norm(x, rms_ffn_w, t, rms_norm_eps, 1, layer_id);
+
+    PtrPair w_k = w_attn_qkv->ptr_all({layer_id, hidden_size});
+    PtrPair w_v = w_attn_qkv->ptr_all({layer_id, hidden_size + kv_dim});
     
-    fused_rms_linear_qkv_m1(
-        rms_w, w_qkv, x_cur_ptr, t_cur_ptr,
-        q_cur_ptr, k_cur_ptr, v_cur_ptr,
-        hidden_size, kv_dim, group_size, rms_norm_eps
+    linear(
+        t->ptr(), w_qkv.buf, w_qkv.scale, w_qkv.sum_int8, nullptr, nullptr,
+        q->ptr(), 1, hidden_size, hidden_size, !w_attn_qkv->permuted,
+        t->dtype, dtype_w, dtype_s, q->dtype, text_gq, group_size, false
+    );
+    linear(
+        t->ptr(), w_k.buf, w_k.scale, w_k.sum_int8, nullptr, nullptr,
+        k->ptr(), 1, kv_dim, hidden_size, !w_attn_qkv->permuted,
+        t->dtype, dtype_w, dtype_s, k->dtype, text_gq, group_size, false
+    );
+    linear(
+        t->ptr(), w_v.buf, w_v.scale, w_v.sum_int8, nullptr, nullptr,
+        v->ptr(), 1, kv_dim, hidden_size, !w_attn_qkv->permuted,
+        t->dtype, dtype_w, dtype_s, v->dtype, text_gq, group_size, false
     );
 }
