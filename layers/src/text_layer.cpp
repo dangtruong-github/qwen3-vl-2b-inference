@@ -869,7 +869,7 @@ void apply_rotary_cache(
 
     // ================= FP16 =================
     if (cache_dtype == DType::FP16) {
-        uint16_t *k_out_fp16 = (uint16_t *)(k_out);
+        half_cpu *k_out_fp16 = (half_cpu *)(k_out);
 
         #pragma omp parallel for collapse(2)
         for (int b = 0; b < batch_size; b++) {
@@ -878,8 +878,8 @@ void apply_rotary_cache(
                 const float *x1p = in_ptr + b * in_stride + h * head_dim;
                 const float *x2p = x1p + half;
 
-                uint16_t *y1p = k_out_fp16 + b * head_dim + h * sh_off;
-                uint16_t *y2p = y1p + half;
+                half_cpu *y1p = k_out_fp16 + b * head_dim + h * sh_off;
+                half_cpu *y2p = y1p + half;
 
                 const float *cos_row = cos_row_base + b * half;
                 const float *sin_row = sin_row_base + b * half;

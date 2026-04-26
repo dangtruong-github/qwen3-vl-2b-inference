@@ -32,13 +32,14 @@ void fused_rms_linear_qkv_dispatch(
     
     #ifdef PRINT_LOGITS
         if (!warm_up) {
-            const size_t head_dim = qkv->shape[qkv->ndim - 1];
-            const size_t num_heads = hidden_size / head_dim;
-            const size_t num_kv_heads = kv_dim / head_dim;
             for (size_t i = 0; i < M; ++i) { 
-                qkv->printDebug("q", {i});
-                qkv->printDebug("k", {i, num_heads});
-                qkv->printDebug("v", {i, num_heads + num_kv_heads});
+                q->printDebug("q", {i});
+            }
+            for (size_t i = 0; i < M; ++i) {
+                k->printDebug("k", {i});
+            }
+            for (size_t i = 0; i < M; ++i) {
+                v->printDebug("v", {i});
             }
         }
     #endif

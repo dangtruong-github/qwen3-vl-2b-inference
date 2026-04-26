@@ -33,8 +33,8 @@ void fused_att_dispatch(
     #ifdef PRINT_LOGITS
         if (!warm_up) {
             for (size_t i = 0; i < prefill_size; ++i) {
-                state->att->printDebug("att", {i});
-                state->qkv_out->printDebug("qkv_out", {i});
+                att->printDebug("att", {i});
+                qkv_out->printDebug("qkv_out", {i});
             }
         }
     #endif

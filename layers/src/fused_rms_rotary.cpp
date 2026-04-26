@@ -20,7 +20,7 @@ void fused_rms_rotary_q_dispatch(
     #ifdef PRINT_LOGITS
         if (!warm_up) {
             for (size_t i = 0; i < prefill_size; ++i) { 
-                qkv->printDebug("q");
+                q->printDebug("q");
             }
         }
     #endif
@@ -51,7 +51,6 @@ void fused_rms_rotary_k_dispatch(
 
     #ifdef PRINT_LOGITS
         if (!warm_up) {
-            fflush(stdout);
             for (size_t i = 0; i < prefill_size; ++i) {
                 for (size_t h_id = 0; h_id < num_kv_heads; ++h_id) {
                     key_cache->printDebug("key_cache", {0, layer_offset, h_id, (size_t)(pos + i)});

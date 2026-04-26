@@ -34,8 +34,8 @@ void fused_rms_mlp_swiglu_dispatch(
 
     #ifdef PRINT_LOGITS
         if (!warm_up) {
-            for (size_t i = 0; i < prefill_size; ++i) { 
-                state->gate->printDebug("gate", {i});
+            for (size_t i = 0; i < M; ++i) { 
+                gate->printDebug("gate", {i});
             }
         }
     #endif

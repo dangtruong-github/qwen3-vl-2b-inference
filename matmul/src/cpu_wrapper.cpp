@@ -166,7 +166,7 @@ void linear_f32a_i8f32sb_f16c(
             }
 
             if (add_to_c) {
-                acc += (float)(mat_C[i * N + j]) + acc;
+                acc += (float)(mat_C[i * N + j]);
                 mat_C[i * N + j] = (half_cpu)(acc);
             } else {
                 mat_C[i * N + j] = (half_cpu)(acc);
