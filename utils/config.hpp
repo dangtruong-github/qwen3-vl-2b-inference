@@ -7,3 +7,4 @@
 // #define CPU_TIME_FP16
 // #define CPU_TIME_FP16_EVAL
 // #define CPU_TIME_GEMM
+// #define CPU_TIME_OUTSIDE

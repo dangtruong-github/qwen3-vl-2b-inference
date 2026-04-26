@@ -1,70 +1,151 @@
-# === Compiler setup ===
+# ============================================================
+#                Project Makefile
+# ============================================================
+
+# ===================== Compilers ============================
+
 NVCC := nvcc
 GPP  := g++
-CXXFLAGS  := -std=c++17 -O3 -fopenmp -march=native
-NVCCFLAGS := -std=c++17 -O3 -Xcompiler "-fopenmp -march=native"
 
-# === Path to your conda environment ===
-CONDA_PATH := /path/to/conda
+# ===================== Base Flags ===========================
 
-# === Manually list top-level modules ===
+BASE_STD  := -std=c++17
+BASE_OMP  := -fopenmp
+BASE_ARCH := -march=native
+
+# ===================== Release Flags ========================
+
+CXXFLAGS  := $(BASE_STD) -O3 $(BASE_OMP) $(BASE_ARCH)
+NVCCFLAGS := $(BASE_STD) -O3 -Xcompiler "$(BASE_OMP) $(BASE_ARCH)"
+
+# ===================== Debug Flags ==========================
+
+DEBUG_FLAGS := $(BASE_STD) -O0 -g $(BASE_OMP) $(BASE_ARCH)
+
+# ===================== AddressSanitizer =====================
+
+ASAN_FLAGS := $(BASE_STD) -O1 -g $(BASE_OMP) $(BASE_ARCH) \
+              -fsanitize=address,undefined \
+              -fno-omit-frame-pointer
+
+# ============================================================
+#                    OpenCV Configuration
+# ============================================================
+
+# Optional: set this manually OR export from shell:
+# export CONDA_PATH=/home/user/miniconda3/envs/myenv
+CONDA_PATH ?=
+
+ifdef CONDA_PATH
+    $(info 🔵 Using OpenCV from Conda: $(CONDA_PATH))
+
+    OPENCV_CFLAGS := -I$(CONDA_PATH)/include/opencv4
+    OPENCV_LIBS   := -L$(CONDA_PATH)/lib \
+                     -lopencv_core \
+                     -lopencv_imgproc \
+                     -lopencv_highgui \
+                     -lopencv_imgcodecs
+else
+    $(info 🟢 Using system OpenCV via pkg-config)
+
+    OPENCV_CFLAGS := $(shell pkg-config --cflags opencv4)
+    OPENCV_LIBS   := $(shell pkg-config --libs opencv4)
+endif
+
+# ============================================================
+#                        Modules
+# ============================================================
+
 MODULES := tokenizer model utils matmul layers
 
-# === Automatically derived directories ===
-SRC_DIRS := $(foreach m,$(MODULES),$(m)/src)
-INCLUDE_DIRS := $(foreach m,$(MODULES),$(m)/include)
-CONFIG_DIRS := $(foreach m,$(MODULES),$(m))
+SRC_DIRS       := $(foreach m,$(MODULES),$(m)/src)
+INCLUDE_DIRS   := $(foreach m,$(MODULES),$(m)/include)
+CONFIG_DIRS    := $(foreach m,$(MODULES),$(m))
 MODULE_HEADERS := $(foreach m,$(MODULES),$(m)/module.hpp)
 
-# === Build directories ===
-BUILD_DIR := build
-OBJ_DIR := $(BUILD_DIR)/obj
+# ============================================================
+#                        Build Dirs
+# ============================================================
 
-# === Sources & Objects ===
-SRC_FILES := main.cpp $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
+BUILD_DIR := build
+OBJ_DIR   := $(BUILD_DIR)/obj
+
+# ============================================================
+#                     Sources & Objects
+# ============================================================
+
+SRC_FILES := main.cpp \
+             $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
+
 OBJ_FILES := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 
-# === Include flags ===
-INCLUDE_FLAGS := $(foreach dir,$(INCLUDE_DIRS),-I$(dir)) \
-                 $(foreach dir,$(CONFIG_DIRS),-I$(dir)) \
-                 -I$(CONDA_PATH)/include/opencv4
+# ============================================================
+#                     Include Flags
+# ============================================================
 
-# === OpenCV linking flags ===
-OPENCV_LIBS := -L$(CONDA_PATH)/lib \
-               -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_imgcodecs
+INCLUDE_FLAGS := \
+	$(foreach dir,$(INCLUDE_DIRS),-I$(dir)) \
+	$(foreach dir,$(CONFIG_DIRS),-I$(dir)) \
+	$(OPENCV_CFLAGS)
 
-# === Output binary ===
+# ============================================================
+#                     Output Binary
+# ============================================================
+
 TARGET := main
 
-# === Default target ===
+# ============================================================
+#                       Build Modes
+# ============================================================
+
 all: cpu
 
-# === CPU build ===
+# === CPU Release ===
 cpu: CXX := $(GPP)
 cpu: FLAGS := $(CXXFLAGS)
 cpu: MODE := CPU
 cpu: $(TARGET)
 
-# === GPU build ===
+# === GPU Release ===
 gpu: CXX := $(NVCC)
 gpu: FLAGS := $(NVCCFLAGS)
 gpu: MODE := GPU
 gpu: $(TARGET)
 
-# === Build rule ===
+# === Debug Build ===
+debug: CXX := $(GPP)
+debug: FLAGS := $(DEBUG_FLAGS)
+debug: MODE := DEBUG
+debug: $(TARGET)
+
+# === Memory Check (ASAN) ===
+asan: CXX := $(GPP)
+asan: FLAGS := $(ASAN_FLAGS)
+asan: MODE := ASAN
+asan: $(TARGET)
+
+# ============================================================
+#                        Linking
+# ============================================================
+
 $(TARGET): $(OBJ_FILES)
 	@echo "⚙️  Linking for $(MODE) mode..."
 	$(CXX) $(FLAGS) $(OBJ_FILES) $(OPENCV_LIBS) -o $@
 	@echo "✅  Build complete ($(MODE) mode): ./$(TARGET)"
 
-# === Object build rule ===
+# ============================================================
+#                        Compilation
+# ============================================================
+
 $(OBJ_DIR)/%.o: %.cpp $(MODULE_HEADERS)
 	@mkdir -p $(dir $@)
 	@echo "⚙️  Compiling $< ($(MODE) mode)..."
 	$(CXX) $(FLAGS) $(INCLUDE_FLAGS) -c $< -o $@
 
-# === Clean ===
+# ============================================================
+#                          Clean
+# ============================================================
+
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
 	@echo "🧹 Cleaned build files."
-

@@ -23,12 +23,13 @@ using half_cpu = half_float::half;        // Bring the type into scope
 using std::vector;
 
 struct DType {
-    enum Type { FP32, INT32, FP16, INT8, INT4 };
+    enum Type { FP32, INT32, FP16, INT8, INT4, NONETYPE };
 };
 
 struct PtrPair {
     const void* buf;
     const void* scale;
+    const void* sum_int8;
 };
 
 const char* dtypeToStr(DType::Type dtype);
@@ -42,16 +43,22 @@ struct Tensor {
     bool use_gpu = false;
     bool permuted = false;
     bool group_quantized = false;
+    bool has_sum_int8 = false;
+    bool is_weight = false;
 
     void* scale_buf = nullptr;
-    DType::Type scale_dtype;
+    void* sum_int8_buf = nullptr;
+    DType::Type scale_dtype = DType::NONETYPE;
     size_t group_size = 0;
     
     // Constructors & Destructor
     // FP32 and FP16
     Tensor(
-        const std::vector<size_t> &shape_,
-        DType::Type dtype_ = DType::FP32
+        const vector<size_t> &shape_, DType::Type dtype_ = DType::FP32
+    );
+    Tensor(
+        const vector<size_t> &shape_, DType::Type dtype_,
+        DType::Type scale_dtype_, size_t group_size_
     );
     Tensor(
         const std::vector<size_t> &shape_, void *buf_,
@@ -72,9 +79,10 @@ struct Tensor {
         const std::vector<size_t> &indices = {}, bool get_scale = false
     ) const;
     PtrPair ptr_all(const std::vector<size_t> &indices = {}) const;
+    void offline_sum_int8();
     void reshape(const std::vector<size_t> &shape_);
     void printShape(const std::string &descr) const;
     // NEEDS IMPLEMENTING FOR scale_buf
-    void printDebug(const std::string &descr, bool full_tensor = false) const;
+    void printDebug(const std::string &descr, const std::vector<size_t> &indices = {}, bool full_tensor = false) const;
     void permute(const std::vector<size_t> &order);
 };

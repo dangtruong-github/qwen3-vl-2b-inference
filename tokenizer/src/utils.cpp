@@ -31,18 +31,6 @@ void concat_merge(const char *a, const char *b, char **c) {
     strcat(*c, b);
 }
 
-int greedy_decode(float* logits, int vocab_size) {
-    float max_val = -FLT_MAX;
-    int max_idx = 0;
-    for (int i = 0; i < vocab_size; ++i) {
-        if (logits[i] > max_val) {
-            max_val = logits[i];
-            max_idx = i;
-        }
-    }
-    return max_idx;
-}
-
 int str_lookup(const char *str, TokenIndex *sorted_vocab, int vocab_size) {
     // efficiently find the perfect match for str in vocab, return its index or -1 if not found
     TokenIndex tok = { .str = (char *)str }; // acts as the key to search for

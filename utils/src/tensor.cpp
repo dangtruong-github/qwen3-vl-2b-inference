@@ -8,6 +8,7 @@ const char* dtypeToStr(DType::Type dtype) {
         case DType::FP16: return "FP16";
         case DType::INT8: return "INT8";
         case DType::INT4: return "INT4";
+        case DType::NONETYPE: return "NoneType";
         default: return "Unknown";
     }
 }
@@ -31,6 +32,40 @@ Tensor::Tensor(
 }
 
 Tensor::Tensor(
+    const vector<size_t> &shape_, DType::Type dtype_,
+    DType::Type scale_dtype_, size_t group_size_
+) : shape(shape_), dtype(dtype_), owns_host_buf(true), scale_dtype(scale_dtype_), group_size(group_size_), group_quantized(true) {
+    if (dtype != DType::FP32 && dtype != DType::FP16 && dtype != DType::INT8) {
+        fprintf(stderr, "Dtype not implemented %s\n", dtypeToStr(dtype));
+        exit(1);   
+    }
+
+    ndim = shape_.size();
+    size_t N_ = num_elem();
+    size_t each_elem = get_dtype_size();
+    size_t each_scale_elem = get_dtype_size(true);
+
+    if (N_ % group_size_) {
+        fprintf(stderr, "Allocate tensor error: number of elements %zu doesn't divide to group size %zu", N_, group_size_);
+        exit(1);
+    }
+
+    size_t N_scale_ = N_ / group_size;
+
+    buf = calloc(N_, each_elem);
+    CHECK_ALLOC(buf, N_ * each_elem);
+    scale_buf = calloc(N_scale_, each_scale_elem);
+    CHECK_ALLOC(scale_buf, N_scale_ * each_scale_elem);
+
+    printShape("output");
+    printf("N_=%zu, N_scale_=%zu, group_size=%zu, size tensor=%lf, size scale=%lf\n",
+        N_, N_scale_, group_size_, double(N_ * each_elem) / 1024.0 / 1024.0, double(N_scale_ * each_scale_elem) / 1024.0 / 1024.0);
+
+    printf("Allocate tensor with size %lf MB\n", double(N_ * each_elem) / 1024.0 / 1024.0);
+    printf("Allocate tensor scale with size %lf MB\n", double(N_scale_ * each_scale_elem) / 1024.0 / 1024.0);
+}
+
+Tensor::Tensor(
     const vector<size_t> &shape_, void *buf_, DType::Type dtype_
 ) : shape(shape_), buf(buf_), dtype(dtype_), owns_host_buf(false) {
     ndim = shape_.size();
@@ -44,7 +79,10 @@ Tensor::Tensor(
     const std::vector<size_t> &shape_, void *buf_, void *scale_buf_,
     size_t group_size_, bool group_quantized_,
     DType::Type dtype_, DType::Type scale_dtype_
-) : shape(shape_), buf(buf_), scale_buf(scale_buf_), group_size(group_size_), group_quantized(group_quantized_), dtype(dtype_), scale_dtype(scale_dtype_), owns_host_buf(false) {
+) : shape(shape_), buf(buf_), scale_buf(scale_buf_), group_size(group_size_),
+    group_quantized(group_quantized_), dtype(dtype_), scale_dtype(scale_dtype_),
+    owns_host_buf(false), is_weight(true) 
+{
     ndim = shape_.size();
 
     size_t size_buf = num_elem() * get_dtype_size();
@@ -84,8 +122,10 @@ Tensor::~Tensor() {
         if (owns_host_buf) {
             free(buf);
         } else {
-            size_t data_size = num_elem() * get_dtype_size();
-            safe_munmap(buf, data_size);
+            if (is_weight) {
+                size_t data_size = num_elem() * get_dtype_size();
+                safe_munmap(buf, data_size);
+            }
         }
         buf = nullptr;
     }
@@ -93,13 +133,17 @@ Tensor::~Tensor() {
     // --------------------
     // Free scale buffer
     // --------------------
-    if (scale_buf) {
+    if (scale_buf && is_weight) {
         size_t stride = group_quantized ? group_size : shape[ndim - 1];
         size_t num_scales = (num_elem() + stride - 1) / stride;
         size_t data_size = num_scales * get_dtype_size(true);
 
         safe_munmap(scale_buf, data_size);
         scale_buf = nullptr;
+    }
+
+    if (sum_int8_buf && is_weight) {
+        free(sum_int8_buf);
     }
 }
 
@@ -148,6 +192,7 @@ PtrPair Tensor::ptr_all(const std::vector<size_t> &indices) const {
     if (indices.empty()) {
         out.buf   = buf;
         out.scale = scale_buf;
+        out.sum_int8 = sum_int8_buf;
         return out;
     }
     
@@ -181,7 +226,95 @@ PtrPair Tensor::ptr_all(const std::vector<size_t> &indices) const {
     } else {
         out.scale = nullptr;
     }
+
+    if (sum_int8_buf && dtype == DType::INT8) {
+        size_t stride = group_quantized ? group_size : shape[ndim - 1];
+        if (offset % stride) {
+            fprintf(stderr, "scale offset misaligned\n");
+            exit(1);
+        }
+
+        char* sum_int8_ptr = static_cast<char*>(sum_int8_buf);
+        size_t offset_s = offset / stride;
+
+        #if defined(__AVX512F__) && defined(__AVX512DQ__)
+            offset_s <<= 4;
+        #elif defined(__AVX2__) && defined(__FMA__)
+            offset_s <<= 3;
+        #endif
+
+        out.sum_int8 = sum_int8_ptr + (offset_s * sizeof(int));
+    } else {
+        out.sum_int8 = nullptr;
+    }
+
     return out;
+}
+
+void Tensor::offline_sum_int8() {
+    const size_t num_groups = num_elem() / group_size;
+    
+    // Define vector width based on architecture
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+        const size_t vals_per_group = 16; 
+    #elif defined(__AVX2__) && defined(__FMA__)
+        const size_t vals_per_group = 8;
+    #else
+        const size_t vals_per_group = 1;
+    #endif
+
+    // Allocate aligned memory for the correction buffer
+    size_t total_ints = num_groups * vals_per_group;
+    if (sum_int8_buf) free(sum_int8_buf);
+    sum_int8_buf = aligned_alloc(64, total_ints * sizeof(int32_t));
+    int32_t* sum_ptr = (int32_t*)sum_int8_buf;
+
+    const int8_t* b_data = (const int8_t*)(buf); 
+
+    for (size_t g = 0; g < num_groups; ++g) {
+        const int8_t* group_ptr = b_data + (g * group_size);
+        int32_t* current_out = sum_ptr + (g * vals_per_group);
+
+        #if defined(__AVX512F__) && defined(__AVX512DQ__)
+            // AVX-512 Dynamic Loop
+            __m512i v_sum = _mm512_setzero_si512();
+            __m512i v_ones = _mm512_set1_epi8(1);
+            
+            for (size_t k = 0; k < group_size; k += 64) {
+                // Process 64 bytes at a time (full ZMM)
+                v_sum = _mm512_dpbusd_epi32(v_sum, v_ones, _mm512_loadu_si512((__m512i*)(group_ptr + k)));
+            }
+            
+            // Multiply by 128 and store the 16 partial sums
+            v_sum = _mm512_slli_epi32(v_sum, 7);
+            _mm512_store_si512((__m512i*)current_out, v_sum);
+
+        #elif defined(__AVX2__) && defined(__FMA__)
+            // AVX2 Dynamic Loop
+            __m256i v_sum = _mm256_setzero_si256();
+            __m256i v_ones = _mm256_set1_epi8(1);
+            __m256i v_madd_ones = _mm256_set1_epi16(1);
+            
+            for (size_t k = 0; k < group_size; k += 32) {
+                __m256i b = _mm256_loadu_si256((__m256i*)(group_ptr + k));
+                // Standard AVX2 horizontal sum pattern: maddubs -> madd -> add
+                __m256i mad = _mm256_maddubs_epi16(v_ones, b);
+                v_sum = _mm256_add_epi32(v_sum, _mm256_madd_epi16(mad, v_madd_ones));
+            }
+            
+            v_sum = _mm256_slli_epi32(v_sum, 7);
+            _mm256_store_si256((__m256i*)current_out, v_sum);
+
+        #else
+            // Scalar fallback
+            int32_t s = 0;
+            for (size_t k = 0; k < group_size; ++k) {
+                s += (int32_t)group_ptr[k];
+            }
+            current_out[0] = s << 7;
+        #endif
+    }
+    has_sum_int8 = true;
 }
 
 size_t Tensor::num_elem() const {
@@ -236,9 +369,11 @@ void Tensor::printShape(const std::string &descr) const {
     }
 }
 
-void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
+void Tensor::printDebug(const std::string &descr, const std::vector<size_t> &indices, bool full_tensor) const {
     #pragma omp critical
     {
+        void *buf_print = ptr(indices);
+
         size_t elem = num_elem();
         size_t batches = elem / shape[ndim - 1];
 
@@ -250,7 +385,7 @@ void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
 
         printf("Print debug %s: ", descr.c_str());
         if (dtype == DType::FP32) {
-            float *fp32_buf = (float *)buf;
+            float *fp32_buf = (float *)buf_print;
             if (full_tensor) {
                 printf("\n");
                 for (size_t i = 0; i < batches; i++) {
@@ -265,7 +400,7 @@ void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
                 }
             }
         } else if (dtype == DType::FP16) {
-            half_cpu *fp16_buf = (half_cpu *)buf;
+            half_cpu *fp16_buf = (half_cpu *)buf_print;
             if (full_tensor) {
                 printf("\n");
                 for (size_t i = 0; i < batches; i++) {
@@ -279,19 +414,21 @@ void Tensor::printDebug(const std::string &descr, bool full_tensor) const {
                     printf("%.2f ", (float)(fp16_buf[i]));
                 }
             }
-        } else if (dtype == DType::INT32) {
-            int *int32_buf = (int *)buf;
+        } else if (dtype == DType::INT8) {
+            int8_t *int8_buf = (int8_t *)buf_print;
+            float *fp32_scale_buf = (float *)ptr(indices, true);
             if (full_tensor) {
                 printf("\n");
                 for (size_t i = 0; i < batches; i++) {
                     for (size_t j = 0; j < elem; j++) {
-                        printf("%d ", int32_buf[i * elem + j]);
+                        size_t id = i * elem + j;
+                        printf("%.2f ", (float)(int8_buf[id]) * fp32_scale_buf[id / group_size]);
                     }
                     printf("\n");
                 }
             } else {
                 for (size_t i = 0; i < elem; i++) {
-                    printf("%d ", int32_buf[i]);
+                    printf("%.2f ", (float)(int8_buf[i]) * fp32_scale_buf[0]);
                 }
             }
         }

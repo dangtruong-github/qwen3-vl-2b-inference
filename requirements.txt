@@ -10,6 +10,12 @@ torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
 numpy==2.3.3
 
+# python==3.12.3
+torch==2.10.0 --index-url https://download.pytorch.org/whl/cu131
+torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cu131
+torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu131
+numpy==2.3.3
+
 safetensors==0.6.2
 packaging==25.0
 transformers==4.57.1

@@ -42,6 +42,10 @@ typedef struct {
     int group_size;
     int vision_bits;
     int group_quantized;
+
+    int max_prefill_size;
+    int max_vision_attention_size;
+    int cache_group_size;
 } QwenConfig;
 
 typedef struct {
@@ -56,11 +60,12 @@ typedef struct {
     Tensor *w_mlp_up;              // [L, I, H]
     Tensor *rms_attn_w; // [L, H]
     Tensor *w_attn_k_norm;         // [L, KVA_Dim]
-    Tensor *w_attn_k;         // [L, KVA_Dim, H]
+    // Tensor *w_attn_k;         // [L, KVA_Dim, H]
     Tensor *w_attn_o;         // [L, H, H]
     Tensor *w_attn_q_norm;         // [L, Q_Dim]
-    Tensor *w_attn_q;         // [L, Q_Dim, H]
-    Tensor *w_attn_v;         // [L, KVA_Dim, H]
+    // Tensor *w_attn_q;         // [L, Q_Dim, H]
+    // Tensor *w_attn_v;         // [L, KVA_Dim, H]
+    Tensor *w_attn_qkv;
 
     // Vision Model Weights (General)
     Tensor *vl_patch_emb_b;
@@ -101,9 +106,9 @@ typedef struct {
     Tensor *t;            // normalized hidden before attention [hidden_size]
 
     // ---- Attention projections ----
-    Tensor *q;            // query [num_attention_heads * head_dim]
-    Tensor *k;            // query [num_attention_heads * head_dim]
-    Tensor *v;            // query [num_attention_heads * head_dim]
+    Tensor *q;            // q [num_attention_heads * head_dim]
+    Tensor *k;            // k [num_kv_heads * head_dim]
+    Tensor *v;            // v [num_kv_heads * head_dim]
 
     Tensor *att;          // attention scores (temporary buffer) [num_attention_heads * max_position_embeddings]
     Tensor *qkv_out;      // attention output before projection [hidden_size]
@@ -138,6 +143,7 @@ typedef struct {
     Tensor *vision_mlp_out;
     Tensor *vision_deep_stack;
     Tensor *vision_attn_scores;
+    Tensor *max_vision_attn_scores;
 
     int vision_embed_tokens;
     int cur_img_token_id;

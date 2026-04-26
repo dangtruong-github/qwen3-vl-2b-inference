@@ -1,27 +1,46 @@
+# ============================================================
+#                Project Makefile
+# ============================================================
+
 # === Compiler setup ===
 NVCC := nvcc
 GPP  := g++
-CXXFLAGS  := -std=c++17 -O3 -fopenmp -march=native
-NVCCFLAGS := -std=c++17 -O3 -Xcompiler "-fopenmp -march=native"
- 
-# === OpenCV via system pkg-config ===
+
+# === Base flags ===
+BASE_STD := -std=c++17
+BASE_OMP := -fopenmp
+BASE_ARCH := -march=native
+
+# === Release flags ===
+CXXFLAGS  := $(BASE_STD) -O3 $(BASE_OMP) $(BASE_ARCH)
+NVCCFLAGS := $(BASE_STD) -O3 -Xcompiler "$(BASE_OMP) $(BASE_ARCH)"
+
+# === Debug flags ===
+DEBUG_FLAGS := $(BASE_STD) -O0 -g $(BASE_OMP) $(BASE_ARCH)
+
+# === AddressSanitizer flags (memory check) ===
+ASAN_FLAGS := $(BASE_STD) -O1 -g $(BASE_OMP) $(BASE_ARCH) \
+              -fsanitize=address,undefined \
+              -fno-omit-frame-pointer
+
+# === OpenCV via pkg-config ===
 OPENCV_CFLAGS := $(shell pkg-config --cflags opencv4)
 OPENCV_LIBS   := $(shell pkg-config --libs opencv4)
 
-# === Manually list top-level modules ===
+# === Modules ===
 MODULES := tokenizer model utils matmul layers
 
-# === Automatically derived directories ===
-SRC_DIRS := $(foreach m,$(MODULES),$(m)/src)
-INCLUDE_DIRS := $(foreach m,$(MODULES),$(m)/include)
-CONFIG_DIRS := $(foreach m,$(MODULES),$(m))
+# === Directories ===
+SRC_DIRS      := $(foreach m,$(MODULES),$(m)/src)
+INCLUDE_DIRS  := $(foreach m,$(MODULES),$(m)/include)
+CONFIG_DIRS   := $(foreach m,$(MODULES),$(m))
 MODULE_HEADERS := $(foreach m,$(MODULES),$(m)/module.hpp)
 
 # === Build directories ===
 BUILD_DIR := build
-OBJ_DIR := $(BUILD_DIR)/obj
+OBJ_DIR   := $(BUILD_DIR)/obj
 
-# === Sources & Objects ===
+# === Source & Object files ===
 SRC_FILES := main.cpp $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
 OBJ_FILES := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 
@@ -34,34 +53,58 @@ INCLUDE_FLAGS := \
 # === Output binary ===
 TARGET := main
 
-# === Default target ===
+# ============================================================
+#                       Build Modes
+# ============================================================
+
 all: cpu
 
-# === CPU build ===
+# === CPU Release ===
 cpu: CXX := $(GPP)
 cpu: FLAGS := $(CXXFLAGS)
 cpu: MODE := CPU
 cpu: $(TARGET)
 
-# === GPU build ===
+# === GPU Release ===
 gpu: CXX := $(NVCC)
 gpu: FLAGS := $(NVCCFLAGS)
 gpu: MODE := GPU
 gpu: $(TARGET)
 
-# === Link rule ===
+# === Debug Build ===
+debug: CXX := $(GPP)
+debug: FLAGS := $(DEBUG_FLAGS)
+debug: MODE := DEBUG
+debug: $(TARGET)
+
+# === Memory Check (AddressSanitizer) ===
+asan: CXX := $(GPP)
+asan: FLAGS := $(ASAN_FLAGS)
+asan: MODE := ASAN
+asan: $(TARGET)
+
+# ============================================================
+#                        Linking
+# ============================================================
+
 $(TARGET): $(OBJ_FILES)
 	@echo "⚙️  Linking for $(MODE) mode..."
 	$(CXX) $(FLAGS) $(OBJ_FILES) $(OPENCV_LIBS) -o $@
 	@echo "✅  Build complete ($(MODE) mode): ./$(TARGET)"
 
-# === Object build rule ===
+# ============================================================
+#                        Compilation
+# ============================================================
+
 $(OBJ_DIR)/%.o: %.cpp $(MODULE_HEADERS)
 	@mkdir -p $(dir $@)
 	@echo "⚙️  Compiling $< ($(MODE) mode)..."
 	$(CXX) $(FLAGS) $(INCLUDE_FLAGS) -c $< -o $@
 
-# === Clean ===
+# ============================================================
+#                          Clean
+# ============================================================
+
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
 	@echo "🧹 Cleaned build files."

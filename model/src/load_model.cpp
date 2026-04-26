@@ -110,6 +110,9 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     config->deep_layer[11] = 2; // set index 11 to 2
     config->deep_layer[17] = 3;
 
+    config->max_prefill_size = 8;
+    config->max_vision_attention_size = 128;
+    config->cache_group_size = 32;
 
     // ==================================================================================
     // 2. Derived Dimensions
@@ -184,15 +187,18 @@ void init_model_weights(const char* path, QwenConfig* config, QwenWeight* weight
     map_tensor(&weights->token_embedding_table, {vocab_size, H}, "token_embedding_table", text_bits);
     map_tensor(&weights->rms_ffn_w, {L, H}, "rms_ffn_w", text_bits, true);
     map_tensor(&weights->w_mlp_down, {L, H, I}, "w_mlp_down", text_bits);
+    weights->w_mlp_down->offline_sum_int8();
     map_tensor(&weights->w_mlp_gate, {L, I, H}, "w_mlp_gate", text_bits);
+    weights->w_mlp_gate->offline_sum_int8();
     map_tensor(&weights->w_mlp_up, {L, I, H}, "w_mlp_up", text_bits);
+    weights->w_mlp_up->offline_sum_int8();
     map_tensor(&weights->rms_attn_w, {L, H}, "rms_attn_w", text_bits, true);
     map_tensor(&weights->w_attn_k_norm, {L, head_dim}, "w_attn_k_norm", text_bits, true);
-    map_tensor(&weights->w_attn_k, {L, KVAD, H}, "w_attn_k", text_bits);
     map_tensor(&weights->w_attn_o, {L, H, H}, "w_attn_o", text_bits);
+    weights->w_attn_o->offline_sum_int8();
     map_tensor(&weights->w_attn_q_norm, {L, head_dim}, "w_attn_q_norm", text_bits, true);
-    map_tensor(&weights->w_attn_q, {L, QD, H}, "w_attn_q", text_bits);
-    map_tensor(&weights->w_attn_v, {L, KVAD, H}, "w_attn_v", text_bits);
+    map_tensor(&weights->w_attn_qkv, {L, QD + 2 * KVAD, H}, "w_attn_qkv", text_bits);
+    weights->w_attn_qkv->offline_sum_int8();
     map_tensor(&weights->rms_out_w, {H}, "rms_out_w", text_bits, true);
 
     // --- VISION WEIGHTS ---
@@ -264,11 +270,9 @@ void free_model_weights(QwenWeight* weights) {
     delete weights->w_mlp_up;
     delete weights->rms_attn_w;
     delete weights->w_attn_k_norm;
-    delete weights->w_attn_k;
     delete weights->w_attn_o;
     delete weights->w_attn_q_norm;
-    delete weights->w_attn_q;
-    delete weights->w_attn_v;
+    delete weights->w_attn_qkv;
 
     // Vision Model Weights (General)
     delete weights->vl_patch_emb_b;
@@ -321,32 +325,35 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     size_t VD = VH / config->vision_num_heads;
     size_t VI = config->vision_intermediate_size;
     size_t VDS = config->vision_deep_stack_depth;
+    
+    size_t MPS = config->max_prefill_size;
+    size_t MVAS = (size_t)config->max_vision_attention_size;
 
     // ---- Hidden / intermediate ----
-    state->x = new Tensor({BATCH_SIZE, H});
+    state->x = new Tensor({MPS, H});
 
-    state->t = new Tensor({BATCH_SIZE, H});
+    state->t = new Tensor({MPS, H});
 
-    state->q = new Tensor({BATCH_SIZE, NH, D});
-    state->k = new Tensor({BATCH_SIZE, NH, D});
-    state->v = new Tensor({BATCH_SIZE, NH, D});
+    state->q = new Tensor({MPS, NH, D});
+    state->k = new Tensor({MPS, NKV, D});
+    state->v = new Tensor({MPS, NKV, D}, DType::FP16);
 
-    state->att = new Tensor({BATCH_SIZE, NH, S});
+    state->att = new Tensor({MPS, NH, S});
 
-    state->qkv_out = new Tensor({BATCH_SIZE, H});
+    state->qkv_out = new Tensor({MPS, H});
 
-    state->gate = new Tensor({BATCH_SIZE, I});
+    state->gate = new Tensor({MPS, I});
 
-    state->up = new Tensor({BATCH_SIZE, I});
+    state->up = new Tensor({MPS, I});
 
     state->cos_tensor = new Tensor({3, S, D / 2});
     state->sin_tensor = new Tensor({3, S, D / 2});
 
-    state->logits = new Tensor({BATCH_SIZE, V});
+    state->logits = new Tensor({MPS, V});
 
     // ---- KV cache ----
-    state->key_cache = new Tensor({BATCH_SIZE, L, NKV, S, D}); //, DType::FP16);
-    state->value_cache = new Tensor({BATCH_SIZE, L, NKV, S, D}); //, DType::FP16);
+    state->key_cache = new Tensor({1, L, NKV, S, D}, DType::FP16);
+    state->value_cache = new Tensor({1, L, NKV, S, D}, DType::FP16);
 
     // -- Vision states --
     state->vision_x = new Tensor({VNP_max, VH});
@@ -354,7 +361,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
     state->vision_q = new Tensor({VNP_max, VH}, DType::FP16);
     state->vision_k = new Tensor({VNP_max, VH}, DType::FP16);
 
-    state->vision_cos_tensor = new Tensor({VNP_max, VD / 4}, DType::FP16);    state->vision_sin_tensor = new Tensor({VNP_max, VD / 4}, DType::FP16);
+    state->vision_cos_tensor = new Tensor({VNP_max, VD / 4}, DType::FP16);   
+    state->vision_sin_tensor = new Tensor({VNP_max, VD / 4}, DType::FP16);
 
     state->vision_pe_cos = new Tensor({VNP_max, VD}, DType::FP16); 
     state->vision_pe_sin = new Tensor({VNP_max, VD}, DType::FP16);
@@ -363,7 +371,8 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
 
     state->vision_deep_stack = new Tensor({VDS, VNP_max, H}, DType::FP16);
 
-    state->vision_attn_scores = new Tensor({VNP_max});
+    state->vision_attn_scores = new Tensor({MVAS, VNP_max});
+    state->max_vision_attn_scores = new Tensor({MVAS});
 
     qwen_rope_precompute(
         state->cos_tensor, state->sin_tensor, config
@@ -408,6 +417,7 @@ void free_model_run_state(QwenRunState* state) {
     if (state->vision_deep_stack) delete state->vision_deep_stack;
 
     if (state->vision_attn_scores) delete state->vision_attn_scores;
+    if (state->max_vision_attn_scores) delete state->max_vision_attn_scores;
 }
 
 void qwen_rope_precompute(
