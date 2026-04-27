@@ -152,34 +152,41 @@ void linear_f32a_i8f32sb_f16c(
     const float* mat_B_scales, const int *sum_int8_B, half_cpu* mat_C,
     size_t M, size_t N, size_t K, size_t group_size, bool add_to_c
 ) {
-    #pragma omp parallel for collapse(2)
-    for (size_t i = 0; i < M; ++i) {
-        for (size_t j = 0; j < N; ++j) {
-            float acc = 0.0f;
+    #ifdef __ARM_NEON
+        arm_f32a_i8f32sb_f16c(
+            mat_A, mat_B_in, mat_B_scales, sum_int8_B,
+            mat_C, M, N, K, group_size, add_to_c
+        );
+    #else
+        #pragma omp parallel for collapse(2)
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t j = 0; j < N; ++j) {
+                float acc = 0.0f;
 
-            // -------- GEMM --------
-            for (size_t k = 0; k < K; ++k) {
-                float a = mat_A[i * K + k];
+                // -------- GEMM --------
+                for (size_t k = 0; k < K; ++k) {
+                    float a = mat_A[i * K + k];
 
-                // linear index into B (matches quantizer layout)
-                size_t b_linear_idx;
-                b_linear_idx = j * K + k;
+                    // linear index into B (matches quantizer layout)
+                    size_t b_linear_idx;
+                    b_linear_idx = j * K + k;
 
-                size_t scale_idx = b_linear_idx / group_size;
-                float scale = mat_B_scales[scale_idx];
+                    size_t scale_idx = b_linear_idx / group_size;
+                    float scale = mat_B_scales[scale_idx];
 
-                float b = (float)mat_B_in[b_linear_idx] * scale;
-                acc += a * b;
-            }
+                    float b = (float)mat_B_in[b_linear_idx] * scale;
+                    acc += a * b;
+                }
 
-            if (add_to_c) {
-                acc += (float)(mat_C[i * N + j]);
-                mat_C[i * N + j] = (half_cpu)(acc);
-            } else {
-                mat_C[i * N + j] = (half_cpu)(acc);
+                if (add_to_c) {
+                    acc += (float)(mat_C[i * N + j]);
+                    mat_C[i * N + j] = (half_cpu)(acc);
+                } else {
+                    mat_C[i * N + j] = (half_cpu)(acc);
+                }
             }
         }
-    }
+    #endif
 }
 
 void linear_fp16_full(

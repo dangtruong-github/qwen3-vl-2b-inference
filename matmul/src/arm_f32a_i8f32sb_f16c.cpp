@@ -1,8 +1,8 @@
 #include "../include/cpu_wrapper.hpp"
 
-void arm_f32a_i8f32sb_f32c_m1(
+void arm_f32a_i8f32sb_f16c_m1(
     const float* mat_A, const int8_t* mat_B_in,
-    const float* mat_B_scales, float* mat_C,
+    const float* mat_B_scales, half_cpu* mat_C,
     size_t N, size_t K, size_t group_size, bool add_to_c
 ) {
     alignas(32) int8_t a_q8[K];
@@ -88,22 +88,23 @@ void arm_f32a_i8f32sb_f32c_m1(
             );
         }
         
-        if (add_to_c) {     
-            mat_C[jj] += vaddvq_f32(c0_f);
+        if (add_to_c) {
+            float acc = vaddvq_f32(c0_f) + (float)(mat_C[jj]);
+            mat_C[jj] = (half_cpu)(acc);
         } else {        
-            mat_C[jj] = vaddvq_f32(c0_f);
+            mat_C[jj] = (half_cpu)(vaddvq_f32(c0_f));
         }
     }
 }
 
-void arm_f32a_i8f32sb_f32c(
+void arm_f32a_i8f32sb_f16c(
     const float* mat_A, const int8_t* mat_B_in,
-    const float* mat_B_scales, const int *sum_int8_B, float* mat_C,
+    const float* mat_B_scales, const int *sum_int8_B, half_cpu* mat_C,
     size_t M, size_t N, size_t K, size_t group_size, bool add_to_c
 ) {
     if (N >= 1024 && K >= 1024) {
         for (size_t i = 0; i < M; ++i) {
-            arm_f32a_i8f32sb_f32c_m1(
+            arm_f32a_i8f32sb_f16c_m1(
                 mat_A, mat_B_in, mat_B_scales,
                 mat_C, N, K, group_size, add_to_c
             );
@@ -134,10 +135,9 @@ void arm_f32a_i8f32sb_f32c(
             }
 
             if (add_to_c) {
-                mat_C[i * N + j] += acc;
-            } else {
-                mat_C[i * N + j] = acc;
+                acc += (float)(mat_C[i * N + j]);
             }
+            mat_C[i * N + j] = (half_cpu)acc;
         }
     }
 }

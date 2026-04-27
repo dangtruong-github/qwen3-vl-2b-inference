@@ -49,4 +49,9 @@ void arm_f32a_i8f32sb_f32c(
     const float* mat_B_scales, const int *sum_int8_B, float* mat_C,
     size_t M, size_t N, size_t K, size_t group_size, bool add_to_c
 );
+void arm_f32a_i8f32sb_f16c(
+    const float* mat_A, const int8_t* mat_B_in,
+    const float* mat_B_scales, const int *sum_int8_B, half_cpu* mat_C,
+    size_t M, size_t N, size_t K, size_t group_size, bool add_to_c
+);
 #endif
