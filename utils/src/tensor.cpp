@@ -237,12 +237,6 @@ PtrPair Tensor::ptr_all(const std::vector<size_t> &indices) const {
         char* sum_int8_ptr = static_cast<char*>(sum_int8_buf);
         size_t offset_s = offset / stride;
 
-        #if defined(__AVX512F__) && defined(__AVX512DQ__)
-            offset_s <<= 4;
-        #elif defined(__AVX2__) && defined(__FMA__)
-            offset_s <<= 3;
-        #endif
-
         out.sum_int8 = sum_int8_ptr + (offset_s * sizeof(int));
     } else {
         out.sum_int8 = nullptr;
@@ -255,13 +249,7 @@ void Tensor::offline_sum_int8() {
     const size_t num_groups = num_elem() / group_size;
     
     // Define vector width based on architecture
-    #if defined(__AVX512F__) && defined(__AVX512DQ__)
-        const size_t vals_per_group = 16; 
-    #elif defined(__AVX2__) && defined(__FMA__)
-        const size_t vals_per_group = 8;
-    #else
-        const size_t vals_per_group = 1;
-    #endif
+    const size_t vals_per_group = 1;
 
     // Allocate aligned memory for the correction buffer
     size_t total_ints = num_groups * vals_per_group;
@@ -275,44 +263,12 @@ void Tensor::offline_sum_int8() {
         const int8_t* group_ptr = b_data + (g * group_size);
         int32_t* current_out = sum_ptr + (g * vals_per_group);
 
-        #if defined(__AVX512F__) && defined(__AVX512DQ__)
-            // AVX-512 Dynamic Loop
-            __m512i v_sum = _mm512_setzero_si512();
-            __m512i v_ones = _mm512_set1_epi8(1);
-            
-            for (size_t k = 0; k < group_size; k += 64) {
-                // Process 64 bytes at a time (full ZMM)
-                v_sum = _mm512_dpbusd_epi32(v_sum, v_ones, _mm512_loadu_si512((__m512i*)(group_ptr + k)));
-            }
-            
-            // Multiply by 128 and store the 16 partial sums
-            v_sum = _mm512_slli_epi32(v_sum, 7);
-            _mm512_store_si512((__m512i*)current_out, v_sum);
-
-        #elif defined(__AVX2__) && defined(__FMA__)
-            // AVX2 Dynamic Loop
-            __m256i v_sum = _mm256_setzero_si256();
-            __m256i v_ones = _mm256_set1_epi8(1);
-            __m256i v_madd_ones = _mm256_set1_epi16(1);
-            
-            for (size_t k = 0; k < group_size; k += 32) {
-                __m256i b = _mm256_loadu_si256((__m256i*)(group_ptr + k));
-                // Standard AVX2 horizontal sum pattern: maddubs -> madd -> add
-                __m256i mad = _mm256_maddubs_epi16(v_ones, b);
-                v_sum = _mm256_add_epi32(v_sum, _mm256_madd_epi16(mad, v_madd_ones));
-            }
-            
-            v_sum = _mm256_slli_epi32(v_sum, 7);
-            _mm256_store_si256((__m256i*)current_out, v_sum);
-
-        #else
-            // Scalar fallback
-            int32_t s = 0;
-            for (size_t k = 0; k < group_size; ++k) {
-                s += (int32_t)group_ptr[k];
-            }
-            current_out[0] = s << 7;
-        #endif
+        // Scalar fallback
+        int32_t s = 0;
+        for (size_t k = 0; k < group_size; ++k) {
+            s += (int32_t)group_ptr[k];
+        }
+        current_out[0] = s * 128;
     }
     has_sum_int8 = true;
 }

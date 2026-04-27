@@ -26,8 +26,8 @@ void fused_att_dispatch(
     attn_weighted_sum_all_heads(
         v_cache_l, v_cache_s, att, qkv_out,
         num_heads, kv_mul, head_dim, kv_dim,
-        kv_all_off, pos, group_size,
-        prefill_size, value_dtype
+        kv_all_off, pos, prefill_size,
+        group_size, value_dtype
     );
 
     #ifdef PRINT_LOGITS

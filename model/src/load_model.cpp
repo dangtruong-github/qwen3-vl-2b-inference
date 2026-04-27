@@ -386,38 +386,38 @@ void init_model_run_state(QwenRunState* state, const QwenConfig* config) {
 void free_model_run_state(QwenRunState* state) {
     if (!state) return;
 
-    if (state->x) delete state->x;
-    if (state->t) delete state->t;
-    if (state->q) delete state->q;
-    if (state->k) delete state->k;
-    if (state->v) delete state->v;
-    if (state->att) delete state->att;
-    if (state->qkv_out) delete state->qkv_out;
-    if (state->gate) delete state->gate;
-    if (state->up) delete state->up;
-    if (state->cos_tensor) delete state->cos_tensor;
-    if (state->sin_tensor) delete state->sin_tensor;
-    if (state->logits) delete state->logits;
-    if (state->key_cache) delete state->key_cache;
-    if (state->value_cache) delete state->value_cache;
+    if (state->x) { printf("delete state->x\n"); delete state->x; }
+    if (state->t) { printf("delete state->t\n"); delete state->t; }
+    if (state->q) { printf("delete state->q\n"); delete state->q; }
+    if (state->k) { printf("delete state->k\n"); delete state->k; }
+    if (state->v) { printf("delete state->v\n"); delete state->v; }
+    if (state->att) { printf("delete state->att\n"); delete state->att; }
+    if (state->qkv_out && false) { printf("delete state->qkv_out\n"); delete state->qkv_out; }
+    if (state->gate) { printf("delete state->gate\n"); delete state->gate; }
+    if (state->up) { printf("delete state->up\n"); delete state->up; }
+    if (state->cos_tensor) { printf("delete state->cos_tensor\n"); delete state->cos_tensor; }
+    if (state->sin_tensor) { printf("delete state->sin_tensor\n"); delete state->sin_tensor; }
+    if (state->logits) { printf("delete state->logits\n"); delete state->logits; }
+    if (state->key_cache) { printf("delete state->key_cache\n"); delete state->key_cache; }
+    if (state->value_cache) { printf("delete state->value_cache\n"); delete state->value_cache; }
 
-    if (state->vision_cos_tensor) delete state->vision_cos_tensor;
-    if (state->vision_sin_tensor) delete state->vision_sin_tensor;
+    if (state->vision_cos_tensor) { printf("delete state->vision_cos_tensor\n"); delete state->vision_cos_tensor; }
+    if (state->vision_sin_tensor) { printf("delete state->vision_sin_tensor\n"); delete state->vision_sin_tensor; }
 
-    if (state->vision_x) delete state->vision_x;
-    if (state->vision_t) delete state->vision_t;
-    if (state->vision_pe_cos) delete state->vision_pe_cos;
-    if (state->vision_pe_sin) delete state->vision_pe_sin;
+    if (state->vision_x) { printf("delete state->vision_x\n"); delete state->vision_x; }
+    if (state->vision_t) { printf("delete state->vision_t\n"); delete state->vision_t; }
+    if (state->vision_pe_cos) { printf("delete state->vision_pe_cos\n"); delete state->vision_pe_cos; }
+    if (state->vision_pe_sin) { printf("delete state->vision_pe_sin\n"); delete state->vision_pe_sin; }
 
-    if (state->vision_q) delete state->vision_q;
-    if (state->vision_k) delete state->vision_k;
+    if (state->vision_q) { printf("delete state->vision_q\n"); delete state->vision_q; }
+    if (state->vision_k) { printf("delete state->vision_k\n"); delete state->vision_k; }
 
-    if (state->vision_mlp_out) delete state->vision_mlp_out;
+    if (state->vision_mlp_out) { printf("delete state->vision_mlp_out\n"); delete state->vision_mlp_out; }
 
-    if (state->vision_deep_stack) delete state->vision_deep_stack;
+    if (state->vision_deep_stack) { printf("delete state->vision_deep_stack\n"); delete state->vision_deep_stack; }
 
-    if (state->vision_attn_scores) delete state->vision_attn_scores;
-    if (state->max_vision_attn_scores) delete state->max_vision_attn_scores;
+    if (state->vision_attn_scores) { printf("delete state->vision_attn_scores\n"); delete state->vision_attn_scores; }
+    if (state->max_vision_attn_scores) { printf("delete state->max_vision_attn_scores\n"); delete state->max_vision_attn_scores; }
 }
 
 void qwen_rope_precompute(

@@ -700,7 +700,7 @@ void attn_weighted_sum_all_heads(
     // ======================== FP16 PATH ======================
     // =========================================================
     if (cache_dtype == DType::FP16) {
-        const uint16_t *value_cache_fp16 = (const uint16_t *)(value_cache);
+        const half_cpu *value_cache_fp16 = (const half_cpu *)(value_cache);
 
         for (size_t b = 0; b < prefill_size; ++b) {
 
@@ -718,7 +718,7 @@ void attn_weighted_sum_all_heads(
                 const float *__restrict att_head =
                     att_base + 1ll * h_base * seq_len;
 
-                const uint16_t *__restrict v_head_base =
+                const half_cpu *__restrict v_head_base =
                     value_cache_fp16 + 1ll * (h_base / kv_mul) * sh_offset;
 
                 gemm_text_kv_att(

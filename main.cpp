@@ -71,13 +71,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    #if defined(__AVX512F__) && defined(__AVX512DQ__)
-        printf("AVX512 enabled\n");
-    #elif defined(__AVX2__) && defined(__FMA__)
-        printf("AVX2 enabled\n");
-    #else
-        printf("Default fallback, no AVX2 or AVX512\n");
-    #endif
+    // ifdef here to find out cpu architecture
+    printf("Default fallback\n");
 
     printf("Model path: %s\n", model_path);
     printf("Tokenizer path: %s\n", tokenizer_path);

@@ -389,36 +389,30 @@ void gemm_att_f16ab_f32c(
     const float scale, size_t M, size_t N, size_t K,
     bool mat_B_transpose
 ) {
-    #if defined(__AVX2__) && defined(__FMA__)
-        att_f16ab_f32c_avx2_kernel(
-            mat_A, mat_B, mat_C, scale, M, N, K, mat_B_transpose
-        );
-    #else
-        #pragma omp parallel for schedule(static)
-        for (size_t m = 0; m < M; ++m) {
+    #pragma omp parallel for schedule(static)
+    for (size_t m = 0; m < M; ++m) {
 
-            const half_cpu* A_row = mat_A + m * K;
-            float* C_row = mat_C + m * N;
+        const half_cpu* A_row = mat_A + m * K;
+        float* C_row = mat_C + m * N;
 
-            for (size_t n = 0; n < N; ++n) {
+        for (size_t n = 0; n < N; ++n) {
 
-                float sum = 0.0f;
+            float sum = 0.0f;
 
-                for (size_t k = 0; k < K; ++k) {
+            for (size_t k = 0; k < K; ++k) {
 
-                    float a = (float)A_row[k];
+                float a = (float)A_row[k];
 
-                    float b = (!mat_B_transpose)
-                        ? (float)mat_B[k * N + n]
-                        : (float)mat_B[n * K + k];
+                float b = (!mat_B_transpose)
+                    ? (float)mat_B[k * N + n]
+                    : (float)mat_B[n * K + k];
 
-                    sum += a * b;
-                }
-
-                C_row[n] = sum * scale;
+                sum += a * b;
             }
+
+            C_row[n] = sum * scale;
         }
-    #endif
+    }
 }
 
 void gemm_att(
