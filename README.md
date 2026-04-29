@@ -1,4 +1,4 @@
-# Qwen3-VL-2B C++ Inference Engine (CPU-Optimized)
+# Qwen3-VL-2B C++ Inference Engine
 
 A lightweight C++ inference engine for Qwen3-VL-2B, designed for efficient multimodal inference on resource-constrained systems without relying on external deep learning frameworks.
 
@@ -71,7 +71,7 @@ The project is designed around:
 
 ---
 
-# Installation
+# Installation & Usage (Incoming)
 
 ## Install
 
