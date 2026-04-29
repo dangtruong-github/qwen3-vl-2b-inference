@@ -1,41 +1,81 @@
 # Qwen3-VL-2B C++ Inference Engine (CPU-Optimized)
 
-A lightweight C++ inference engine for Qwen3-VL-2B, built for efficient multimodal inference on low-power CPUs without relying on external deep learning frameworks.
+A lightweight C++ inference engine for Qwen3-VL-2B, designed for efficient multimodal inference on resource-constrained systems without relying on external deep learning frameworks.
 
-Key Optimizations
+Built with a focus on minimizing memory movement, improving cache locality, and enabling practical LLM/VLM deployment on ultrabook-class CPUs.
 
-🔧 Quantized & Packed GEMM
-- Blocked weight prepacking for improved cache locality
-- Vision module weight transpose for contiguous SIMD access
-- Precomputed weight sums for efficient u8 × s8 asymmetric quantization correction
-- INT32 accumulation with fused dequantization epilogue
+## Key Optimizations
 
-⚡ Inference Pipeline Design
-- Explicit separation of prefill and autoregressive decode
-- KV-cache reuse across decoding steps
-- Mixed precision execution:
-+ Text transformer → INT8 (group=64 scaling)
-+ Vision encoder → FP16 weights and activations
+### 🔧 Quantized & Packed GEMM
 
-Quantization Strategy
-- Text branch optimized for memory bandwidth via INT8 weights
-- Vision branch preserved in FP16 for numerical stability
+* Blocked weight prepacking for improved cache locality
+* Precomputed weight sums for efficient asymmetric quantization correction
+* INT32 accumulation with fused dequantization epilogue
 
-Designed with a focus on reducing memory movement, improving cache efficiency, and enabling practical LLM/VLM deployment on ultrabook-class CPUs.
+### ⚡ Inference Pipeline
 
-You can see the full optimization at [CPU Branch](https://github.com/dangtruong-github/qwen3-vl-2b-inference/tree/cpu)
+* Separate prefill and autoregressive decode
+* KV-cache reuse across decoding steps
+* Current KV-cache limit: 3072 tokens
+* Mixed precision execution:
+  * Text transformer → INT8 weights
+  * Vision encoder → FP16 weights and activations
 
-# Incoming optimization
-- KV cache quantization
-- Pascal GPU integration
-- Operator fusion
-- CPU Flash-style attention (if targeting long context)
+### 🧠 Memory & Attention Optimizations
 
-# Installation (incoming)
+* FP16 KV-cache for reduced memory bandwidth and footprint
+* Fused kernel skeletons for reducing intermediate memory traffic
+* OpenMP parallel execution for CPU scalability
 
-Install
+## Design Goals
 
-```
+The project is designed around:
+
+* Low memory bandwidth usage
+* Cache-efficient execution
+* Lightweight dependency footprint
+* Practical multimodal inference on CPUs
+
+## Runtime Configuration
+
+| Component | Configuration |
+|---|---|
+| Maximum context length | 3072 tokens |
+| KV-cache precision | FP16 |
+| Text transformer weights | INT8 |
+| Vision encoder weights | FP16 |
+| Parallel backend | OpenMP |
+
+## Memory Usage
+
+| Configuration | Approx. Memory Usage |
+|---|---|
+| Model weights only | ~X GB |
+| + 3072-token KV-cache | ~X GB |
+| Peak runtime memory | ~X GB |
+
+---
+
+# Incoming Optimizations
+
+* CPU Flash-style attention for long-context inference (vendor-specific)
+* Vendor-specific optimized backends (ARM / x86 / CUDA)
+
+## Backend Status
+
+| Backend | Status | Branch |
+|---|---|---|
+| x86 | ✅ Completed | [x86 Branch](https://github.com/dangtruong-github/qwen3-vl-2b-inference/tree/cpu) |
+| ARM | 🚧 In Progress | [ARM Branch](https://github.com/dangtruong-github/qwen3-vl-2b-inference/tree/cpu-arm) |
+| CUDA | 🚧 In Progress | [CUDA Branch](https://github.com/dangtruong-github/qwen3-vl-2b-inference/tree/gpu) |
+
+---
+
+# Installation
+
+## Install
+
+```bash
 conda install -c conda-forge opencv gxx_linux-64 cmake pkg-config -y
 pip install -r requirements.txt
 ```
