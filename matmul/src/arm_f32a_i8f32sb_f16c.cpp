@@ -60,8 +60,6 @@ void arm_f32a_i8f32sb_f16c_m1(
     }
 
     const size_t K_g = K / group_size;
-
-    const int16x4_t ones16 = vdup_n_s16(1);
     
     #pragma omp parallel for schedule(static)
     for (size_t jj = 0; jj < N; ++jj) {

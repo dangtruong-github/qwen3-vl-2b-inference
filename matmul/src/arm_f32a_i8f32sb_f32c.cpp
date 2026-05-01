@@ -60,12 +60,11 @@ void arm_f32a_i8f32sb_f32c_m1(
     }
 
     const size_t K_g = K / group_size;
-
-    const int16x4_t ones16 = vdup_n_s16(1);
     
     #pragma omp parallel for schedule(static)
     for (size_t jj = 0; jj < N; ++jj) {
         float32x4_t c0_f = vdupq_n_f32(0.0f);
+        float32x4_t c1_f = vdupq_n_f32(0.0f);
 
         const size_t jjK = jj * K;
         const int8_t *__restrict b0_ptr = mat_B_in + jjK;
@@ -74,19 +73,26 @@ void arm_f32a_i8f32sb_f32c_m1(
         for (size_t kk = 0; kk < K; kk += group_size) {
             const size_t g_off = kk / group_size;
             int32x4_t c0 = vdupq_n_s32(0);
+            int32x4_t c1 = vdupq_n_s32(0);
 
-            for (size_t k = kk; k < kk + group_size; k += 16) {
-                int8x16_t a_vec = vld1q_s8(a_q8 + k);
+            for (size_t k = kk; k < kk + group_size; k += 32) {
+                int8x16_t a0_vec = vld1q_s8(a_q8 + k);
+                int8x16_t a1_vec = vld1q_s8(a_q8 + k + 16);
+
                 int8x16_t b0 = vld1q_s8(b0_ptr + k);
+                int8x16_t b1 = vld1q_s8(b0_ptr + k + 16);
 
-                c0 = vdotq_s32(c0, a_vec, b0);
+                c0 = vdotq_s32(c0, a0_vec, b0);
+                c1 = vdotq_s32(c1, a1_vec, b1);
             }
             
-            c0_f = vfmaq_f32(
-                c0_f, vcvtq_f32_s32(c0),
-                vdupq_n_f32(a_q8_s[g_off] * b_s_ptr[g_off])
-            );
+            float32x4_t mul_val = vdupq_n_f32(a_q8_s[g_off] * b_s_ptr[g_off]);
+
+            c0_f = vfmaq_f32(c0_f, vcvtq_f32_s32(c0), mul_val);
+            c1_f = vfmaq_f32(c1_f, vcvtq_f32_s32(c1), mul_val);
         }
+
+        c0_f = vaddq_f32(c0_f, c1_f);
         
         if (add_to_c) {     
             mat_C[jj] += vaddvq_f32(c0_f);
