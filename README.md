@@ -78,4 +78,5 @@ The project is designed around:
 ```bash
 conda install -c conda-forge opencv gxx_linux-64 cmake pkg-config -y
 pip install -r requirements.txt
+
 ```
